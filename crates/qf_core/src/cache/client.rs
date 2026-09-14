@@ -1,0 +1,629 @@
+use std::{
+    collections::HashMap,
+    fs::File,
+    path::PathBuf,
+    sync::{Arc, Mutex, OnceLock},
+};
+
+use ::utils::*;
+use qf_api::Client as QFClient;
+use service::{
+    SettingMutation, SettingQuery, StockItemMutation, StockRivenMutation, TransactionMutation,
+    WishListMutation,
+};
+use tauri::Manager;
+
+use crate::{
+    app::{AppState, User},
+    cache::{types::CacheVersion, CacheWeaponBase},
+    emit_startup, helper,
+    utils::{AuctionListExt, ErrorFromExt, OrderListExt},
+    APP, DATABASE,
+};
+
+use super::modules::*;
+
+#[derive(Clone, Debug)]
+pub struct CacheState {
+    self_arc: OnceLock<Arc<CacheState>>,
+    pub base_path: PathBuf,
+    pub version: CacheVersion,
+    //
+    weapons: Arc<Mutex<MultiKeyMap<CacheWeaponBase>>>,
+    // Modules
+    all_items_module: OnceLock<Arc<AllItemsModule>>,
+    arcane_module: OnceLock<Arc<ArcaneModule>>,
+    archgun_module: OnceLock<Arc<ArchGunModule>>,
+    archmelee_module: OnceLock<Arc<ArchMeleeModule>>,
+    archwing_module: OnceLock<Arc<ArchwingModule>>,
+    fish_module: OnceLock<Arc<FishModule>>,
+    melee_module: OnceLock<Arc<MeleeModule>>,
+    misc_module: OnceLock<Arc<MiscModule>>,
+    mod_module: OnceLock<Arc<ModModule>>,
+    pet_module: OnceLock<Arc<PetModule>>,
+    primary_module: OnceLock<Arc<PrimaryModule>>,
+    relics_module: OnceLock<Arc<RelicsModule>>,
+    resource_module: OnceLock<Arc<ResourceModule>>,
+    secondary_module: OnceLock<Arc<SecondaryModule>>,
+    sentinel_module: OnceLock<Arc<SentinelModule>>,
+    sentinel_weapon_module: OnceLock<Arc<SentinelWeaponModule>>,
+    skin_module: OnceLock<Arc<SkinModule>>,
+    tradable_item_module: OnceLock<Arc<TradableItemModule>>,
+    warframe_module: OnceLock<Arc<WarframeModule>>,
+    item_price_module: OnceLock<Arc<ItemPriceModule>>,
+    chat_icon_module: OnceLock<Arc<ChatIconModule>>,
+    theme_module: OnceLock<Arc<ThemeModule>>,
+    language_module: OnceLock<Arc<LanguageModule>>,
+    weapon_module: OnceLock<Arc<WeaponModule>>,
+    recipe_module: OnceLock<Arc<RecipeModule>>,
+    riven_good_roll_module: OnceLock<Arc<RivenGoodRollModule>>,
+    attribute_module: OnceLock<Arc<AttributeModule>>,
+    bundle_module: OnceLock<Arc<BundleModule>>,
+    quest_module: OnceLock<Arc<QuestModule>>,
+    gear_module: OnceLock<Arc<GearModule>>,
+    syndicate_module: OnceLock<Arc<SyndicateModule>>,
+}
+
+impl CacheState {
+    fn arc(&self) -> Arc<Self> {
+        self.self_arc
+            .get_or_init(|| {
+                Arc::new(Self {
+                    self_arc: OnceLock::new(),
+                    base_path: self.base_path.clone(),
+                    version: self.version.clone(),
+                    weapons: self.weapons.clone(),
+                    // Initialize modules
+                    all_items_module: self.all_items_module.clone(),
+                    arcane_module: self.arcane_module.clone(),
+                    archgun_module: self.archgun_module.clone(),
+                    archmelee_module: self.archmelee_module.clone(),
+                    archwing_module: self.archwing_module.clone(),
+                    fish_module: self.fish_module.clone(),
+                    melee_module: self.melee_module.clone(),
+                    misc_module: self.misc_module.clone(),
+                    mod_module: self.mod_module.clone(),
+                    pet_module: self.pet_module.clone(),
+                    primary_module: self.primary_module.clone(),
+                    relics_module: self.relics_module.clone(),
+                    resource_module: self.resource_module.clone(),
+                    secondary_module: self.secondary_module.clone(),
+                    sentinel_module: self.sentinel_module.clone(),
+                    sentinel_weapon_module: self.sentinel_weapon_module.clone(),
+                    skin_module: self.skin_module.clone(),
+                    tradable_item_module: self.tradable_item_module.clone(),
+                    warframe_module: self.warframe_module.clone(),
+                    item_price_module: self.item_price_module.clone(),
+                    chat_icon_module: self.chat_icon_module.clone(),
+                    theme_module: self.theme_module.clone(),
+                    language_module: self.language_module.clone(),
+                    weapon_module: self.weapon_module.clone(),
+                    recipe_module: self.recipe_module.clone(),
+                    riven_good_roll_module: self.riven_good_roll_module.clone(),
+                    attribute_module: self.attribute_module.clone(),
+                    bundle_module: self.bundle_module.clone(),
+                    quest_module: self.quest_module.clone(),
+                    gear_module: self.gear_module.clone(),
+                    syndicate_module: self.syndicate_module.clone(),
+                })
+            })
+            .clone()
+    }
+
+    pub async fn new(
+        qf_client: &QFClient,
+        user: &User,
+        lang: impl Into<String>,
+    ) -> Result<Self, Error> {
+        let lang = lang.into();
+        let version =
+            CacheVersion::load().expect("Failed to load cache version from cache_version.json");
+
+        let mut client = CacheState {
+            self_arc: OnceLock::new(),
+            base_path: helper::get_app_storage_path().join("cache"),
+            version,
+            weapons: Arc::new(Mutex::new(MultiKeyMap::new())),
+            all_items_module: OnceLock::new(),
+            arcane_module: OnceLock::new(),
+            archgun_module: OnceLock::new(),
+            archmelee_module: OnceLock::new(),
+            archwing_module: OnceLock::new(),
+            fish_module: OnceLock::new(),
+            melee_module: OnceLock::new(),
+            misc_module: OnceLock::new(),
+            mod_module: OnceLock::new(),
+            pet_module: OnceLock::new(),
+            primary_module: OnceLock::new(),
+            relics_module: OnceLock::new(),
+            resource_module: OnceLock::new(),
+            secondary_module: OnceLock::new(),
+            sentinel_module: OnceLock::new(),
+            sentinel_weapon_module: OnceLock::new(),
+            skin_module: OnceLock::new(),
+            tradable_item_module: OnceLock::new(),
+            warframe_module: OnceLock::new(),
+            item_price_module: OnceLock::new(),
+            chat_icon_module: OnceLock::new(),
+            theme_module: OnceLock::new(),
+            language_module: OnceLock::new(),
+            weapon_module: OnceLock::new(),
+            recipe_module: OnceLock::new(),
+            riven_good_roll_module: OnceLock::new(),
+            attribute_module: OnceLock::new(),
+            bundle_module: OnceLock::new(),
+            quest_module: OnceLock::new(),
+            gear_module: OnceLock::new(),
+            syndicate_module: OnceLock::new(),
+        };
+        if !user.verification || user.qf_banned || user.wfm_banned {
+            warning(
+                "Cache:Client",
+                "User is not verified or banned",
+                &LoggerOptions::default(),
+            );
+            return Ok(client);
+        }
+        match client.load(qf_client, &lang).await {
+            Ok((cache_version_id, price_version_id)) => {
+                client.version.id = cache_version_id;
+                client.version.id_price = price_version_id;
+                client.version.save()?;
+                info(
+                    "Cache:Version",
+                    "Cache loaded successfully.",
+                    &LoggerOptions::default(),
+                );
+                let app = APP.get().expect("APP not initialized");
+                let state = app.state::<Mutex<AppState>>();
+                let guard = state.lock()?;
+                guard
+                    .wfm_client
+                    .order()
+                    .cache_orders_mut()
+                    .apply_item_info(&client)?;
+                guard
+                    .wfm_client
+                    .auction()
+                    .cache_auctions_mut()
+                    .apply_item_info(&client)?;
+            }
+            Err(e) => return Err(e.with_location(get_location!())),
+        }
+        match client.update_da_names(&lang).await {
+            Ok(_) => {}
+            Err(e) => return Err(e.with_location(get_location!())),
+        }
+        Ok(client)
+    }
+
+    async fn check_update(&self, qf_client: &QFClient) -> Result<(bool, String), Error> {
+        let current_version = self.version.id.clone();
+        let remote_version = match qf_client.cache().get_cache_id("cache").await {
+            Ok(id) => id,
+            Err(e) => {
+                let err = Error::from_qf(
+                    "Cache:CheckUpdate",
+                    "Failed to get cache ID",
+                    e,
+                    get_location!(),
+                );
+                return Err(err);
+            }
+        };
+        if !self.base_path.exists() {
+            Ok((true, remote_version))
+        } else {
+            Ok((current_version != remote_version, remote_version))
+        }
+    }
+
+    pub async fn load(
+        &mut self,
+        qf_client: &QFClient,
+        lang: impl Into<String>,
+    ) -> Result<(String, String), Error> {
+        emit_startup!("cache.initializing", json!({}));
+        let lang = lang.into();
+        let (cache_require_update, cache_version_id) = self.check_update(qf_client).await?;
+        let (price_require_update, price_version_id) =
+            self.item_price().check_update(qf_client).await?;
+
+        if cache_require_update {
+            info(
+                "Cache:Load",
+                "Cache update required. Downloading new cache...",
+                &LoggerOptions::default(),
+            );
+            emit_startup!("cache.updating", json!({}));
+            match self.extract(qf_client).await {
+                Ok(()) => {
+                    info(
+                        "Cache:Load",
+                        "Cache updated successfully.",
+                        &LoggerOptions::default(),
+                    );
+                }
+                Err(e) => {
+                    e.log("cache_update.log");
+                    return Err(e.with_location(get_location!()));
+                }
+            }
+        } else {
+            info(
+                "Cache:Load",
+                "Cache is up to date. No update required.",
+                &LoggerOptions::default(),
+            );
+        }
+
+        // Update Item Prices if user is verified
+        self.language().load(&lang)?;
+        let language_module = self.language();
+        let language = language_module.as_ref();
+        self.item_price()
+            .load(qf_client, price_require_update)
+            .await?;
+        self.tradable_item().load(language)?;
+        self.arcane().load(language)?;
+        self.archgun().load(language)?;
+        self.archmelee().load(language)?;
+        self.archwing().load(language)?;
+        self.fish().load(language)?;
+        self.melee().load(language)?;
+        self.misc().load(language)?;
+        self.mods().load(language)?;
+        self.pet().load(language)?;
+        self.primary().load(language)?;
+        self.relics().load(language)?;
+        self.resource().load(language)?;
+        self.secondary().load(language)?;
+        self.sentinel().load(language)?;
+        self.attribute().load(language)?;
+        self.sentinel_weapon().load(language)?;
+        self.skin().load(language)?;
+        self.warframe().load(language)?;
+        self.quest().load(language)?;
+        self.theme().load()?;
+        self.chat_icon().load()?;
+        self.riven_good_roll().load(language)?;
+        self.recipe().load(language)?;
+        self.bundle().load(language)?;
+        self.gear().load(language)?;
+        self.syndicate().load(language)?;
+        self.weapon().load(&self)?;
+        self.all_items().load(&self)?;
+        Ok((cache_version_id, price_version_id))
+    }
+
+    async fn extract(&self, qf_client: &QFClient) -> Result<(), Error> {
+        let zip_data = qf_client
+            .cache()
+            .download_cache("cache")
+            .await
+            .map_err(|e| Error::from_qf("Cache", "Failed to download cache", e, get_location!()))?;
+
+        let reader = std::io::Cursor::new(zip_data);
+        let mut archive = zip::ZipArchive::new(reader).map_err(|e| {
+            Error::from_zip(
+                "Cache",
+                "cache.zip",
+                "Failed to read cache zip",
+                e,
+                get_location!(),
+            )
+        })?;
+
+        let extract_to = self.base_path.clone();
+
+        // Clean the cache directory except for themePresets
+        clean_dir(&extract_to, &[std::path::Path::new("themePresets")])?;
+
+        let mut total_size = 0u64;
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i).map_err(|e| {
+                Error::from_zip(
+                    "Cache:Extract",
+                    &format!("cache.zip[{}]", i),
+                    "Failed to read file from cache zip",
+                    e,
+                    get_location!(),
+                )
+            })?;
+            let output_path = extract_to.join(file.mangled_name());
+
+            if file.is_dir() {
+                std::fs::create_dir_all(&output_path).map_err(|e| {
+                    Error::from_io(
+                        "Cache",
+                        &output_path,
+                        "Failed to create directory for cache file",
+                        e,
+                        get_location!(),
+                    )
+                })?;
+            } else {
+                if let Some(parent) = output_path.parent() {
+                    if !parent.exists() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            Error::from_io(
+                                "Cache",
+                                &parent.to_path_buf(),
+                                "Failed to create parent directory for cache file",
+                                e,
+                                get_location!(),
+                            )
+                        })?;
+                    }
+                }
+
+                let mut output_file = File::create(&output_path).map_err(|e| {
+                    Error::from_io(
+                        "Cache",
+                        &output_path,
+                        "Failed to create cache file",
+                        e,
+                        get_location!(),
+                    )
+                })?;
+                total_size += file.size();
+                std::io::copy(&mut file, &mut output_file).map_err(|e| {
+                    Error::from_io(
+                        "Cache",
+                        &output_path,
+                        "Failed to write cache file",
+                        e,
+                        get_location!(),
+                    )
+                })?;
+            }
+        }
+
+        // Implement the logic to extract the cache
+        info(
+            "Cache:Extract",
+            format!("Extracting cache... ({} bytes)", total_size),
+            &LoggerOptions::default(),
+        );
+        Ok(())
+    }
+
+    pub async fn update_da_names(&self, lang: impl Into<String>) -> Result<(), Error> {
+        let mut wa = StopWatch::new();
+        fn log_info(wa: &StopWatch, step: &str) {
+            let hms = wa.elapsed_hms();
+            info(
+                "DataBase:UpdateNames",
+                &format!(
+                    "{} completed in {:02}:{:02}:{:02}",
+                    step, hms.0, hms.1, hms.2
+                ),
+                &LoggerOptions::default(),
+            );
+        }
+        wa.start();
+        let conn = DATABASE.get().unwrap();
+        let lang = lang.into();
+        let db_lang = match SettingQuery::get(conn, "lang", "en").await {
+            Ok(value) => value,
+            Err(e) => return Err(e.with_location(get_location!())),
+        };
+        let db_version = match SettingQuery::get(conn, "db_version", "0").await {
+            Ok(value) => value,
+            Err(e) => return Err(e.with_location(get_location!())),
+        };
+        if db_lang == lang && db_version == self.version.db_version {
+            info(
+                "DataBase:UpdateNames",
+                "Language has not changed, skipping DA names update.",
+                &LoggerOptions::default(),
+            );
+            return Ok(());
+        }
+
+        let wfm_name_mapper = self.language().get_mapper("wfmName");
+        let name_mapper = self.language().get_mapper("name");
+
+        let attribute_mapper = self
+            .attribute()
+            .get_items()?
+            .iter()
+            .map(|att| (att.wfm_url.clone(), att.formatted_value.clone()))
+            .collect::<HashMap<String, String>>();
+
+        fn send_progress(component: &str, progress: f64) {
+            emit_startup!(
+                format!("database.updating_names_{}", component.to_lowercase()),
+                json!({
+                    "progress": progress as i64,
+                })
+            );
+        }
+        StockItemMutation::update_names(conn, &wfm_name_mapper, |progress| {
+            send_progress("stock_items", progress);
+        })
+        .await?;
+        log_info(&wa, "StockItems");
+
+        TransactionMutation::update_names(conn, &wfm_name_mapper, |progress| {
+            send_progress("transactions", progress);
+        })
+        .await?;
+        log_info(&wa, "Transactions");
+
+        StockRivenMutation::update_names(conn, &name_mapper, &attribute_mapper, |progress| {
+            send_progress("stock_rivens", progress);
+        })
+        .await?;
+        log_info(&wa, "StockRivens");
+
+        WishListMutation::update_names(conn, &name_mapper, |progress| {
+            send_progress("wish_lists", progress);
+        })
+        .await?;
+        log_info(&wa, "WishLists");
+
+        SettingMutation::update_create(conn, "lang", &lang).await?;
+        SettingMutation::update_create(conn, "db_version", &self.version.db_version).await?;
+        log_info(&wa, "Update Names");
+        emit_startup!("database.update_names_completed", json!({}));
+        Ok(())
+    }
+
+    // Modules
+    pub fn item_price(&self) -> Arc<ItemPriceModule> {
+        self.item_price_module
+            .get_or_init(|| ItemPriceModule::new(self.arc()))
+            .clone()
+    }
+    pub fn all_items(&self) -> Arc<AllItemsModule> {
+        self.all_items_module
+            .get_or_init(|| AllItemsModule::new())
+            .clone()
+    }
+    pub fn arcane(&self) -> Arc<ArcaneModule> {
+        self.arcane_module
+            .get_or_init(|| ArcaneModule::new(self.arc()))
+            .clone()
+    }
+    pub fn archgun(&self) -> Arc<ArchGunModule> {
+        self.archgun_module
+            .get_or_init(|| ArchGunModule::new(self.arc()))
+            .clone()
+    }
+    pub fn archmelee(&self) -> Arc<ArchMeleeModule> {
+        self.archmelee_module
+            .get_or_init(|| ArchMeleeModule::new(self.arc()))
+            .clone()
+    }
+    pub fn archwing(&self) -> Arc<ArchwingModule> {
+        self.archwing_module
+            .get_or_init(|| ArchwingModule::new(self.arc()))
+            .clone()
+    }
+    pub fn fish(&self) -> Arc<FishModule> {
+        self.fish_module
+            .get_or_init(|| FishModule::new(self.arc()))
+            .clone()
+    }
+    pub fn melee(&self) -> Arc<MeleeModule> {
+        self.melee_module
+            .get_or_init(|| MeleeModule::new(self.arc()))
+            .clone()
+    }
+    pub fn misc(&self) -> Arc<MiscModule> {
+        self.misc_module
+            .get_or_init(|| MiscModule::new(self.arc()))
+            .clone()
+    }
+    pub fn mods(&self) -> Arc<ModModule> {
+        self.mod_module
+            .get_or_init(|| ModModule::new(self.arc()))
+            .clone()
+    }
+    pub fn pet(&self) -> Arc<PetModule> {
+        self.pet_module
+            .get_or_init(|| PetModule::new(self.arc()))
+            .clone()
+    }
+    pub fn primary(&self) -> Arc<PrimaryModule> {
+        self.primary_module
+            .get_or_init(|| PrimaryModule::new(self.arc()))
+            .clone()
+    }
+    pub fn relics(&self) -> Arc<RelicsModule> {
+        self.relics_module
+            .get_or_init(|| RelicsModule::new(self.arc()))
+            .clone()
+    }
+    pub fn resource(&self) -> Arc<ResourceModule> {
+        self.resource_module
+            .get_or_init(|| ResourceModule::new(self.arc()))
+            .clone()
+    }
+    pub fn secondary(&self) -> Arc<SecondaryModule> {
+        self.secondary_module
+            .get_or_init(|| SecondaryModule::new(self.arc()))
+            .clone()
+    }
+    pub fn sentinel(&self) -> Arc<SentinelModule> {
+        self.sentinel_module
+            .get_or_init(|| SentinelModule::new(self.arc()))
+            .clone()
+    }
+    pub fn sentinel_weapon(&self) -> Arc<SentinelWeaponModule> {
+        self.sentinel_weapon_module
+            .get_or_init(|| SentinelWeaponModule::new(self.arc()))
+            .clone()
+    }
+    pub fn skin(&self) -> Arc<SkinModule> {
+        self.skin_module
+            .get_or_init(|| SkinModule::new(self.arc()))
+            .clone()
+    }
+    pub fn tradable_item(&self) -> Arc<TradableItemModule> {
+        self.tradable_item_module
+            .get_or_init(|| TradableItemModule::new(self.arc()))
+            .clone()
+    }
+    pub fn warframe(&self) -> Arc<WarframeModule> {
+        self.warframe_module
+            .get_or_init(|| WarframeModule::new(self.arc()))
+            .clone()
+    }
+    pub fn chat_icon(&self) -> Arc<ChatIconModule> {
+        self.chat_icon_module
+            .get_or_init(|| ChatIconModule::new(self.arc()))
+            .clone()
+    }
+    pub fn theme(&self) -> Arc<ThemeModule> {
+        self.theme_module
+            .get_or_init(|| ThemeModule::new(self.arc()))
+            .clone()
+    }
+    pub fn language(&self) -> Arc<LanguageModule> {
+        self.language_module
+            .get_or_init(|| LanguageModule::new(self.arc()))
+            .clone()
+    }
+    pub fn weapon(&self) -> Arc<WeaponModule> {
+        self.weapon_module
+            .get_or_init(|| WeaponModule::new())
+            .clone()
+    }
+    pub fn recipe(&self) -> Arc<RecipeModule> {
+        self.recipe_module
+            .get_or_init(|| RecipeModule::new(self.arc()))
+            .clone()
+    }
+    pub fn riven_good_roll(&self) -> Arc<RivenGoodRollModule> {
+        self.riven_good_roll_module
+            .get_or_init(|| RivenGoodRollModule::new(self.arc()))
+            .clone()
+    }
+    pub fn attribute(&self) -> Arc<AttributeModule> {
+        self.attribute_module
+            .get_or_init(|| AttributeModule::new(self.arc()))
+            .clone()
+    }
+    pub fn bundle(&self) -> Arc<BundleModule> {
+        self.bundle_module
+            .get_or_init(|| BundleModule::new(self.arc()))
+            .clone()
+    }
+    pub fn quest(&self) -> Arc<QuestModule> {
+        self.quest_module
+            .get_or_init(|| QuestModule::new(self.arc()))
+            .clone()
+    }
+    pub fn gear(&self) -> Arc<GearModule> {
+        self.gear_module
+            .get_or_init(|| GearModule::new(self.arc()))
+            .clone()
+    }
+    pub fn syndicate(&self) -> Arc<SyndicateModule> {
+        self.syndicate_module
+            .get_or_init(|| SyndicateModule::new(self.arc()))
+            .clone()
+    }
+}

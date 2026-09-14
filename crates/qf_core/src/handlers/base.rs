@@ -1,0 +1,208 @@
+use entity::{
+    enums::TransactionType, stock_item::CreateStockItem,
+    transaction::TransactionPaginationQueryDto, wish_list::CreateWishListItem,
+};
+use serde::{Deserialize, Serialize};
+use service::{TransactionMutation, TransactionQuery};
+use utils::SubType;
+use utils::{get_location, info, Error, OperationSet, SortDirection};
+use wf_market::{enums::OrderType, types::UpdateOrderParams};
+
+use crate::{
+    utils::{modules::states, ErrorFromExt, SubTypeExt},
+    DATABASE,
+};
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ItemEntity {
+    pub wfm_url: String,
+    pub sub_type: Option<SubType>,
+    pub quantity: i64,
+    pub price: i64,
+    pub user_name: String,
+    pub order_type: OrderType,
+    #[serde(default, flatten)]
+    pub operations: OperationSet,
+}
+
+impl From<ItemEntity> for CreateStockItem {
+    fn from(item: ItemEntity) -> Self {
+        CreateStockItem::new(item.wfm_url, item.sub_type, item.quantity).set_bought(item.price)
+    }
+}
+
+impl From<ItemEntity> for CreateWishListItem {
+    fn from(item: ItemEntity) -> Self {
+        CreateWishListItem::new(item.wfm_url, item.sub_type, item.quantity).set_bought(item.price)
+    }
+}
+
+// Handles Warframe Market order operations (close/delete/update)
+pub async fn handle_wfm_item(
+    wfm_id: impl Into<String>,
+    sub_type: &Option<SubType>,
+    quantity: i64,
+    order_type: OrderType,
+    operations: OperationSet,
+) -> Result<String, Error> {
+    let wfm_id = wfm_id.into();
+    let log_options = utils::LoggerOptions::default();
+    let app = states::app_state()?;
+
+    let component = "HandleWFMItem";
+    let file = "handle_wfm_item.log";
+    let delete = operations.has("ShouldDelete");
+    let wf_sub_type: wf_market::types::SubType = SubTypeExt::from_entity(sub_type.to_owned());
+
+    // Skip buy if reporting disabled
+    if order_type == OrderType::Buy
+        && !app.settings.live_scraper.general.report_to_wfm
+        && !operations.has("ForceOrderSync")
+    {
+        return Ok("SkippedBuyWfmReportDisabled".to_string());
+    }
+
+    let Some(mut order) =
+        app.wfm_client
+            .order()
+            .cache_orders()
+            .find_order(&wfm_id, &wf_sub_type, order_type)
+    else {
+        info(
+            &format!("{component}:NoOrder"),
+            &format!(
+                "No WFM order found for WFM ID: {} | SubType: {} | OrderType: {:?}",
+                wfm_id, wf_sub_type, order_type
+            ),
+            &log_options,
+        );
+        return Ok("NoOrder".to_string());
+    };
+
+    // ---- Compute new quantity ----
+    order.quantity = (order.quantity as i64 - quantity).max(0) as u32;
+
+    let reporting_enabled = app.settings.live_scraper.general.report_to_wfm;
+    let should_close = reporting_enabled && !delete;
+    let should_delete = delete || order.quantity == 0;
+
+    // ---- Helpers ----
+    let map_err = |stage: &str, msg: &str, e| {
+        let err = Error::from_wfm(&format!("{component}:{stage}"), msg, e, get_location!());
+        err.log(file);
+        err
+    };
+
+    // ---- Perform action ----
+    if should_close {
+        app.wfm_client
+            .order()
+            .close(&order.id, quantity as u32)
+            .await
+            .map_err(|e| map_err("Close", "Failed to close WFM order", e))?;
+
+        info(
+            &format!("{component}:Close"),
+            &format!("Closed WFM order: {:?}, {:?}", order.id, quantity),
+            &log_options,
+        );
+
+        return Ok("Closed".to_string());
+    }
+
+    if should_delete {
+        app.wfm_client
+            .order()
+            .delete(&order.id)
+            .await
+            .map_err(|e| map_err("Delete", "Failed to delete WFM order", e))?;
+
+        info(
+            &format!("{component}:Delete"),
+            &format!("Deleted WFM order: {:?}", order.id),
+            &log_options,
+        );
+
+        return Ok("Deleted".to_string());
+    }
+
+    // ---- Otherwise update ----
+    app.wfm_client
+        .order()
+        .update(
+            &order.id,
+            UpdateOrderParams::default().with_quantity(order.quantity),
+        )
+        .await
+        .map_err(|e| map_err("Update", "Failed to update WFM order", e))?;
+
+    info(
+        &format!("{component}:Update"),
+        &format!("Updated WFM order: {:?}, {:?}", order.id, order.quantity),
+        &log_options,
+    );
+
+    Ok("Updated".to_string())
+}
+
+/// Handles transaction creation and database persistence
+pub async fn handle_transaction(
+    mut transaction: entity::transaction::Model,
+    flags: &OperationSet,
+) -> Result<entity::transaction::Model, Error> {
+    let conn = DATABASE.get().unwrap();
+    let file = "handle_transaction.log";
+    let component = "HandleTransaction";
+    let mut use_current_date = true; // This can be made dynamic based on flags if needed
+
+    // Find the existing transaction in the database
+    if transaction.transaction_type == TransactionType::Sale {
+        let existing_transaction = TransactionQuery::get_all(
+            conn,
+            TransactionPaginationQueryDto::new(1, 1)
+                .set_transaction_type(TransactionType::Purchase)
+                .set_wfm_id(transaction.wfm_id.clone())
+                .set_sub_type(transaction.sub_type.clone())
+                .set_sort_by("created_at")
+                .set_sort_direction(SortDirection::Desc),
+        )
+        .await?;
+        if let Some(purchase_transaction) = existing_transaction.results.first() {
+            let purchase_price_per_unit =
+                purchase_transaction.price / purchase_transaction.quantity;
+
+            let sold_price_per_unit = transaction.price / transaction.quantity;
+
+            let total_profit =
+                (sold_price_per_unit - purchase_price_per_unit) * transaction.quantity;
+
+            transaction.set_profit(total_profit);
+        }
+        // Overall credits calculation
+        transaction.set_credits(transaction.price * crate::enums::TradeItemType::Platinum.to_tax());
+    }
+
+    // If SetDate flag is present, parse the date and set it on the transaction
+    if let Some(date) = flags.get_value_after("SetDate") {
+        use_current_date = false;
+        info(
+            format!("{component}:SetDate"),
+            &format!("Setting transaction date to: {}", date),
+            &utils::LoggerOptions::default().set_enable(!flags.contains("DisableSetDateLog")),
+        );
+        transaction.created_at = chrono::DateTime::parse_from_rfc3339(&date)
+            .map_err(|e| {
+                Error::new(
+                    format!("{component}:ParseDate"),
+                    format!("Failed to parse date: {e}"),
+                    get_location!(),
+                )
+                .log(file)
+            })?
+            .with_timezone(&chrono::Utc);
+    }
+    match TransactionMutation::create(conn, &transaction, use_current_date).await {
+        Ok(updated_item) => Ok(updated_item),
+        Err(e) => return Err(e.with_location(get_location!()).log(file)),
+    }
+}

@@ -1,0 +1,28 @@
+use sea_orm::FromJsonQueryResult;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromJsonQueryResult)]
+pub struct PriceHistoryVec(pub Vec<PriceHistory>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PriceHistory {
+    #[serde(rename = "created_at")]
+    pub created_at: String,
+
+    #[serde(rename = "price")]
+    pub price: i64,
+}
+impl PriceHistory {
+    pub fn new(created_at: String, price: i64) -> Self {
+        Self { created_at, price }
+    }
+}
+
+pub fn add_price_history(items: &mut Vec<PriceHistory>, price_history: PriceHistory) {
+    if items.last().map(|p| p.price) != Some(price_history.price) {
+        if items.len() >= 5 {
+            items.remove(0);
+        }
+        items.push(price_history);
+    }
+}
