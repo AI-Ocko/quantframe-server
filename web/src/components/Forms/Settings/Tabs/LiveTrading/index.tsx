@@ -5,8 +5,6 @@ import { UseFormReturnType } from "@mantine/form";
 import { useState } from "react";
 import { GeneralPanel } from "./Tabs/General";
 import { ItemPanel } from "./Tabs/Item";
-import { RivenPanel } from "./Tabs/Riven";
-import { SyndicatePanel } from "./Tabs/Syndicate";
 
 export type LiveTradingPanelProps = {
   form: UseFormReturnType<TauriTypes.Settings>;
@@ -33,17 +31,6 @@ export const LiveTradingPanel = ({ form, onHideButtons }: LiveTradingPanelProps)
       component: <ItemPanel form={form} />,
       id: "item",
     },
-    {
-      label: useTranslateTabs("live_scraper.riven.title"),
-      component: <RivenPanel form={form} />,
-      id: "riven",
-    },
-    {
-      label: useTranslateTabs("live_scraper.syndicate.title"),
-      component: <SyndicatePanel form={form} />,
-      hide: !import.meta.env.DEV,
-      id: "syndicate",
-    },
   ];
 
   const [activeTab, setActiveTab] = useState<string>(tabs[0].id);
@@ -51,13 +38,11 @@ export const LiveTradingPanel = ({ form, onHideButtons }: LiveTradingPanelProps)
   return (
     <Tabs h={"82vh"} orientation="vertical" value={activeTab} onChange={(value) => setActiveTab(value || tabs[0].id)}>
       <Tabs.List display={hideTab ? "none" : ""}>
-        {tabs
-          .filter((tab) => !tab.hide)
-          .map((tab) => (
-            <Tabs.Tab value={tab.id} key={tab.id}>
-              {tab.label}
-            </Tabs.Tab>
-          ))}
+        {tabs.map((tab) => (
+          <Tabs.Tab value={tab.id} key={tab.id}>
+            {tab.label}
+          </Tabs.Tab>
+        ))}
       </Tabs.List>
       {tabs.map((tab) => (
         <Tabs.Panel value={tab.id} key={tab.id}>

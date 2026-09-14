@@ -3,9 +3,7 @@ import { useTranslatePages } from "@hooks/useTranslate.hook";
 import { LoggingPanel } from "./tabs/logging";
 import { StatesPanel } from "./tabs/states";
 import classes from "./Debug.module.css";
-import { useHasAlert } from "@hooks/useHasAlert.hook";
 import { DebuggingPanel } from "./tabs/debugging";
-import { EELogPanel } from "./tabs/EELog";
 export default function DebugPage() {
   // Translate general
   const useTranslate = (key: string, context?: { [key: string]: any }, i18Key?: boolean) => useTranslatePages(`debug.${key}`, { ...context }, i18Key);
@@ -14,11 +12,9 @@ export default function DebugPage() {
   const tabs = [
     { label: useTranslateTabs("logging.title"), component: <LoggingPanel />, id: "logging" },
     { label: useTranslateTabs("states.title"), component: <StatesPanel />, id: "states" },
-    { label: useTranslateTabs("debugging.title"), component: <DebuggingPanel />, id: "debugging" },
-    { label: useTranslateTabs("ee_log.title"), component: <EELogPanel />, id: "ee_log" },
-  ];
+    { label: useTranslateTabs("debugging.title"), component: <DebuggingPanel />, id: "debugging" },  ];
   return (
-    <Container p={20} size={"900%"} className={`${classes.container} ${useHasAlert() ? classes.alert : ""}`}>
+    <Container p={20} size={"900%"} className={`${classes.container} ${false ? classes.alert : ""}`}>
       <Tabs defaultValue={tabs[0].id}>
         <Tabs.List>
           {tabs.map((tab) => (

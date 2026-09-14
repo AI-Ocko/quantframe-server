@@ -1,5 +1,4 @@
 import { TauriTypes } from "$types";
-import api from "@api/index";
 import { TooltipIcon } from "@components/Shared/TooltipIcon";
 import { useTranslateForms } from "@hooks/useTranslate.hook";
 import { Box, Button, Grid, Group, TextInput } from "@mantine/core";
@@ -10,7 +9,6 @@ export type LogPanelProps = {
 };
 const getFieldPath = (field: string) => `log_settings.${field}`;
 export const LogPanel = ({ form }: LogPanelProps) => {
-  const exportLogsMutation = api.log.export_logs();
   // Translate general
   const useTranslateForm = (key: string, context?: { [key: string]: any }, i18Key?: boolean) =>
     useTranslateForms(`settings.tabs.advanced.log.${key}`, { ...context }, i18Key);
@@ -34,9 +32,6 @@ export const LogPanel = ({ form }: LogPanelProps) => {
             />
           </Group>
           <Group>
-            <Button mt="md" onClick={() => exportLogsMutation.mutate()} color="blue" loading={exportLogsMutation.isPending}>
-              {useTranslateFormButtons("export_logs")}
-            </Button>
             <Button mt="md" onClick={() => notifications.cleanQueue()} color="blue">
               {useTranslateFormButtons("clean_notifications")}
             </Button>

@@ -5,7 +5,6 @@ import { DebuggingLiveItemEntryForm } from "@components/Forms/DebuggingLiveItemE
 import { ActionWithTooltip } from "@components/Shared/ActionWithTooltip";
 import { useAppContext } from "@contexts/app.context";
 import { faPen, faTrashCan } from "@fortawesome/free-solid-svg-icons";
-import { useHasAlert } from "@hooks/useHasAlert.hook";
 import { useTranslatePages } from "@hooks/useTranslate.hook";
 import { Badge, Box, Checkbox, Group, Tooltip } from "@mantine/core";
 import { useState } from "react";
@@ -67,7 +66,7 @@ export const DebuggingPanel = ({}: DebuggingPanelProps) => {
       </Group>
       <DataTable
         className={`${classes.dataTableLogging}`}
-        data-alert={useHasAlert()}
+        data-alert={false}
         mt={10}
         striped
         idAccessor={"wfm_url"}

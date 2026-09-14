@@ -1,13 +1,12 @@
-import { AppShell, Box, Indicator } from "@mantine/core";
+import { AppShell, Box } from "@mantine/core";
 import classes from "./LogInLayout.module.css";
 import { Outlet, useNavigate } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faBoxes, faBug, faEnvelope, faGlobe, faHome, faInfoCircle, faMessage } from "@fortawesome/free-solid-svg-icons";
+import { faBug, faGlobe, faHome, faInfoCircle, faMessage } from "@fortawesome/free-solid-svg-icons";
 import { useTranslateComponent } from "@hooks/useTranslate.hook";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { NavbarLinkProps, NavbarMinimalColored } from "@components/Layouts/Shared/NavbarMinimalColored";
 import { Header } from "@components/Layouts/Shared/Header";
-import { useAuthContext } from "@contexts/auth.context";
 import { open } from "@utils/openUrl";
 import { AddMetric } from "@api/index";
 import { faWarframeMarket, facTradingAnalytics } from "@icons";
@@ -16,8 +15,6 @@ import { prefetchRoute } from "../routeLoaders";
 export function LogInLayout() {
   // States
   const [lastPage, setLastPage] = useState<string>("");
-  // Contexts
-  const { user } = useAuthContext();
   // Translate general
   const useTranslate = (key: string, context?: { [key: string]: any }, i18Key?: boolean) =>
     useTranslateComponent(`layout.log_in.${key}`, { ...context }, i18Key);
@@ -71,41 +68,12 @@ export function LogInLayout() {
       },
       {
         align: "top",
-        id: "chat",
-        link: "chat",
-        icon: (
-          <Indicator
-            disabled={(user?.unread_messages || 0) <= 0}
-            label={(user?.unread_messages || 0) > 0 ? user?.unread_messages : undefined}
-            inline
-            size={16}
-            position="top-start"
-          >
-            <FontAwesomeIcon size={"lg"} icon={faEnvelope} />
-          </Indicator>
-        ),
-        onClick: (e: NavbarLinkProps) => handleNavigate(e),
-        label: useTranslateNavBar("chat"),
-        onPrefetch: () => prefetchRoute("chat"),
-      },
-      {
-        align: "top",
         id: "trading_analytics",
         link: "trading_analytics",
         icon: <FontAwesomeIcon size={"lg"} icon={facTradingAnalytics} />,
         label: useTranslateNavBar("trading_analytics"),
         onClick: (e: NavbarLinkProps) => handleNavigate(e),
         onPrefetch: () => prefetchRoute("tradingAnalytics"),
-      },
-      {
-        align: "top",
-        id: "wf_inventory",
-        link: "wf_inventory",
-        icon: <FontAwesomeIcon size={"lg"} icon={faBoxes} />,
-        label: useTranslateNavBar("wf_inventory"),
-        hide: !import.meta.env.DEV,
-        onClick: (e: NavbarLinkProps) => handleNavigate(e),
-        onPrefetch: () => prefetchRoute("wfInventory"),
       },
       {
         align: "top",
@@ -136,13 +104,8 @@ export function LogInLayout() {
         onPrefetch: () => prefetchRoute("about"),
       },
     ],
-    [user?.unread_messages, handleNavigate, devMode],
+    [handleNavigate, devMode],
   );
-
-  // Effects
-  useEffect(() => {
-    if (user?.qf_banned || user?.wfm_banned) navigate("/error/banned");
-  }, [user, navigate]);
 
   // Toggle dev mode when Shift is pressed.
   useEffect(() => {

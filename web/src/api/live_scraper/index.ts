@@ -1,15 +1,13 @@
 import { TauriClient } from "..";
 import { TauriTypes } from "$types";
+// Live trading returns in phase 3; these stubs keep the stock and wish list screens working.
 export class LiveScraperModule {
-  constructor(private readonly client: TauriClient) {}
-
-  async toggle(): Promise<void> {
-    this.client.sendInvoke("live_scraper_toggle");
-  }
-  async get_interesting_wtb_items(settings: TauriTypes.ItemSettings): Promise<TauriTypes.ItemPriceInfo[]> {
-    return await this.client.sendInvoke("live_scraper_get_interesting_wtb_items", { settings });
+  constructor(_client: TauriClient) {}
+  async toggle(): Promise<void> {}
+  async get_interesting_wtb_items(_settings: TauriTypes.ItemSettings): Promise<TauriTypes.ItemPriceInfo[]> {
+    return [];
   }
   async get_state(): Promise<{ is_running: boolean }> {
-    return await this.client.sendInvoke("live_scraper_get_state");
+    return { is_running: false };
   }
 }

@@ -18,7 +18,6 @@ import {
   faTrashCan,
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { useHasAlert } from "@hooks/useHasAlert.hook";
 import { useTauriEvent } from "@hooks/useTauriEvent.hook";
 import { useTranslateCommon, useTranslateEnums, useTranslatePages } from "@hooks/useTranslate.hook";
 import { ActionIcon, Box, Divider, Group, Image, Rating, ScrollArea, Select, SimpleGrid, Tooltip, useMantineTheme } from "@mantine/core";
@@ -181,7 +180,7 @@ export const OrderPanel = ({ isActive }: OrderPanelProps) => {
           </ActionIcon>
         </Group>
       </Group>
-      <ScrollArea mt={"md"} className={classes.orders} data-has-alert={useHasAlert()} scrollbarSize={3}>
+      <ScrollArea mt={"md"} className={classes.orders} data-has-alert={false} scrollbarSize={3}>
         {deleteAllOrdersMutation.isPending && <Loading text={`${deletingOrders.current} / ${deletingOrders.total}`} />}
         <SimpleGrid cols={4} spacing="sm">
           {paginationQuery.data?.results?.map((order, i) => (

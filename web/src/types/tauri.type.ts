@@ -89,10 +89,8 @@ export namespace TauriTypes {
     live_scraper: LiveScraperSettings;
     summary_settings: SummarySettings;
     log_settings: LogSettings;
-    advanced_settings: AdvancedSettings;
     debugging: DebuggingSettings;
     notifications: NotificationsSetting;
-    wf_inventory: WFInventorySettings;
     generate_trade_message: GenerateTradeMessageSetting;
     tos_uuid: string;
   }
@@ -271,26 +269,18 @@ export namespace TauriTypes {
     anonymous: boolean;
     auctions_limit: number;
     wfm_avatar?: string;
-    check_code: string;
     wfm_id: string;
     wfm_username: string;
     locale: string;
     order_limit: number;
     platform: string;
-    qf_access_token: string;
-    qf_banned: boolean;
-    qf_banned_reason?: string;
-    qf_banned_until?: string;
     region: string;
     wfm_status: UserStatus;
-    unread_messages: number;
     verification: boolean;
     wfm_access_token: string;
     wfm_banned: boolean;
     wfm_banned_reason?: string;
     wfm_banned_until?: string;
-    patreon_tier?: string;
-    permissions?: string;
   }
 
   //--------------------------------------------------------------------------------
@@ -305,7 +295,6 @@ export namespace TauriTypes {
     is_pre_release: boolean;
     tos_uuid: string;
     use_temp_db: boolean;
-    patreon_usernames: string[];
   }
   export interface InitializeResponds {
     app_info: AppInfo;

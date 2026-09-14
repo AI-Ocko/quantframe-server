@@ -8,7 +8,6 @@ import { ColorInfo } from "@components/Shared/ColorInfo";
 import { StatsWithSegments } from "@components/Shared/StatsWithSegments";
 import { useLiveScraperContext } from "@contexts/liveScraper.context";
 import { faDownload, faEdit, faMessage, faTrashCan } from "@fortawesome/free-solid-svg-icons";
-import { useHasAlert } from "@hooks/useHasAlert.hook";
 import { useTauriEvent } from "@hooks/useTauriEvent.hook";
 import { useTranslateCommon, useTranslateEnums, useTranslatePages } from "@hooks/useTranslate.hook";
 import { Box, Grid, Group, NumberFormatter } from "@mantine/core";
@@ -189,7 +188,7 @@ export const ItemPanel = ({ isActive }: ItemPanelProps = {}) => {
         }
       />
       <DataTable
-        className={`${classes.databaseStockItems} ${useHasAlert() ? classes.alert : ""} ${is_running ? classes.running : ""}`}
+        className={`${classes.databaseStockItems} ${false ? classes.alert : ""} ${is_running ? classes.running : ""}`}
         customRowAttributes={(record) => {
           return {
             "data-color-mode": "box-shadow",

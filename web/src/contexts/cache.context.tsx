@@ -33,28 +33,17 @@ export function CacheContextProvider({ children }: CacheContextProviderProps) {
     staleTime: Infinity, // Cache forever - items rarely change
   });
 
-  const {
-    data: weapons,
-    isLoading: isLoadingWeapons,
-    refetch: refetchWeapons,
-  } = useQuery({
-    queryKey: ["cache_riven_weapons"],
-    queryFn: () => api.cache.getRivenWeapons(),
-    staleTime: Infinity, // same here
-  });
-
   const contextValue = useMemo(
     () => ({
       tradableItems: tradableItems || [],
-      weapons: weapons || [],
-      isLoading: isLoadingItems || isLoadingWeapons,
+      weapons: [],
+      isLoading: isLoadingItems,
     }),
-    [tradableItems, weapons, isLoadingItems, isLoadingWeapons],
+    [tradableItems, isLoadingItems],
   );
 
   const handleRefresh = async () => {
     api.cache.clearCache(); // Clear in-memory cache to ensure fresh data
-    await refetchWeapons();
     await refetchItems();
   };
 

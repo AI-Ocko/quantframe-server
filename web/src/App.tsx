@@ -1,5 +1,4 @@
 import { AppRoutes } from "@components/Layouts/Routes";
-import { PatreonModal } from "@components/Modals/PatreonModal/indexx";
 import { PromptModal } from "@components/Modals/Prompt";
 import { AppContextProvider } from "@contexts/app.context";
 import { dom, library } from "@fortawesome/fontawesome-svg-core";
@@ -12,7 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import i18n from "i18next";
 import { useEffect, useState } from "react";
 import { initReactI18next } from "react-i18next";
-import api from "./api";
+import "./api";
 import { ThemeProvider, useTheme } from "./contexts/theme.context";
 import classes from "./modals.module.css";
 const ICONS = [
@@ -61,7 +60,6 @@ export const queryClient = new QueryClient({
 });
 const modals = {
   prompt: PromptModal,
-  patreon: PatreonModal,
   /* ...other modals */
 };
 export interface MantineModalsOverride {
@@ -101,9 +99,6 @@ function AppContent() {
 }
 
 function App() {
-  useEffect(() => {
-    window.onclick = async () => await api.analytics.setLastUserActivity();
-  }, []);
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>

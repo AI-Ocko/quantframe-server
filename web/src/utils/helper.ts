@@ -207,10 +207,7 @@ export const GetChatLinkName = async (
 ): Promise<Record<string, DisplaySettings>> => {
   if (!value) return { link: { value: "<Unknown Item>" } };
 
-  let item =
-    ("wfm_id" in value && value.wfm_id && (await api.cache.getTradableItemById(value.wfm_id))) ||
-    ("wfm_weapon_id" in value && value.wfm_weapon_id && (await api.cache.getRivenWeaponsById(value.wfm_weapon_id))) ||
-    ("wfm_id" in value && value.wfm_id && (await api.cache.getRivenWeaponsById(value.wfm_id)));
+  let item = "wfm_id" in value && value.wfm_id ? await api.cache.getTradableItemById(value.wfm_id) : undefined;
 
   const display: Record<string, DisplaySettings> = {};
 
@@ -221,12 +218,8 @@ export const GetChatLinkName = async (
 
   if ("name" in value) setValue(display, settings, "name", `${value.name}`);
 
-  // Chat link
-  if (item && item.uniqueName) {
-    const chatLink = await api.cache.get_chat_link(item.uniqueName!);
-    display["link"] = { value: chatLink.link };
-    if (chatLink.suffix) display["type"] = { value: chatLink.suffix };
-  }
+  // Chat link: the in-game chat link is the item name in brackets, supplied by the template
+  if (item) display["link"] = { value: item.name };
 
   // Mod name
   if ("mod_name" in value) setValue(display, settings, "mod_name", `${value.mod_name}`);

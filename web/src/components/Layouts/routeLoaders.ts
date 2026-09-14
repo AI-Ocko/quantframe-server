@@ -5,15 +5,11 @@ export const routeLoaders = {
   login: () => import("@pages/auth/login"),
   debug: () => import("@pages/debug"),
   error: () => import("@pages/error"),
-  banned: () => import("@pages/banned"),
   liveScraper: () => import("@pages/live_scraper"),
   tradingAnalytics: () => import("@pages/trading_analytics"),
   warframeMarket: () => import("@pages/warframe_market"),
-  chat: () => import("@pages/chat"),
   tradeMessages: () => import("@pages/trade_messages"),
   about: () => import("@pages/about"),
-  clean: () => import("@pages/clean"),
-  wfInventory: () => import("@pages/wf_inventory"),
 } as const satisfies Record<string, RouteLoader>;
 
 export type RouteLoaderKey = keyof typeof routeLoaders;
@@ -39,11 +35,8 @@ export const prefetchLoggedInRoutes = () => {
     "tradingAnalytics",
     "tradeMessages",
     "warframeMarket",
-    "chat",
     "about",
     "login",
     "error",
-    "banned",
-    "clean",
   ]);
 };

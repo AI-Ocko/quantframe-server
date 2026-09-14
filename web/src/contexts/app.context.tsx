@@ -1,4 +1,4 @@
-import { QuantframeApiTypes, ResponseError, TauriTypes } from "$types";
+import { ResponseError, TauriTypes } from "$types";
 import api from "@api/index";
 import { SplashScreen } from "@components/Layouts/Shared/SplashScreen";
 import { TextTranslate } from "@components/Shared/TextTranslate";
@@ -39,7 +39,6 @@ interface NotificationData {
 export type AppContextProps = {
   app_info: TauriTypes.AppInfo | undefined;
   app_error: AppError | undefined;
-  alerts: QuantframeApiTypes.AlertDto[];
   settings: TauriTypes.Settings | undefined;
   loading?: boolean;
   setLang?: (lang: string) => void;
@@ -51,7 +50,6 @@ export type AppContextProviderProps = {
 export const AppContext = createContext<AppContextProps>({
   settings: undefined,
   app_info: undefined,
-  alerts: [],
   app_error: undefined,
 });
 
@@ -69,7 +67,7 @@ export function AppContextProvider({ children }: AppContextProviderProps) {
   const [error, setError] = useState<AppError | undefined>(undefined);
 
   if (window.location.href.includes("clean"))
-    return <AppContext.Provider value={{ settings: undefined, alerts: [], app_info: undefined, app_error: error }}>{children}</AppContext.Provider>;
+    return <AppContext.Provider value={{ settings: undefined, app_info: undefined, app_error: error }}>{children}</AppContext.Provider>;
 
   const { data: settings, refetch: refetchSettings } = api.app.get_settings();
   const { data: app_info, refetch: refetchAppInfo } = api.app.get_app_info();
@@ -130,7 +128,6 @@ export function AppContextProvider({ children }: AppContextProviderProps) {
   const contextValue = useMemo(
     () => ({
       settings,
-      alerts: [],
       app_info,
       app_error: error,
       loading,

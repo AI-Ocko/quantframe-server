@@ -43,12 +43,4 @@ export class TransactionModule {
   deleteBulk = async (ids: number[]): Promise<{ deleted_count: number }> => {
     return await this.client.sendInvoke<{ deleted_count: number }>("transaction_delete_bulk", { ids });
   };
-  exportJson = async (query: TauriTypes.TransactionControllerGetListParams): Promise<string> => {
-    return await this.client.sendInvoke<string>("export_transaction_json", {
-      query: this.client.convertToTauriQuery(query),
-    });
-  };
-  calculateTax = async (): Promise<void> => {
-    return await this.client.sendInvoke<void>("transaction_calculate_tax");
-  };
 }

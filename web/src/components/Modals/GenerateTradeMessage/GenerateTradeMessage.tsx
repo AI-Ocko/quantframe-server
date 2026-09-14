@@ -6,7 +6,6 @@ import { Autocomplete, Box, Divider, Grid, Group, Image, Select, Stack, Tabs, Te
 import { useForm } from "@mantine/form";
 import { upperFirst } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { useQuery } from "@tanstack/react-query";
 import { ApplyTemplate, DisplaySettings, GetChatLinkNameMultiple, GroupByKey } from "@utils/helper";
 import { DataTable } from "mantine-datatable";
 import { useEffect, useState } from "react";
@@ -38,10 +37,8 @@ export function GenerateTradeMessageModal({ prefix, template, suffix, displaySet
   });
 
   // Fetch data from rust side
-  const { data: chatIcons } = useQuery({
-    queryKey: ["cache_chat_icons"],
-    queryFn: () => api.cache.getChatIcons(),
-  });
+  // Chat icon data came from the Quantframe cache, which the server version does not have.
+  const chatIcons: { name: string; code: string; url: string }[] = [];
 
   // Fetch settings from rust side
   const { data: settings, refetch } = api.app.get_settings();

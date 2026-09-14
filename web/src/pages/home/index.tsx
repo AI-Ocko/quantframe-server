@@ -11,7 +11,6 @@ import { StatsWithIcon } from "@components/Shared/StatsWithIcon";
 import { BarCardChart } from "@components/Shared/BarCardChart";
 import { ColorInfo } from "@components/Shared/ColorInfo";
 import { TransactionListItem } from "@components/DataDisplay/TransactionListItem";
-import { useHasAlert } from "@hooks/useHasAlert.hook";
 import { useTauriEvent } from "@hooks/useTauriEvent.hook";
 import { BestByCategoryTable } from "@components/DataDisplay/BestByCategoryTable";
 import { BarChartFinancialSummary } from "../../components/DataDisplay/BarChartFinancialSummary";
@@ -31,7 +30,7 @@ export default function HomePage() {
   useTauriEvent(TauriTypes.Events.RefreshTransactions, handleRefresh, []);
   return (
     <Container size={"100%"}>
-      <Grid className={classes.wrapper} data-has-alert={useHasAlert()}>
+      <Grid className={classes.wrapper} data-has-alert={false}>
         <Grid.Col span={4}>
           <StatsWithIcon
             count={summary?.total.total_profit || 0}
@@ -166,7 +165,7 @@ export default function HomePage() {
               </Group>
             </Group>
             <Divider />
-            <ScrollArea className={classes.transactions} p={10} data-has-alert={useHasAlert()}>
+            <ScrollArea className={classes.transactions} p={10} data-has-alert={false}>
               {summary?.resent_transactions.map((transaction, index) => (
                 <TransactionListItem key={index} transaction={transaction} />
               ))}

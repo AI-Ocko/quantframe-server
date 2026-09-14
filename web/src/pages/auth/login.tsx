@@ -37,12 +37,12 @@ export default function LoginPage() {
     },
     onSuccess: async (u) => {
       if (!u) return;
-      setIsBanned(u.qf_banned);
-      if (u.qf_banned)
+      setIsBanned(u.wfm_banned);
+      if (u.wfm_banned)
         return notifications.show({ title: useTranslateErrors("login.title"), message: useTranslateErrors("login.banned"), color: "red.7" });
       if (!u.verification)
         return notifications.show({ title: useTranslateErrors("login.title"), message: useTranslateErrors("login.verification"), color: "red.7" });
-      setBannedReason(u.qf_banned_reason);
+      setBannedReason(u.wfm_banned_reason);
       notifications.show({
         title: useTranslateSuccess("login.title"),
         message: useTranslateSuccess("login.message", { name: u.wfm_username }),

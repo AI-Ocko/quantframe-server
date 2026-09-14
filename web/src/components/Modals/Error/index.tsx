@@ -1,10 +1,9 @@
 import { useTranslateModals } from "@hooks/useTranslate.hook";
-import { Text, Alert, Box, Button } from "@mantine/core";
+import { Text, Alert, Box } from "@mantine/core";
 import { ResponseError, TauriTypes } from "$types";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faExclamationTriangle } from "@fortawesome/free-solid-svg-icons";
 import { TextTranslate } from "../../Shared/TextTranslate";
-import api from "@api/index";
 
 export interface ErrorModalProps {
   app_info: TauriTypes.AppInfo | undefined;
@@ -14,7 +13,6 @@ export interface ErrorModalProps {
 export function ErrorModal({ error, app_info }: ErrorModalProps) {
   const useTranslateModal = (key: string, ctx?: Record<string, any>, raw?: boolean) => useTranslateModals(`app_error.${key}`, ctx, raw);
 
-  const mutateExportLogs = api.log.export_logs();
   return (
     <Box>
       <Alert
@@ -41,15 +39,6 @@ export function ErrorModal({ error, app_info }: ErrorModalProps) {
         <TextTranslate color="white" i18nKey={useTranslateModal("location", undefined, true)} values={{ location: error?.location || "Unknown" }} />
         <Text>{useTranslateModal("footer", {})}</Text>
       </Alert>
-      <Button
-        mt={16}
-        loading={mutateExportLogs.isPending}
-        onClick={() => {
-          mutateExportLogs.mutate();
-        }}
-      >
-        {useTranslateModal("export_log")}
-      </Button>
     </Box>
   );
 }

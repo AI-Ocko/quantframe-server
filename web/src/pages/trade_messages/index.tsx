@@ -1,10 +1,9 @@
 import { useMemo } from "react";
 import { Tabs } from "@mantine/core";
 import { useTranslatePages } from "@hooks/useTranslate.hook";
-import { ItemPanel, RivenPanel, CustomPanel } from "./Tabs";
+import { ItemPanel, CustomPanel } from "./Tabs";
 import { useLocalStorage } from "@mantine/hooks";
 import classes from "./TradeMessages.module.css";
-import { useHasAlert } from "@hooks/useHasAlert.hook";
 
 export default function TradeMessagesPage() {
   // Translate general
@@ -24,12 +23,6 @@ export default function TradeMessagesPage() {
       component: (isActive: boolean) => <CustomPanel isActive={isActive} />,
       id: "custom",
     },
-    {
-      label: useTranslateTabs("riven.title"),
-      component: (isActive: boolean) => <RivenPanel isActive={isActive} />,
-      id: "riven",
-      isPremium: true,
-    },
   ], []);
 
   const [activeTab, setActiveTab] = useLocalStorage<string>({
@@ -38,10 +31,10 @@ export default function TradeMessagesPage() {
   });
 
   return (
-    <Tabs value={activeTab} onChange={(value) => setActiveTab(value || tabs[0].id)} data-has-alert={useHasAlert()} className={classes.tabs}>
+    <Tabs value={activeTab} onChange={(value) => setActiveTab(value || tabs[0].id)} data-has-alert={false} className={classes.tabs}>
       <Tabs.List>
         {tabs.map((tab) => (
-          <Tabs.Tab value={tab.id} key={tab.id} rightSection={tab.isPremium ? "👑" : undefined}>
+          <Tabs.Tab value={tab.id} key={tab.id}>
             {tab.label}
           </Tabs.Tab>
         ))}

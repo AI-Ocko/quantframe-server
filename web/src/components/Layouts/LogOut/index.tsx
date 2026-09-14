@@ -10,7 +10,7 @@ export function LogOutLayout() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (user?.qf_banned || user?.wfm_banned) navigate("/error/banned");
+    if (user?.wfm_banned) navigate("/error/banned");
   }, [user]);
   return (
     <AppShell classNames={classes} header={{ height: 65 }}>

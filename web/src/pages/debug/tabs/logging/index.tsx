@@ -7,7 +7,6 @@ import { ActionWithTooltip } from "@components/Shared/ActionWithTooltip";
 import { faTrash } from "@fortawesome/free-solid-svg-icons";
 import { DataTable } from "mantine-datatable";
 import { useTranslatePages } from "@hooks/useTranslate.hook";
-import { useHasAlert } from "@hooks/useHasAlert.hook";
 import classes from "../../Debug.module.css";
 import { modals } from "@mantine/modals";
 interface LoggingPanelProps {}
@@ -51,7 +50,7 @@ export const LoggingPanel = ({}: LoggingPanelProps) => {
       <SearchField value={search} onChange={(e) => setSearch(e)} />
       <DataTable
         className={`${classes.databaseLogging}`}
-        data-alert={useHasAlert()}
+        data-alert={false}
         mt={10}
         striped
         idAccessor={"command"}

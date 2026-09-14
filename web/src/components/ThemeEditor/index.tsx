@@ -1,7 +1,7 @@
+import { downloadJson } from "@utils/downloadJson";
 import { Group, Text, ColorInput, Accordion, Box, Card, TextInput, Button } from "@mantine/core";
 import { useTheme } from "@contexts/theme.context";
 import { useTranslateComponent, useTranslateEnums } from "@hooks/useTranslate.hook";
-import api from "../../api";
 import { useForm } from "@mantine/form";
 import { useMutation } from "@tanstack/react-query";
 import { notifications } from "@mantine/notifications";
@@ -101,7 +101,8 @@ export function LiveThemeEditor({ onNewTheme }: LiveThemeEditorProps) {
   });
 
   const exportTheme = useMutation({
-    mutationFn: (data: { name: string; author: string; properties: any }) => api.cache.createTheme(data.name, data.author, data.properties),
+    mutationFn: async (data: { name: string; author: string; properties: any }) =>
+      downloadJson(`${data.name}.json`, { name: data.name, author: data.author, iconBase64: "", properties: data.properties }),
     onSuccess: () => {
       onNewTheme?.();
       notifications.show({
@@ -275,7 +276,6 @@ export function LiveThemeEditor({ onNewTheme }: LiveThemeEditorProps) {
             >
               {useTranslateButtons("import_from_clipboard")}
             </Button>
-            <Button onClick={() => api.cache.openThemeFolder()}>{useTranslateButtons("open_themes_folder")}</Button>
           </Group>
           <Group mt={"md"}>
             <TextInput

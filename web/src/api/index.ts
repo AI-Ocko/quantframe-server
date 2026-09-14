@@ -1,31 +1,20 @@
 import { ResponseError, TauriTypes } from "$types";
 import { rpcInvoke as invoke } from "./transport";
-import { AlertModule } from "./alert";
-import { AnalyticsModule } from "./analytics";
 import { AppModule } from "./app";
-import { AuctionModule } from "./auction";
 import { AuthModule } from "./auth";
 import { CacheModule } from "./cache";
-import { ChatModule } from "./chat";
 import { DashboardModule } from "./dashboard";
 import { DebugModule } from "./debug";
 import { EventModule } from "./events";
 import { HandlesModule } from "./handles";
-import { ItemModule } from "./item";
 import { LiveScraperModule } from "./live_scraper";
 import { LogModule } from "./log";
-import { LogParserModule } from "./log_parser";
-import { MarketModule } from "./market";
 import { OrderModule } from "./order";
-import { RivenModule } from "./riven";
 import { SoundModule } from "./sound";
 import { StockItemModule } from "./stack_item";
-import { StockRivenModule } from "./stack_riven";
-import { SyndicateModule } from "./syndicate";
 import { TradeEntryModule } from "./trade_entry";
 import { TransactionModule } from "./transaction";
 import { UserModule } from "./user";
-import { WfInventoryModule } from "./wf_inventory";
 import { WishListModule } from "./wish_list";
 
 export class TauriClient {
@@ -36,31 +25,20 @@ export class TauriClient {
   constructor() {
     this.app = new AppModule(this);
     this.dashboard = new DashboardModule(this);
-    this.alert = new AlertModule(this);
     this.events = new EventModule(this);
     this.auth = new AuthModule(this);
     this.user = new UserModule(this);
     this.cache = new CacheModule(this);
-    this.analytics = new AnalyticsModule(this);
     this.live_scraper = new LiveScraperModule(this);
     this.log = new LogModule(this);
     this.stock_item = new StockItemModule(this);
-    this.stock_riven = new StockRivenModule(this);
     this.wish_list = new WishListModule(this);
     this.debug = new DebugModule(this);
     this.order = new OrderModule(this);
-    this.chat = new ChatModule(this);
-    this.auction = new AuctionModule(this);
     this.transaction = new TransactionModule(this);
-    this.item = new ItemModule(this);
-    this.riven = new RivenModule(this);
-    this.market = new MarketModule(this);
     this.trade_entry = new TradeEntryModule(this);
-    this.log_parser = new LogParserModule(this);
     this.sound = new SoundModule(this);
     this.handlers = new HandlesModule(this);
-    this.wf_inventory = new WfInventoryModule(this);
-    this.syndicate = new SyndicateModule(this);
     this._logging = localStorage.getItem("tauri_logs") ? JSON.parse(localStorage.getItem("tauri_logs")!) : ["*"];
   }
 
@@ -182,31 +160,20 @@ export class TauriClient {
   // Modules
   app: AppModule;
   dashboard: DashboardModule;
-  alert: AlertModule;
   events: EventModule;
   cache: CacheModule;
   auth: AuthModule;
   log: LogModule;
   order: OrderModule;
-  auction: AuctionModule;
-  analytics: AnalyticsModule;
   user: UserModule;
   live_scraper: LiveScraperModule;
   stock_item: StockItemModule;
-  stock_riven: StockRivenModule;
   wish_list: WishListModule;
   debug: DebugModule;
-  chat: ChatModule;
   transaction: TransactionModule;
-  item: ItemModule;
-  riven: RivenModule;
-  market: MarketModule;
   trade_entry: TradeEntryModule;
-  log_parser: LogParserModule;
   sound: SoundModule;
   handlers: HandlesModule;
-  wf_inventory: WfInventoryModule;
-  syndicate: SyndicateModule;
 }
 
 declare global {
@@ -229,12 +196,9 @@ const SendTauriEvent = async (event: string, data?: any) => window.api.events.Fi
 const SendTauriDataEvent = async (event: string, operation: TauriTypes.EventOperations, data: any) =>
   window.api.events.FireEvent(event, { operation, data });
 const WFMThumbnail = (thumb: string) => `https://warframe.market/static/assets/${thumb}`;
-const AddMetric = (metric: string, value: number | string) => {
-  window.api.analytics.add_metric(metric, value);
-};
-const HasPermission = async (flag: TauriTypes.PermissionsFlags): Promise<boolean> => {
-  return await window.api.auth.hasPermission(flag);
-};
+// Quantframe analytics and supporter permission gating are removed in this server version.
+const AddMetric = (_metric: string, _value: number | string) => {};
+const HasPermission = async (_flag: TauriTypes.PermissionsFlags): Promise<boolean> => true;
 export {
   AddMetric,
   HasPermission,

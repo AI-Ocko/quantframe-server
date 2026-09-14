@@ -3401,7 +3401,7 @@ Repeat until the output ends with `0 missing` and the exit code is 0.
 Run: `cd web && pnpm build`
 Expected: build succeeds.
 
-Run: `grep -rni "quantframe.app\|@tauri-apps\|patreon" web/src crates`
+Run: `grep -rni "api\.quantframe\.app\|@tauri-apps\|patreon" web/src crates` (links to the quantframe.app documentation website are fine)
 Expected: no output.
 
 - [ ] **Step 5: Manual smoke test against the local server**

@@ -60,7 +60,7 @@ export function UserMenu() {
   const IsConnected = () => {
     if (!user) return false;
     if (user.anonymous) return false;
-    if (user.qf_banned || user.wfm_banned) return false;
+    if (user.wfm_banned) return false;
     if (app_error && app_error.hasOperation("Main:Disconnected")) return false;
     // return !!user && !user.anonymous && !app_error;
     return true;
@@ -69,7 +69,7 @@ export function UserMenu() {
   const IsAuthenticated = () => {
     if (!user) return false;
     if (user.anonymous) return false;
-    if (user.qf_banned || user.wfm_banned) return false;
+    if (user.wfm_banned) return false;
     if (!user.verification) return false;
     return true;
   };

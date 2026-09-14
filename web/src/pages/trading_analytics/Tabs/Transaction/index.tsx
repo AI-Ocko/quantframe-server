@@ -9,14 +9,12 @@ import { useTranslateCommon, useTranslateEnums, useTranslatePages } from "@hooks
 import classes from "../../TradingAnalytics.module.css";
 import { DataTable } from "mantine-datatable";
 import { getSafePage } from "@utils/helper";
-import { useHasAlert } from "@hooks/useHasAlert.hook";
 import { ColorInfo } from "@components/Shared/ColorInfo";
 import { SelectItemTags } from "@components/Forms/SelectItemTags";
 import { ActionWithTooltip } from "@components/Shared/ActionWithTooltip";
-import { faCalculator, faCoins, faDownload, faHammer, faTrash } from "@fortawesome/free-solid-svg-icons";
+import { faCoins, faHammer, faTrash } from "@fortawesome/free-solid-svg-icons";
 import { useMutations } from "./mutations";
 import { useModals } from "./modals";
-import { HasPermission } from "@api/index";
 import { DatePickerInput } from "@mantine/dates";
 import dayjs from "dayjs";
 import { ItemName } from "@components/DataDisplay/ItemName";
@@ -56,16 +54,10 @@ export const TransactionPanel = ({ isActive }: TransactionPanelProps = {}) => {
   const [selectedRecords, setSelectedRecords] = useState<TauriTypes.TransactionDto[]>([]); // New state for selected records
   const [showReport, setShowReport] = useState<boolean>(false);
   const [filterOpened, setFilterOpened] = useState<boolean>(false);
-  const [canExport, setCanExport] = useState<boolean>(false);
 
   // Progressive rendering === allows navigation during table render (without it ui freezes until table loads)
   const [isPending, startTransition] = useTransition();
   const [displayedRecords, setDisplayedRecords] = useState<TauriTypes.TransactionDto[]>([]);
-
-  // Check permissions for export on mount
-  useEffect(() => {
-    HasPermission(TauriTypes.PermissionsFlags.EXPORT_DATA).then((res) => setCanExport(res));
-  }, []);
 
   // Queries
   const { paginationQuery, financialReportQuery, refetchQueries } = useQueries({ queryData, isActive, loadFinancialReport: showReport });
@@ -75,7 +67,7 @@ export const TransactionPanel = ({ isActive }: TransactionPanelProps = {}) => {
   };
 
   // Mutations
-  const { exportMutation, updateMutation, deleteMutation, deleteMultipleMutation, calculateTaxMutation } = useMutations({
+  const { updateMutation, deleteMutation, deleteMultipleMutation } = useMutations({
     refetchQueries,
     setLoadingRows,
   });
@@ -141,26 +133,12 @@ export const TransactionPanel = ({ isActive }: TransactionPanelProps = {}) => {
         rightSection={
           <Group gap={3}>
             <ActionWithTooltip
-              tooltip={useTranslateButtons("export_transactions_tooltip")}
-              icon={faDownload}
-              iconProps={{ size: "xs" }}
-              actionProps={{ size: "sm", disabled: !canExport }}
-              onClick={() => exportMutation.mutate(queryData)}
-            />
-            <ActionWithTooltip
               tooltip={useTranslateButtons("show_financial_report_tooltip")}
               color={showReport ? "blue" : "gray"}
               icon={faCoins}
               iconProps={{ size: "xs" }}
               actionProps={{ size: "sm" }}
               onClick={() => setShowReport((prev) => !prev)}
-            />
-            <ActionWithTooltip
-              tooltip={useTranslateButtons("calculate_tax_tooltip")}
-              icon={faCalculator}
-              iconProps={{ size: "xs" }}
-              actionProps={{ size: "sm" }}
-              onClick={() => calculateTaxMutation.mutate(undefined)}
             />
             <ActionWithTooltip
               tooltip={useTranslateButtons("delete_all_tooltip", { count: selectedRecords.length })}
@@ -211,10 +189,10 @@ export const TransactionPanel = ({ isActive }: TransactionPanelProps = {}) => {
             </Group>
           </Group>
           <DataTable
-            className={`${classes.databaseTransactions} ${useHasAlert() ? classes.alert : ""} ${filterOpened ? classes.filterOpened : ""}`}
+            className={`${classes.databaseTransactions} ${false ? classes.alert : ""} ${filterOpened ? classes.filterOpened : ""}`}
             mt={"md"}
             striped
-            fetching={paginationQuery.isFetching || isPending || calculateTaxMutation.isPending}
+            fetching={paginationQuery.isFetching || isPending}
             records={displayedRecords}
             page={getSafePage(queryData.page, paginationQuery.data?.total_pages)}
             onPageChange={(page) => setQueryData((prev) => ({ ...prev, page }))}
@@ -378,10 +356,10 @@ export const TransactionPanel = ({ isActive }: TransactionPanelProps = {}) => {
             </Grid.Col>
           </Grid>
           <DataTable
-            className={`${classes.databaseTradingPartners} ${useHasAlert() ? classes.alert : ""} ${filterOpened ? classes.filterOpened : ""}`}
+            className={`${classes.databaseTradingPartners} ${false ? classes.alert : ""} ${filterOpened ? classes.filterOpened : ""}`}
             mt={"md"}
             striped
-            fetching={paginationQuery.isFetching || calculateTaxMutation.isPending}
+            fetching={paginationQuery.isFetching}
             records={financialReportQuery.data?.properties.trading_partners || []}
             idAccessor={"properties.user"}
             // define columns

@@ -3,7 +3,6 @@ import { useTranslateForms } from "@hooks/useTranslate.hook";
 import { Tabs } from "@mantine/core";
 import { UseFormReturnType } from "@mantine/form";
 import { useState } from "react";
-import { HttpServerPanel } from "./Tabs/HttpServer";
 import { LogPanel } from "./Tabs/Log";
 
 export type AdvancedPanelProps = {
@@ -16,11 +15,6 @@ export const AdvancedPanel = ({ form }: AdvancedPanelProps) => {
     useTranslateForms(`settings.tabs.advanced.${key}`, { ...context }, i18Key);
 
   const tabs = [
-    {
-      label: useTranslateForm("http_server.title"),
-      component: <HttpServerPanel form={form} />,
-      id: "http_server",
-    },
     {
       label: useTranslateForm("log.title"),
       component: <LogPanel form={form} />,

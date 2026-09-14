@@ -7,7 +7,6 @@ import { useTranslateCommon, useTranslatePages } from "@hooks/useTranslate.hook"
 import classes from "../TradeMessages.module.css";
 import { DataTable } from "mantine-datatable";
 import { getSafePage } from "@utils/helper";
-import { useHasAlert } from "@hooks/useHasAlert.hook";
 import { useForm } from "@mantine/form";
 import { ActionWithTooltip } from "@components/Shared/ActionWithTooltip";
 import { faCalculator, faDownload, faEdit, faMessage, faPlus, faSearch, faTrash, faTrashCan } from "@fortawesome/free-solid-svg-icons";
@@ -232,7 +231,7 @@ export const TradeEntryList = ({
         }
       />
       <DataTable
-        className={`${classes.databaseItem} ${useHasAlert() ? classes.alert : ""} ${filterOpened ? classes.filterOpened : ""}`}
+        className={`${classes.databaseItem} ${false ? classes.alert : ""} ${filterOpened ? classes.filterOpened : ""}`}
         mt={"md"}
         striped
         customLoader={<Loading />}

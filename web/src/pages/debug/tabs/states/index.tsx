@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { DataTable } from "mantine-datatable";
 interface StatesPanelProps {}
 export const StatesPanel = ({}: StatesPanelProps) => {
-  const { app_info, app_error, alerts, settings } = useAppContext();
+  const { app_info, app_error, settings } = useAppContext();
   const { user } = useAuthContext();
 
   // Translate general
@@ -54,21 +54,6 @@ export const StatesPanel = ({}: StatesPanelProps) => {
         <Accordion.Panel>
           <JsonInput
             value={JSON.stringify(app_error, null, 2)}
-            validationError="Invalid JSON"
-            formatOnBlur
-            autosize
-            minRows={10}
-            maxRows={20}
-            readOnly
-            style={{ width: "100%" }}
-          />
-        </Accordion.Panel>
-      </Accordion.Item>
-      <Accordion.Item value="alerts">
-        <Accordion.Control>{useTranslateDataGridColumns("alerts")}</Accordion.Control>
-        <Accordion.Panel>
-          <JsonInput
-            value={JSON.stringify(alerts, null, 2)}
             validationError="Invalid JSON"
             formatOnBlur
             autosize
