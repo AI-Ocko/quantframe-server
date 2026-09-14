@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quantframe Server — Sign in</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #1a1b1e; color: #c1c2c5; font: 15px system-ui, sans-serif; }
+    form { width: min(320px, calc(100% - 32px)); display: grid; gap: 12px; }
+    h1 { font-size: 20px; margin: 0 0 8px; color: #fff; }
+    input, button { font: inherit; padding: 10px 12px; border-radius: 6px; border: 1px solid #373a40; }
+    input { background: #25262b; color: #fff; }
+    button { background: #228be6; border-color: #228be6; color: #fff; cursor: pointer; }
+    .error { color: #fa5252; margin: 0; }
+  </style>
+</head>
+<body>
+  <form method="post" action="/login">
+    <h1>Quantframe Server</h1>
+    <p class="error" id="error" hidden>Wrong password.</p>
+    <input type="password" name="password" placeholder="Server password" autocomplete="current-password" required autofocus>
+    <button type="submit">Sign in</button>
+  </form>
+  <script>
+    if (new URLSearchParams(location.search).has("error")) document.getElementById("error").hidden = false;
+  </script>
+</body>
+</html>

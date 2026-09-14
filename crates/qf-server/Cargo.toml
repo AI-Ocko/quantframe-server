@@ -1,0 +1,29 @@
+[package]
+name = "qf-server"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+
+[lib]
+name = "qf_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "qf-server"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs"] }
+tower = "0.5"
+tokio = { version = "1.45.1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+getrandom = "0.2"
+hex = "0.4"
+qf_core = { path = "../qf_core" }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tempfile = "3"
