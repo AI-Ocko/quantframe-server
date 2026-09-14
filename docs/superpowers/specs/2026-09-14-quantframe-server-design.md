@@ -137,18 +137,19 @@ Replaces the Quantframe `cache` zip and `TradableItems.json`.
 
 **Sources**
 
-- **WFM `/v2/items`:** `id`, `slug`, `tags`, `ducats`, `bulkTradable`, `maxRank`, amber/cyan stars, `reqMasteryRank` and i18n name/icon. This is the list of tradable items the collector sweeps.
-- **WFCD `warframe-items`:** in-game `uniqueName`, display names, trade tax and variant info. The log parser uses it to turn in-game names from EE.log into WFM items.
-- **`overrides.toml`:** a manual slug↔uniqueName mapping for items that don't match automatically.
+- **WFM `/v2/items`** (3,840 items, verified 2026-09-14): `id`, `slug`, `gameRef`, `tags`, `i18n{name, icon, thumb}`, plus `maxRank`, `bulkTradable`, `subtypes`, `vaulted`, `ducats` and amber/cyan stars where they apply. This is the list of tradable items the collector sweeps. `gameRef` is the in-game unique name and is non-empty on 3,805 items.
+- **WFCD `warframe-items`** (category files such as `data/json/Arcanes.json`): `uniqueName`, `name`, `category`, `type`, `tradable` and `rarity`. The log parser uses it to resolve in-game display names from EE.log to a `uniqueName`, looked up per category like upstream `cache.arcane().get_by(name)`.
+- **`overrides.toml`:** a manual slug↔uniqueName mapping for WFM items with an empty `gameRef`, or for display names that don't resolve.
 
 **How it's used**
 
-- **Matching:** a `uniqueName` matches when the names agree exactly (case-insensitive, whitespace normalised), with suffix variants handled for blueprints and sets. Anything else must be listed in `overrides.toml`.
+- **Matching:** an exact join of WFM `gameRef` to WFCD `uniqueName`. Names are not compared. Unmatched items and empty `gameRef`s fall back to `overrides.toml`.
+- **Trade tax:** neither source has a trade-tax field, so it is dropped. Upstream used it only for the credits display on stock and wish-list entries; those fields become `0` and are hidden in the UI.
 - **Refresh:** on startup and then daily. The last good copy stays on disk, and a failed refresh keeps using it.
 - **Unmatched items:** exposed in the UI (`game_data_unmatched`) so they can be added to the overrides.
 - **Upstream users:** `TradableItem` lookups (`get_by(slug)`, `bulk_tradable`, name and icon for order properties) are backed by this data. The riven weapon and attribute caches load from WFM `/riven/weapons` and `/riven/attributes`, which riven stock records need.
 
-**Before planning, confirm the exact fields** in the WFCD `warframe-items` JSON: `uniqueName`, `name`, `tradable`, the trade-tax field name, and `components` for sets. Do this by downloading the dataset, not from memory (§13).
+Fields verified 2026-09-14 against live WFM `/v2/items` and WFCD `Arcanes.json`.
 
 ### 5.3 Limiter
 
@@ -169,7 +170,12 @@ Replaces the Quantframe `cache` zip and `TradableItems.json`.
   4. Diff against `last_seen_orders` to produce `vanished_orders`.
   5. Update `last_seen_orders`.
   6. Recompute `item_stats` for the item.
-- **Before planning, confirm the v2 response shape** by recording real responses as test fixtures: order `id`, `type`, `platinum`, `quantity`, `rank`/`subtype`, `user.id` and `user.status`, and `createdAt`/`updatedAt` (§13).
+- **v2 response shape** (verified 2026-09-14):
+  - `data` is an array of every order for the item, including offline users. Arcane Energize had 1,494 orders.
+  - Each order has `id`, `type` (`sell`/`buy`), `platinum`, `quantity`, `perTrade`, `visible`, `createdAt`, `updatedAt`, `itemId` and `user{id, ingameName, slug, reputation, platform, crossplay, status (offline/online/ingame), lastSeen, activity}`.
+  - Ranked items add `rank`; relics and similar items add `subtype`; items like sets have neither.
+  - A price edit keeps the same `id` and changes `updatedAt`, so edits are not vanishes.
+- **Keeping `last_seen_orders` small:** a sweep writes only the difference. It inserts new IDs, deletes vanished IDs, and updates rows whose price or quantity changed. The per-order `last_seen` column is dropped; `sweep_state.last_swept_at` covers it.
 - **Supervision:** the collector runs as a supervised task and is restarted after a panic.
 
 ### 5.5 Stats
@@ -264,18 +270,18 @@ The UI shows each condition as a checklist. **Start** is enabled only in `Ready`
 
 **Build and install**
 
-- A small console binary for the gaming PC.
-- The platform (native Windows, or Linux with Warframe under Proton/Wine) and the build target are confirmed before planning (§13).
+- A native Linux x86_64 binary; the gaming PC runs Arch Linux with Warframe under Proton. There is no cross-compile.
+- It runs as a `systemd --user` service.
 
 **Config**
 
 - The helper reads `server_url`, `device_key` and an optional `ee_log_path` from `qf-helper.toml`.
-- The default log path depends on the platform. On Windows it is `%LOCALAPPDATA%\Warframe\EE.log`. Under Proton it is inside the Steam prefix.
+- The default log path is `~/.local/share/Steam/steamapps/compatdata/230410/pfx/drive_c/users/steamuser/AppData/Local/Warframe/EE.log`, verified on the gaming PC (Steam app ID 230410).
 
 **Heartbeat**
 
 - `POST /helper/heartbeat` every 10 s with `{warframe_running, version}`.
-- `warframe_running` means a `Warframe.x64.exe` process exists. That name is also visible under Proton/Wine.
+- `warframe_running` means a process whose command line contains `Warframe.x64.exe`, found by scanning `/proc/*/cmdline`.
 
 **Trade reporting**
 
@@ -309,7 +315,7 @@ Every timestamp is stored as UTC ISO-8601 text, the same as the existing SeaORM 
 | `helper_events` | event_id PK, received_at, status (`applied`/`needs_review`/`ignored`), payload | 90 d |
 | `sweep_summary` | item_id, sub_type, swept_at, lane, min_sell, max_buy, sell_count, buy_count, sell_ingame, buy_ingame, top_sells (json), top_buys (json) | raw 30 d |
 | `sweep_summary_hourly` | item_id, sub_type, hour, min/avg/max of min_sell and max_buy, avg counts | indefinite |
-| `last_seen_orders` | order_id PK, item_id, sub_type, side, platinum, quantity, user_id, first_seen, last_seen | live set |
+| `last_seen_orders` | order_id PK, item_id, sub_type, side, platinum, quantity, user_id, first_seen, updated_at | live set |
 | `vanished_orders` | order_id, item_id, sub_type, side, platinum, quantity, user_id, first_seen, vanished_at, gap_seconds, kind (`full`/`partial`), status (`pending`/`trade`/`relist`/`bulk`/`gap`) | 90 d |
 | `item_stats` | (item_id, sub_type) PK, fields per §5.5 | current |
 | `item_stats_daily` | item_id, sub_type, day, volume, median, min, max | indefinite |
@@ -470,9 +476,9 @@ Each phase ends with something that runs on the server.
 - Syndicate mode backed by WFCD syndicate offerings.
 - Remote access over VPN.
 
-## 13. To verify before the implementation plan
+## 13. Verification status
 
-1. The WFCD `warframe-items` field names for unique name, trade tax and set components (§5.2).
-2. The v2 `/orders/item/{slug}` response shape, including rank/subtype and the user status fields (§5.4). Record fixtures while doing this.
-3. That the v2 websocket status command works with a v1 sign-in token (it did in the wfm-ledger spike on 2026-09-14; re-check in this codebase).
-4. The gaming PC platform (native Windows or Linux with Proton) and, from that, the helper's build target and default `EE.log` path (§5.8).
+1. ✅ WFCD fields and WFM `gameRef` join (§5.2). Trade tax is unavailable and dropped.
+2. ✅ v2 `/orders/item/{slug}` shape (§5.4).
+3. ⏳ The v2 websocket status command with a v1 sign-in token. It passed in the wfm-ledger spike on 2026-09-14. It needs the user's credentials, so it is re-checked as a manual step in phase 1.
+4. ✅ Gaming PC is Linux with Proton: native helper binary and a verified `EE.log` path (§5.8).
