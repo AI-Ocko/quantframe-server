@@ -1,7 +1,7 @@
 # quantframe-server — Design Spec
 
 - **Date:** 2026-09-14
-- **Status:** Approved in brainstorming; awaiting written-spec review
+- **Status:** Approved 2026-09-14. Amended by §14 during phase 1 planning.
 - **Source:** fork of [quantframe-react](https://github.com/Kenya-DK/quantframe-react) by Kenya-DK at commit `3d59c4e7` (v1.6.28)
 - **License:** GPLv3, inherited from quantframe-react. Keep the upstream `LICENSE` and credit Kenya-DK in the README.
 
@@ -438,8 +438,9 @@ Removed from the UI:
 
 Each phase ends with something that runs on the server.
 
-1. **Headless port.** Includes:
+1. **Headless port** (plan: `docs/superpowers/plans/2026-09-14-phase-1-headless-port.md`). Includes:
    - Workspace fork and the three Tauri seams (§4.2)
+   - The WFM `/v2/items` item list replacing the Quantframe item cache (§14 A1)
    - `qf_api` removed
    - WfmSession with the encrypted token
    - Web login, `/rpc`, `/ws`, downloads and uploads
@@ -448,7 +449,7 @@ Each phase ends with something that runs on the server.
 
    *Result:* stock, wish list and transactions can be managed in the browser.
 2. **Data.** Includes:
-   - GameData (WFCD, WFM items, overrides)
+   - Daily refresh of the WFM item list
    - Limiter lanes
    - Collector (hot and cold)
    - Stats and the retention job
@@ -461,6 +462,7 @@ Each phase ends with something that runs on the server.
    - Lifecycle and the Start checklist (with a manual "helper override" flag available only in dry-run, for testing before phase 4)
    - Discord stop and expiry alerts
 4. **Helper.** Includes:
+   - WFCD `warframe-items` and `overrides.toml` for EE.log name resolution (§14 A1)
    - The `qf-helper` binary
    - Device keys
    - Heartbeat and in-game detection
@@ -482,3 +484,27 @@ Each phase ends with something that runs on the server.
 2. ✅ v2 `/orders/item/{slug}` shape (§5.4).
 3. ⏳ The v2 websocket status command with a v1 sign-in token. It passed in the wfm-ledger spike on 2026-09-14. It needs the user's credentials, so it is re-checked as a manual step in phase 1.
 4. ✅ Gaming PC is Linux with Proton: native helper binary and a verified `EE.log` path (§5.8).
+
+## 14. Amendments from phase 1 planning (2026-09-14)
+
+These amendments take precedence over the earlier sections.
+
+- **A1 — Game data split across phases.** Every stock, wish-list and trade-entry handler validates items through the tradable item cache, so phase 1 needs item data.
+  - Phase 1 builds `CacheTradableItem` from WFM `/v2/items`: `gameRef` becomes `uniqueName`, and `trade_tax` is `0`.
+  - The last good copy is kept on disk.
+  - WFCD `warframe-items` and `overrides.toml` move to phase 4, because only the EE.log parser needs them.
+  - All other upstream cache modules (weapons, mods, relics and so on) are dropped. The phase 3 and 4 plans re-add them only if the trader or log parser needs them.
+- **A2 — No riven stock UI in phase 1.** The only riven stock screen was the live-scraper Riven tab. It is removed, and the `stock_riven` table and data remain. Riven trade entries are rejected with an error.
+- **A3 — No `/download` or `/upload` routes.**
+  - Exports are RPC commands that return rows; the browser saves them as a JSON Blob.
+  - Custom sounds upload as base64 through `sound_add_custom_sound`.
+  - Log export and `export_transaction_json` (which had no UI caller) are not exposed.
+  - `transaction_calculate_tax` is removed because trade tax is unavailable.
+- **A4 — `auth.json` still exists** for non-secret profile fields (username, id, avatar, status). `wfm_token` is `#[serde(skip)]` on `User`, so it is never written there or sent to the browser. The token lives only encrypted in `wfm_account`.
+- **A5 — Web login routes.** The login page is a server-rendered page at `GET|POST /login`, and logout is `POST /logout`. These replace `/auth/login` and `/auth/logout` in §7.1.
+- **A6 — Login rate limit is global.** It is 5 attempts per minute across all clients, which is stricter than per-IP and needs no connection info.
+- **A7 — The web password file is the source of truth.** On start, if `QF_WEB_PASSWORD_FILE` exists and doesn't match the stored hash, it is re-hashed. The stored hash is used only when the file is absent. The password must be at least 12 characters.
+- **A8 — Paths and database.**
+  - The data directory is `QF_DATA_DIR`, holding `quantframe.sqlite`, `sounds/`, `cache/`, `logs/` and `device_id`.
+  - Built-in sounds are served from `QF_RESOURCES_DIR/sounds` at `/sounds/builtin/*`, and custom sounds at `/sounds/custom/*`.
+  - `QF_SECRET_KEY_FILE` holds 64 hex characters (`openssl rand -hex 32`).
