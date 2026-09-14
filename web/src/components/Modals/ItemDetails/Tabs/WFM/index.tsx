@@ -2,7 +2,7 @@ import { Box, Button, Grid, Group, Text, Title } from "@mantine/core";
 import { TauriTypes, WFMarketTypes } from "$types";
 import { StatsWithSegments } from "@components/Shared/StatsWithSegments";
 import { useTranslateModals } from "@hooks/useTranslate.hook";
-import { open } from "@tauri-apps/plugin-shell";
+import { open } from "@utils/openUrl";
 export type WFMTabProps = {
   value: TauriTypes.StockItem<{
     orders?: WFMarketTypes.Order[];

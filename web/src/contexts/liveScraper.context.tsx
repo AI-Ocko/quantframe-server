@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { TauriTypes } from "$types";
 import api from "../api";
-import { invoke } from "@tauri-apps/api/core";
+import { rpcInvoke as invoke } from "@api/transport";
 import { useTauriEvent } from "../hooks/useTauriEvent.hook";
 export type LiveScraperContextProps = {
   is_running: boolean;

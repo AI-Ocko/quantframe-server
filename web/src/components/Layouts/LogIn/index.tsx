@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { NavbarLinkProps, NavbarMinimalColored } from "@components/Layouts/Shared/NavbarMinimalColored";
 import { Header } from "@components/Layouts/Shared/Header";
 import { useAuthContext } from "@contexts/auth.context";
-import { open } from "@tauri-apps/plugin-shell";
+import { open } from "@utils/openUrl";
 import { AddMetric } from "@api/index";
 import { faWarframeMarket, facTradingAnalytics } from "@icons";
 import { prefetchRoute } from "../routeLoaders";

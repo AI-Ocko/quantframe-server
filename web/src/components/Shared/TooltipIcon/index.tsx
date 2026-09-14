@@ -1,7 +1,7 @@
 import { faInfoCircle } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Center, Text, Tooltip } from "@mantine/core";
-import { open } from "@tauri-apps/plugin-shell";
+import { open } from "@utils/openUrl";
 
 export type TooltipIconProps = {
   link?: string;

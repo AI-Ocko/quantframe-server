@@ -1,8 +1,6 @@
 import { ItemWithMeta, ItemWithSubType, TauriTypes } from "$types";
 import api from "@api/index";
 import { upperFirst } from "@mantine/hooks";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { join, resolveResource } from "@tauri-apps/api/path";
 import { isCustomSound, stripCustomSoundPrefix } from "@utils/sound";
 
 export interface GroupByDateSettings {
@@ -22,37 +20,16 @@ export interface TimeSpan {
   minutes: number;
   seconds: number;
 }
-let cachedCustomSoundsPath: string | undefined;
 export const PlaySound = async (fileName: string, volume: number = 1.0) => {
+  const url = isCustomSound(fileName)
+    ? `/sounds/custom/${encodeURIComponent(stripCustomSoundPrefix(fileName))}`
+    : `/sounds/builtin/${encodeURIComponent(fileName)}`;
   try {
-    let assetUrl: string;
-
-    if (isCustomSound(fileName)) {
-      if (!cachedCustomSoundsPath) {
-        cachedCustomSoundsPath = await api.sound.getCustomSoundsPath();
-      }
-      const soundPath = await join(cachedCustomSoundsPath, stripCustomSoundPrefix(fileName));
-      assetUrl = convertFileSrc(soundPath);
-    } else {
-      const resourcePath = await resolveResource(`resources/sounds/${fileName}`);
-      assetUrl = convertFileSrc(resourcePath);
-    }
-
-    const audio = new Audio(assetUrl);
+    const audio = new Audio(url);
     audio.volume = volume;
     await audio.play();
   } catch (error) {
     console.error(`Error playing sound ${fileName}:`, error);
-    // Fallback logic
-    try {
-      const resourcePath = await resolveResource(`resources/sounds/cat_meow.mp3`);
-      const assetUrl = convertFileSrc(resourcePath);
-      const audio = new Audio(assetUrl);
-      audio.volume = volume;
-      audio.play();
-    } catch (fallbackError) {
-      console.error("Error playing fallback sound:", fallbackError);
-    }
   }
 };
 (window as any).PlaySound = PlaySound;

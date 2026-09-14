@@ -5,7 +5,7 @@ import { ActionWithTooltip } from "@components/Shared/ActionWithTooltip";
 import { faPlus, faTrash, faVolumeHigh } from "@fortawesome/free-solid-svg-icons";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { open as openFile } from "@tauri-apps/plugin-dialog";
+import { pickFile } from "@utils/pickFile";
 import { useState } from "react";
 import { TauriTypes } from "$types";
 import api from "@api/index";
@@ -69,9 +69,9 @@ export const ManageSoundsView = ({
     </Text>
   );
 
-  const handleAddSound = async (name: string, filePath: string) => {
+  const handleAddSound = async (name: string, file: File) => {
     try {
-      await api.sound.addCustomSound(name, filePath);
+      await api.sound.addCustomSound(name, file);
       invalidateSounds();
     } catch (error) {
       console.error(error);
@@ -205,7 +205,7 @@ export const ManageSoundsView = ({
 };
 
 type CreateSoundFormProps = {
-  onConfirm: (name: string, filePath: string) => void;
+  onConfirm: (name: string, file: File) => void;
   copy: {
     namePlaceholder: string;
     nameLabel: string;
@@ -218,23 +218,15 @@ type CreateSoundFormProps = {
 
 const CreateSoundForm = ({ onConfirm, copy }: CreateSoundFormProps) => {
   const [name, setName] = useState("");
-  const [filePath, setFilePath] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const trimmedName = name.trim();
-  const canConfirm = Boolean(trimmedName && filePath);
+  const canConfirm = Boolean(trimmedName && file);
 
   const handleBrowse = async () => {
     try {
-      const selected = await openFile({
-        multiple: false,
-        filters: [
-          {
-            name: copy.fileFilterName,
-            extensions: ["mp3", "wav", "ogg"],
-          },
-        ],
-      });
-      if (selected && typeof selected === "string") {
-        setFilePath(selected);
+      const selected = await pickFile(".mp3,.wav,.ogg");
+      if (selected) {
+        setFile(selected);
       }
     } catch (e) {
       console.error(e);
@@ -242,10 +234,10 @@ const CreateSoundForm = ({ onConfirm, copy }: CreateSoundFormProps) => {
   };
 
   const handleConfirm = () => {
-    if (!canConfirm) return;
-    onConfirm(trimmedName, filePath);
+    if (!canConfirm || !file) return;
+    onConfirm(trimmedName, file);
     setName("");
-    setFilePath("");
+    setFile(null);
   };
 
   return (
@@ -262,7 +254,7 @@ const CreateSoundForm = ({ onConfirm, copy }: CreateSoundFormProps) => {
       <TextInput
         label={copy.fileLabel}
         placeholder={copy.filePlaceholder}
-        value={filePath}
+        value={file?.name ?? ""}
         readOnly
         required
         rightSection={

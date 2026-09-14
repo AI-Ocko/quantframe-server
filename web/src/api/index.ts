@@ -1,5 +1,5 @@
 import { ResponseError, TauriTypes } from "$types";
-import { invoke } from "@tauri-apps/api/core";
+import { rpcInvoke as invoke } from "./transport";
 import { AlertModule } from "./alert";
 import { AnalyticsModule } from "./analytics";
 import { AppModule } from "./app";

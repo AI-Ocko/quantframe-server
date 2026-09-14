@@ -1,20 +1,13 @@
 import { QuantframeApiTypes, ResponseError, TauriTypes } from "$types";
 import api from "@api/index";
 import { SplashScreen } from "@components/Layouts/Shared/SplashScreen";
-import { TermsAndConditions } from "@components/Modals/TermsAndConditions";
-import { UpdateAvailableModal } from "@components/Modals/UpdateAvailable";
 import { TextTranslate } from "@components/Shared/TextTranslate";
 import { useTauriEvent } from "@hooks/useTauriEvent.hook";
-import { useTranslateCommon, useTranslateComponent, useTranslateContexts } from "@hooks/useTranslate.hook";
+import { useTranslateCommon, useTranslateContexts } from "@hooks/useTranslate.hook";
 import { useLocalStorage } from "@mantine/hooks";
-import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { useQuery } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { resolveResource } from "@tauri-apps/api/path";
-import { readTextFile } from "@tauri-apps/plugin-fs";
-import { check } from "@tauri-apps/plugin-updater";
+import { rpcInvoke as invoke } from "@api/transport";
+import { listen } from "@api/socket";
 import { PlaySound } from "@utils/helper";
 import i18n from "i18next";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
@@ -49,7 +42,6 @@ export type AppContextProps = {
   alerts: QuantframeApiTypes.AlertDto[];
   settings: TauriTypes.Settings | undefined;
   loading?: boolean;
-  checkForUpdates?: (info: TauriTypes.AppInfo, canClose: boolean, notifyIfNone?: boolean) => Promise<void>;
   setLang?: (lang: string) => void;
 };
 
@@ -61,7 +53,6 @@ export const AppContext = createContext<AppContextProps>({
   app_info: undefined,
   alerts: [],
   app_error: undefined,
-  checkForUpdates: undefined,
 });
 
 export const useAppContext = () => useContext(AppContext);
@@ -105,97 +96,18 @@ export function AppContextProvider({ children }: AppContextProviderProps) {
     });
   };
 
-  const checkForUpdates = async (info: TauriTypes.AppInfo | undefined, canClose: boolean, notifyIfNone?: boolean) => {
-    const update = await check({ headers: { IsPreRelease: info?.is_pre_release ? "true" : "false" } });
-    if (notifyIfNone && !update)
-      notifications.show({
-        title: useTranslateCommon("notifications.no_updates_available.title"),
-        color: "violet.7",
-        message: useTranslateCommon("notifications.no_updates_available.message"),
-      });
-    if (!update) return;
-    modals.open({
-      title: useTranslateComponent("modals.update_available.title", { version: update.version }),
-      withCloseButton: canClose,
-      closeOnClickOutside: false,
-      closeOnEscape: false,
-      size: "75%",
-      children: <UpdateAvailableModal updater={update} context={update.body || ""} />,
-    });
-  };
-
-  const checkForTosUpdates = async (info: TauriTypes.AppInfo) => {
-    const resourcePath = await resolveResource("resources/tos.md");
-    const context = await readTextFile(resourcePath);
-    // Get Text Between <ID</ID>
-    const start = context.indexOf("<ID>") + 4;
-    const end = context.indexOf("</ID>");
-    const id = context.substring(start, end);
-
-    if (id == info?.tos_uuid) return;
-    const modalId = modals.open({
-      title: useTranslateComponent("modals.tos.title", { version: id }),
-      withCloseButton: false,
-      closeOnClickOutside: false,
-      closeOnEscape: false,
-      size: "75%",
-      children: (
-        <TermsAndConditions
-          content={context}
-          onAccept={async () => {
-            await api.app.accept_tos(id);
-            modals.close(modalId);
-          }}
-          onDecline={async () => {
-            api.app.exit();
-          }}
-        />
-      ),
-    });
-  };
-
-  // Fetch data from rust side
-  const {
-    data: alerts,
-    error: alertsError,
-    refetch: refetchAlerts,
-  } = useQuery({
-    queryKey: ["alerts"],
-    queryFn: () => api.alert.get_alerts(),
-    retry: 0,
-    enabled: false, // Disable automatic fetching
-  });
-
-  useEffect(() => {
-    // 10 Minutes interval to keep the app alive
-    setInterval(
-      async () => {
-        await refetchAlerts();
-      },
-      10 * 60 * 1000,
-    );
-    checkForUpdates(undefined, false, false).catch((e) => console.error("Error checking for updates:", e));
-  }, []);
 
   useEffect(() => {
     loadLanguage(lang);
   }, [lang]);
 
-  useEffect(() => {
-    if (!app_info) return;
-    checkForTosUpdates(app_info);
-  }, [app_info]);
 
   const InitializeApp = async () => {
     await refetchAppInfo();
-    await refetchAlerts();
     await refetchSettings();
     setLoading(false);
   };
 
-  useEffect(() => {
-    if (alertsError) handleAppError(alertsError as ResponseError);
-  }, [alertsError]);
 
   // Hook on tauri events from rust side
   useTauriEvent(TauriTypes.Events.OnError, handleAppError, []);
@@ -218,14 +130,13 @@ export function AppContextProvider({ children }: AppContextProviderProps) {
   const contextValue = useMemo(
     () => ({
       settings,
-      alerts: alerts?.results || [],
+      alerts: [],
       app_info,
       app_error: error,
-      checkForUpdates,
       loading,
       setLang,
     }),
-    [settings, alerts?.results, app_info, error, checkForUpdates, loading, setLang],
+    [settings, app_info, error, loading, setLang],
   );
 
   return (

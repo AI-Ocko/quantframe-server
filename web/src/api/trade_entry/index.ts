@@ -1,3 +1,4 @@
+import { downloadJson } from "@utils/downloadJson";
 import { TauriClient } from "..";
 import { TauriTypes } from "../../types";
 export class TradeEntryModule {
@@ -32,8 +33,10 @@ export class TradeEntryModule {
     return await this.client.sendInvoke<TauriTypes.TradeEntryDetails>("trade_entry_get_by_id", { id });
   }
   exportJson = async (query: TauriTypes.TradeEntryControllerGetListParams): Promise<string> => {
-    return await this.client.sendInvoke<string>("export_trade_entry_json", {
+    const rows = await this.client.sendInvoke<unknown[]>("export_trade_entry_json", {
       query: this.client.convertToTauriQuery(query),
     });
+    downloadJson("quantframe_trade_entries.json", rows);
+    return "quantframe_trade_entries.json";
   };
 }

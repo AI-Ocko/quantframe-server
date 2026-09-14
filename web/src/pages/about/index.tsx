@@ -9,7 +9,7 @@ import { faDiscord } from "@fortawesome/free-brands-svg-icons";
 import classes from "./About.module.css";
 import { TextTranslate } from "@components/Shared/TextTranslate";
 import { useState } from "react";
-import { open } from "@tauri-apps/plugin-shell";
+import { open } from "@utils/openUrl";
 
 interface InfoCardProps {
   icon: React.ReactNode;

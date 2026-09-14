@@ -7,7 +7,8 @@ import { useMutation } from "@tanstack/react-query";
 import { notifications } from "@mantine/notifications";
 import { ActionWithTooltip } from "../Shared/ActionWithTooltip";
 import { faPlus } from "@fortawesome/free-solid-svg-icons";
-import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
+const writeText = (text: string) => navigator.clipboard.writeText(text);
+const readText = () => navigator.clipboard.readText();
 interface ChartColorPaletteEditorProps {
   colorName: string;
   colors: { [key: string]: string };

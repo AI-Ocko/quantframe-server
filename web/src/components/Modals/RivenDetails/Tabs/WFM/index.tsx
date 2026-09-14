@@ -5,7 +5,7 @@ import { PreviewCard } from "@components/Shared/PreviewCard";
 import { faGlobe } from "@fortawesome/free-solid-svg-icons";
 import { useTranslateModals } from "@hooks/useTranslate.hook";
 import { Box, ScrollArea, SimpleGrid, Text } from "@mantine/core";
-import { open } from "@tauri-apps/plugin-shell";
+import { open } from "@utils/openUrl";
 export type WFMTabProps = {
   value: TauriTypes.StockItem<{
     auctions?: WFMarketTypes.Auction[];

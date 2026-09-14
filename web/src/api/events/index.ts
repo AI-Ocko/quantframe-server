@@ -1,4 +1,4 @@
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "../socket";
 import { ComposedListener } from "@utils/listener/Composed.listener";
 import { TauriClient } from "..";
 

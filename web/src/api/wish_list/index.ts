@@ -1,3 +1,4 @@
+import { downloadJson } from "@utils/downloadJson";
 import { TauriClient } from "..";
 import { TauriTypes } from "../../types";
 export class WishListModule {
@@ -43,8 +44,10 @@ export class WishListModule {
     return await this.client.sendInvoke<TauriTypes.WishListItem<T>>("wish_list_get_by_id", { id, operations });
   }
   exportJson = async (query: TauriTypes.WishListControllerGetListParams): Promise<string> => {
-    return await this.client.sendInvoke<string>("export_wish_list_json", {
+    const rows = await this.client.sendInvoke<unknown[]>("export_wish_list_json", {
       query: this.client.convertToTauriQuery(query),
     });
+    downloadJson("quantframe_wish_list.json", rows);
+    return "quantframe_wish_list.json";
   };
 }
