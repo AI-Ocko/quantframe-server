@@ -37,10 +37,5 @@ impl SystemNotify {
         if !self.sound_file.is_empty() && self.sound_file != "none" {
             play_sound!(self.sound_file.clone(), self.volume);
         }
-        #[cfg(target_os = "windows")]
-        {
-            use crate::send_system_notification;
-            send_system_notification!(&title, &content, None, None);
-        }
     }
 }

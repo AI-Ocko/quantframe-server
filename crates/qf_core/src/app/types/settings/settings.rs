@@ -20,13 +20,11 @@ pub struct Settings {
 
     pub live_scraper: LiveScraperSettings,
     pub summary_settings: SummarySettings,
-    pub advanced_settings: AdvancedSettings,
     pub log_settings: LogSettings,
 
     pub notifications: NotificationsSetting,
     pub generate_trade_message: GenerateTradeMessageSetting,
     pub tos_uuid: String,
-    pub wf_inventory: WFInventorySettings,
 
     pub debugging: DebuggingSettings,
 }
@@ -37,12 +35,10 @@ impl Default for Settings {
             live_scraper: LiveScraperSettings::default(),
             summary_settings: SummarySettings::default(),
             log_settings: LogSettings::default(),
-            advanced_settings: AdvancedSettings::default(),
             notifications: NotificationsSetting::default(),
             debugging: DebuggingSettings::default(),
             generate_trade_message: GenerateTradeMessageSetting::default(),
             tos_uuid: String::new(),
-            wf_inventory: WFInventorySettings::default(),
         }
     }
 }
@@ -166,22 +162,6 @@ impl Settings {
         mapping.insert(
             "live_scraper.stock_item.min_profit",
             "live_scraper.items.wts.min_profit",
-        );
-        mapping.insert(
-            "live_scraper.stock_riven.update_interval",
-            "live_scraper.rivens.general.update_interval",
-        );
-        mapping.insert(
-            "live_scraper.stock_riven.min_profit",
-            "live_scraper.rivens.wts.min_profit",
-        );
-        mapping.insert(
-            "live_scraper.stock_riven.threshold_percentage",
-            "live_scraper.rivens.wts.threshold_percentage",
-        );
-        mapping.insert(
-            "live_scraper.stock_riven.limit_to",
-            "live_scraper.rivens.wts.max_results",
         );
         let result = extract_json_values(&json_value, &mapping);
         merge_json(&mut json_value, &result);

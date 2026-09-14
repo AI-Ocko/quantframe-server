@@ -22,11 +22,11 @@ impl CreateTradeEntryExt for CreateTradeEntry {
                 self.wfm_id = item.wfm_id.clone();
             }
             "riven" => {
-                let item = cache.weapon().get_by(&self.raw).map_err(|e| {
-                    e.with_location(get_location!())
-                        .set_log_level(LogLevel::Warning)
-                })?;
-                self.wfm_id = item.wfm_riven_id.clone();
+                return Err(Error::new(
+                    "CreateTradeEntry:Validate",
+                    "Riven trade entries are not supported in this version",
+                    get_location!(),
+                ));
             }
             "custom" => {
                 self.wfm_id = "custom".to_string();

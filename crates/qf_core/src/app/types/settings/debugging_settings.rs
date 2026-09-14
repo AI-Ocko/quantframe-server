@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::live_scraper::ItemEntry;
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DebuggingSettings {
     pub live_scraper: DebuggingLiveScraperSettings,
@@ -17,7 +15,7 @@ impl Default for DebuggingSettings {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DebuggingLiveScraperSettings {
-    pub entries: Vec<ItemEntry>,
+    pub entries: Vec<serde_json::Value>,
     pub fake_orders: bool,
 }
 
