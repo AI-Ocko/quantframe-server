@@ -1,0 +1,27 @@
+[package]
+name = "qf_core"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.45.1", features = ["full"] }
+reqwest = { version = "0.12.19", features = ["json"] }
+chrono = "0.4"
+regex = "1.9.1"
+uuid = { version = "1.19.0", features = ["v4"] }
+aes-gcm = "0.10"
+argon2 = "0.5"
+base64 = "0.22"
+getrandom = "0.2"
+hex = "0.4"
+wf-market = { git = "https://github.com/KibbeWater/wf-market", rev = "aba1d268a7a0f76d54ba3dcd862d2f3a4f7e3496" }
+migration = { path = "../migration" }
+service = { path = "../service" }
+entity = { path = "../entity" }
+utils = { path = "../utils" }
+
+[dev-dependencies]
+tempfile = "3"

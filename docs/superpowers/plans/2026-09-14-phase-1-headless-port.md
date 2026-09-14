@@ -470,7 +470,7 @@ impl SecretKey {
             .map_err(|e| Error::new("Crypto:Encrypt", format!("{:?}", e), get_location!()))?;
         let ciphertext = self
             .cipher()?
-            .encrypt(Nonce::from_slice(&nonce), plaintext, b"")
+            .encrypt(Nonce::from_slice(&nonce), plaintext)
             .map_err(|e| Error::new("Crypto:Encrypt", format!("{:?}", e), get_location!()))?;
         Ok((ciphertext, nonce.to_vec()))
     }
@@ -480,7 +480,7 @@ impl SecretKey {
             return Err(Error::new("Crypto:Decrypt", "Nonce must be 12 bytes", get_location!()));
         }
         self.cipher()?
-            .decrypt(Nonce::from_slice(nonce), ciphertext, b"")
+            .decrypt(Nonce::from_slice(nonce), ciphertext)
             .map_err(|_| {
                 Error::new(
                     "Crypto:Decrypt",
