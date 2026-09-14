@@ -1,0 +1,103 @@
+{
+ "apiVersion": "0.25.0",
+ "data": [
+  {
+   "id": "54aae292e7798909064f1575",
+   "slug": "secura_dual_cestra",
+   "gameRef": "/Lotus/Weapons/Syndicates/PerrinSequence/Pistols/PSDualCestra",
+   "tags": [
+    "syndicate",
+    "weapon",
+    "secondary"
+   ],
+   "i18n": {
+    "en": {
+     "name": "Secura Dual Cestra",
+     "icon": "items/images/en/secura_dual_cestra.3d47a4ec6675ff774bb0da9b16c53e0e.png",
+     "thumb": "items/images/en/thumbs/secura_dual_cestra.3d47a4ec6675ff774bb0da9b16c53e0e.128x128.png"
+    }
+   }
+  },
+  {
+   "id": "566751295dcbc186f0536bd1",
+   "slug": "arcane_energize",
+   "gameRef": "/Lotus/Upgrades/CosmeticEnhancers/Utility/GolemArcaneRadialEnergyOnEnergyPickup",
+   "tags": [
+    "legendary",
+    "arcane_enhancement"
+   ],
+   "bulkTradable": true,
+   "maxRank": 5,
+   "i18n": {
+    "en": {
+     "name": "Arcane Energize",
+     "icon": "items/images/en/arcane_energize.e5f85590ceb29db89c6753dfdf823485.png",
+     "thumb": "items/images/en/thumbs/arcane_energize.e5f85590ceb29db89c6753dfdf823485.128x128.png"
+    }
+   }
+  },
+  {
+   "id": "588a789c3cf52c408a2f88dd",
+   "slug": "ayatan_anasa_sculpture",
+   "gameRef": "/Lotus/Types/Items/FusionTreasures/OroFusexF",
+   "tags": [
+    "ayatan_sculpture"
+   ],
+   "bulkTradable": true,
+   "maxAmberStars": 2,
+   "maxCyanStars": 2,
+   "baseEndo": 2000,
+   "endoMultiplier": 0.5,
+   "i18n": {
+    "en": {
+     "name": "Ayatan Anasa Sculpture",
+     "icon": "items/images/en/ayatan_anasa_sculpture.4b0f22f5432ea4a4f196806a7b90ccb0.png",
+     "thumb": "items/images/en/thumbs/ayatan_anasa_sculpture.4b0f22f5432ea4a4f196806a7b90ccb0.128x128.png"
+    }
+   }
+  },
+  {
+   "id": "5c182b739603780081b09a53",
+   "slug": "mesa_prime_set",
+   "gameRef": "/Lotus/Powersuits/Cowgirl/MesaPrime",
+   "tags": [
+    "set",
+    "prime",
+    "warframe"
+   ],
+   "ducats": 260,
+   "i18n": {
+    "en": {
+     "name": "Mesa Prime Set",
+     "icon": "items/images/en/mesa_prime_set.34d67af54de052f6de1d5ae64ed40197.png",
+     "thumb": "items/images/en/thumbs/mesa_prime_set.34d67af54de052f6de1d5ae64ed40197.128x128.png"
+    }
+   }
+  },
+  {
+   "id": "6054dd685221e30057500f63",
+   "slug": "axi_a1_relic",
+   "gameRef": "/Lotus/Types/Game/Projections/T4VoidProjectionE",
+   "tags": [
+    "relic",
+    "axi"
+   ],
+   "bulkTradable": true,
+   "subtypes": [
+    "intact",
+    "exceptional",
+    "flawless",
+    "radiant"
+   ],
+   "vaulted": true,
+   "i18n": {
+    "en": {
+     "name": "Axi A1 Relic",
+     "icon": "items/images/en/axi_a1_relic.a74c06f0cae21bdb8933685c867385f8.png",
+     "thumb": "items/images/en/thumbs/axi_a1_relic.a74c06f0cae21bdb8933685c867385f8.128x128.png"
+    }
+   }
+  }
+ ],
+ "error": null
+}

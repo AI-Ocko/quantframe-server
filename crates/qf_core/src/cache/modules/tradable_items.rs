@@ -1,28 +1,35 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
-use utils::{get_location, info, read_json_file_optional, Error, LoggerOptions, MultiKeyMap};
+use utils::{get_location, Error, MultiKeyMap};
 
-use crate::cache::{client::CacheState, modules::LanguageModule, types::CacheTradableItem};
+use crate::cache::types::CacheTradableItem;
 
 #[derive(Debug)]
 pub struct TradableItemModule {
-    path: PathBuf,
     items: Mutex<Vec<CacheTradableItem>>,
-
-    // Lookup maps
     item_lookup: Mutex<MultiKeyMap<CacheTradableItem>>,
 }
 
 impl TradableItemModule {
-    pub fn new(client: Arc<CacheState>) -> Arc<Self> {
+    pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            path: client.base_path.join("items/TradableItems.json"),
             items: Mutex::new(Vec::new()),
             item_lookup: Mutex::new(MultiKeyMap::new()),
         })
+    }
+
+    pub fn set_items(&self, items: Vec<CacheTradableItem>) {
+        let mut lookup = MultiKeyMap::new();
+        for item in items.iter() {
+            let mut keys = vec![item.wfm_id.clone(), item.name.clone(), item.wfm_url.clone()];
+            if !item.unique_name.is_empty() {
+                keys.push(item.unique_name.clone());
+            }
+            keys.extend(item.variant_to_unique_name.values().cloned());
+            lookup.insert_value(item.clone(), keys);
+        }
+        *self.item_lookup.lock().unwrap() = lookup;
+        *self.items.lock().unwrap() = items;
     }
     pub fn get_items(&self) -> Result<Vec<CacheTradableItem>, Error> {
         let items = self
@@ -31,38 +38,6 @@ impl TradableItemModule {
             .expect("Failed to lock items mutex")
             .clone();
         Ok(items)
-    }
-    pub fn load(&self, language: &LanguageModule) -> Result<(), Error> {
-        match read_json_file_optional::<Vec<CacheTradableItem>>(&self.path) {
-            Ok(mut items) => {
-                let mut item_lookup = self.item_lookup.lock().unwrap();
-                for item in items.iter_mut() {
-                    item.translate(&language);
-
-                    let mut keys = vec![
-                        item.wfm_id.clone(),
-                        item.name.clone(),
-                        item.wfm_url.clone(),
-                        item.unique_name.clone(),
-                    ];
-                    if !item.variant_to_unique_name.is_empty() {
-                        keys.extend(item.variant_to_unique_name.values().cloned());
-                    }
-
-                    item_lookup.insert_value(item.clone(), keys);
-                }
-
-                let mut items_lock = self.items.lock().unwrap();
-                *items_lock = items;
-                info(
-                    "Cache:TradableItem:load",
-                    format!("Loaded {} tradable items from cache", items_lock.len()),
-                    &LoggerOptions::default(),
-                );
-            }
-            Err(e) => return Err(e.with_location(get_location!())),
-        }
-        Ok(())
     }
     /* -------------------------------------------------------------
         Lookup Functions
