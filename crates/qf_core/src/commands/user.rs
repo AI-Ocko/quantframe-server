@@ -1,16 +1,10 @@
-use std::sync::Mutex;
-
 use serde_json::json;
 use utils::{get_location, info, Error, LoggerOptions};
 
-use crate::app::AppState;
-
-#[tauri::command]
 pub async fn user_set_status(
-    status: String,
-    app: tauri::State<'_, Mutex<AppState>>,
-) -> Result<(), Error> {
-    let app_state = app.lock().unwrap().clone();
+    status: String) -> Result<(), Error> {
+    let app = crate::utils::modules::states::app_mutex();
+    let app_state = app.lock()?.clone();
     if app_state.wfm_socket.is_none() {
         return Err(Error::new(
             "User:SetStatus",
@@ -32,7 +26,9 @@ pub async fn user_set_status(
                 &LoggerOptions::default(),
             );
         }
-        Err(e) => panic!("{:?}", e),
+        Err(e) => {
+            return Err(Error::new("User:SetStatus", format!("{:?}", e), get_location!()));
+        }
     }
     Ok(())
 }

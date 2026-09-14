@@ -1,22 +1,18 @@
 use entity::{dto::*, wish_list::*};
 use service::{WishListMutation, WishListQuery};
 use std::{collections::HashMap, sync::Mutex};
-use tauri_plugin_dialog::DialogExt;
 use utils::SubType;
 use utils::{get_location, group_by, info, Error, LoggerOptions, OperationSet};
 use wf_market::enums::OrderType;
 
 use crate::{
-    add_metric,
     app::AppState,
     cache::CacheState,
     handlers::{handle_wfm_item, handle_wish_list, handle_wish_list_by_entity},
     helper,
-    types::PermissionsFlags,
-    APP, DATABASE,
+    DATABASE,
 };
 
-#[tauri::command]
 pub async fn get_wish_list_pagination(
     query: WishListPaginationQueryDto,
 ) -> Result<PaginatedResult<Model>, Error> {
@@ -27,7 +23,6 @@ pub async fn get_wish_list_pagination(
     };
 }
 
-#[tauri::command]
 pub async fn get_wish_list_financial_report(
     query: WishListPaginationQueryDto,
 ) -> Result<FinancialReport, Error> {
@@ -35,7 +30,6 @@ pub async fn get_wish_list_financial_report(
     Ok(FinancialReport::from(&items.results))
 }
 
-#[tauri::command]
 pub async fn get_wish_list_status_counts(
     query: WishListPaginationQueryDto,
 ) -> Result<HashMap<String, usize>, Error> {
@@ -46,7 +40,6 @@ pub async fn get_wish_list_status_counts(
         .collect::<HashMap<_, _>>())
 }
 
-#[tauri::command]
 pub async fn wish_list_create(input: CreateWishListItem) -> Result<Model, Error> {
     match handle_wish_list_by_entity(input, "", OrderType::Sell, &OperationSet::new()).await {
         Ok((_, item)) => return Ok(item),
@@ -56,7 +49,6 @@ pub async fn wish_list_create(input: CreateWishListItem) -> Result<Model, Error>
     }
 }
 
-#[tauri::command]
 pub async fn wish_list_bought(
     wfm_url: String,
     sub_type: Option<SubType>,
@@ -81,7 +73,6 @@ pub async fn wish_list_bought(
     }
 }
 
-#[tauri::command]
 pub async fn wish_list_delete(id: i64) -> Result<Model, Error> {
     let conn = DATABASE.get().unwrap();
 
@@ -106,7 +97,6 @@ pub async fn wish_list_delete(id: i64) -> Result<Model, Error> {
     )
     .await
     .map_err(|e| e.with_location(get_location!()).log("wish_list_delete.log"))?;
-    add_metric!("wish_list_delete", "manual");
     match WishListMutation::delete_by_id(conn, id).await {
         Ok(_) => {}
         Err(e) => return Err(e.with_location(get_location!())),
@@ -114,7 +104,6 @@ pub async fn wish_list_delete(id: i64) -> Result<Model, Error> {
 
     Ok(item)
 }
-#[tauri::command]
 pub async fn wish_list_delete_multiple(ids: Vec<i64>) -> Result<i64, Error> {
     let conn = DATABASE.get().unwrap();
     let mut deleted_count = 0;
@@ -127,7 +116,6 @@ pub async fn wish_list_delete_multiple(ids: Vec<i64>) -> Result<i64, Error> {
     }
     Ok(deleted_count)
 }
-#[tauri::command]
 pub async fn wish_list_update(input: UpdateWishList) -> Result<Model, Error> {
     let conn = DATABASE.get().unwrap();
 
@@ -136,7 +124,6 @@ pub async fn wish_list_update(input: UpdateWishList) -> Result<Model, Error> {
         Err(e) => return Err(e.with_location(get_location!())),
     }
 }
-#[tauri::command]
 pub async fn wish_list_update_multiple(
     ids: Vec<i64>,
     input: UpdateWishList,
@@ -154,14 +141,12 @@ pub async fn wish_list_update_multiple(
     }
     Ok(updated_items)
 }
-#[tauri::command]
 
 pub async fn wish_list_get_by_id(
     id: i64,
-    operations: Option<Vec<String>>,
-    cache: tauri::State<'_, Mutex<CacheState>>,
-    app: tauri::State<'_, Mutex<AppState>>,
-) -> Result<wish_list::Model, Error> {
+    operations: Option<Vec<String>>) -> Result<wish_list::Model, Error> {
+    let cache = crate::utils::modules::states::cache_mutex();
+    let app = crate::utils::modules::states::app_mutex();
     let cache = cache.lock()?.clone();
     let app = app.lock()?.clone();
     let conn = DATABASE.get().unwrap();
@@ -202,53 +187,14 @@ pub async fn wish_list_get_by_id(
 
     Ok(item)
 }
-#[tauri::command]
+
 pub async fn export_wish_list_json(
-    app_state: tauri::State<'_, Mutex<AppState>>,
     mut query: WishListPaginationQueryDto,
-) -> Result<String, Error> {
-    let app_state = app_state.lock()?.clone();
-    let app = APP.get().unwrap();
-    if let Err(e) = app_state.user.has_permission(PermissionsFlags::ExportData) {
-        e.log("export_wish_list_json.log");
-        return Err(e);
-    }
+) -> Result<Vec<wish_list::Model>, Error> {
     let conn = DATABASE.get().unwrap();
     query.pagination.limit = -1; // fetch all
-    match WishListQuery::get_all(conn, query).await {
-        Ok(wish_list) => {
-            let file_path = app
-                .dialog()
-                .file()
-                .add_filter("Quantframe_Wish_List", &["json"])
-                .blocking_save_file();
-            if let Some(file_path) = file_path {
-                let json = serde_json::to_string_pretty(&wish_list.results).map_err(|e| {
-                    Error::new(
-                        "Command::ExportWishListJson",
-                        format!("Failed to serialize wish list to JSON: {}", e),
-                        get_location!(),
-                    )
-                })?;
-                std::fs::write(file_path.as_path().unwrap(), json).map_err(|e| {
-                    Error::new(
-                        "Command::ExportWishListJson",
-                        format!("Failed to write wish list to file: {}", e),
-                        get_location!(),
-                    )
-                })?;
-                info(
-                    "Command::ExportWishListJson",
-                    format!("Exported wish list to JSON file: {}", file_path),
-                    &LoggerOptions::default(),
-                );
-                add_metric!("export_wish_list_json", "success");
-                return Ok(file_path.to_string());
-            }
-            // do something with the optional file path here
-            // the file path is `None` if the user closed the dialog
-            return Ok("".to_string());
-        }
-        Err(e) => return Err(e.with_location(get_location!())),
-    }
+    WishListQuery::get_all(conn, query)
+        .await
+        .map(|page| page.results)
+        .map_err(|e| e.with_location(get_location!()))
 }

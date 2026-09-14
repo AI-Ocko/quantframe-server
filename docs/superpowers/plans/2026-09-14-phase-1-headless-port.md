@@ -2175,7 +2175,6 @@ use utils::{get_location, Error, SubType};
 use wf_market::enums::OrderType;
 
 use crate::app::Settings;
-use crate::commands::*;
 use crate::handlers::ItemEntity;
 use crate::utils::WfmOrderPaginationQueryDto;
 use entity::{stock_item::*, trade_entry::*, transaction::*, wish_list::*};
@@ -2202,7 +2201,7 @@ macro_rules! rpc_table {
                                 )))
                             }
                         };
-                        let result = $module::$func($( parsed.$arg ),*).await;
+                        let result = crate::commands::$module::$func($( parsed.$arg ),*).await;
                         Some(result.and_then(|value| {
                             serde_json::to_value(value)
                                 .map_err(|e| Error::new("Rpc:Serialize", e.to_string(), get_location!()))

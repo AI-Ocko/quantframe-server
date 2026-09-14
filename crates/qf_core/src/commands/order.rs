@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
 };
 
 use entity::{dto::*, enums::*};
@@ -10,20 +9,15 @@ use utils::{
 use wf_market::{enums::OrderType, types::Order};
 
 use crate::{
-    add_metric,
-    app::AppState,
     cache::client::CacheState,
     helper::{self, paginate},
-    live_scraper::LiveScraperState,
     send_event,
     types::*,
     utils::*,
 };
-#[tauri::command]
-pub async fn order_refresh(
-    app: tauri::State<'_, Mutex<AppState>>,
-    cache: tauri::State<'_, Mutex<CacheState>>,
-) -> Result<(), Error> {
+pub async fn order_refresh() -> Result<(), Error> {
+    let app = crate::utils::modules::states::app_mutex();
+    let cache = crate::utils::modules::states::cache_mutex();
     let app_state = app.lock()?.clone();
     let cache_state = cache.lock()?.clone();
     app_state
@@ -49,11 +43,9 @@ pub async fn order_refresh(
     Ok(())
 }
 
-#[tauri::command]
-pub fn get_wfm_orders_pagination(
-    query: WfmOrderPaginationQueryDto,
-    app: tauri::State<'_, Mutex<AppState>>,
-) -> Result<PaginatedResult<Order>, Error> {
+pub async fn get_wfm_orders_pagination(
+    query: WfmOrderPaginationQueryDto) -> Result<PaginatedResult<Order>, Error> {
+    let app = crate::utils::modules::states::app_mutex();
     let app = app.lock()?.clone();
 
     let mut filtered_orders = filters_by(&app.wfm_client.order().cache_orders().to_vec(), |o| {
@@ -133,12 +125,9 @@ pub fn get_wfm_orders_pagination(
     Ok(p)
 }
 
-#[tauri::command]
 pub async fn get_wfm_orders_status_counts(
-    query: WfmOrderPaginationQueryDto,
-    app: tauri::State<'_, Mutex<AppState>>,
-) -> Result<HashMap<String, (usize, i64, f64)>, Error> {
-    let items = get_wfm_orders_pagination(query, app)?.results;
+    query: WfmOrderPaginationQueryDto) -> Result<HashMap<String, (usize, i64, f64)>, Error> {
+    let items = get_wfm_orders_pagination(query).await?.results;
     let mut grouped = group_by(&items, |item| item.order_type.to_string())
         .iter()
         .map(|(status, items)| {
@@ -171,16 +160,11 @@ pub async fn get_wfm_orders_status_counts(
     Ok(grouped)
 }
 
-#[tauri::command]
 pub async fn order_delete_all(
-    order_type: Option<OrderType>,
-    live_scraper: tauri::State<'_, Arc<LiveScraperState>>,
-    app_state: tauri::State<'_, Mutex<AppState>>,
-    cache_state: tauri::State<'_, Mutex<CacheState>>,
-) -> Result<(), Error> {
+    order_type: Option<OrderType>) -> Result<(), Error> {
+    let app_state = crate::utils::modules::states::app_mutex();
     let app = app_state.lock()?.clone();
-    order_refresh(app_state, cache_state).await?;
-    live_scraper.stop();
+    order_refresh().await?;
 
     let orders = match order_type {
         Some(OrderType::Buy) => app.wfm_client.order().cache_orders().buy_orders,
@@ -205,14 +189,11 @@ pub async fn order_delete_all(
             json!({"source": "order_delete_all", "current": current, "total": orders.len()})
         );
     }
-    add_metric!("order_delete_all", "manual");
     Ok(())
 }
-#[tauri::command]
 pub async fn order_delete_by_id(
-    id: String,
-    app: tauri::State<'_, Mutex<AppState>>,
-) -> Result<(), Error> {
+    id: String) -> Result<(), Error> {
+    let app = crate::utils::modules::states::app_mutex();
     let app = app.lock()?.clone();
     let order = app.wfm_client.order().cache_orders().get_by_id(&id);
     if order.is_none() {
@@ -236,16 +217,13 @@ pub async fn order_delete_by_id(
             return Err(err);
         }
     }
-    add_metric!("order_delete_by_id", "manual");
     Ok(())
 }
-#[tauri::command]
 pub async fn get_wfm_order_by_id(
     id: String,
-    operations: Option<Vec<String>>,
-    cache: tauri::State<'_, Mutex<CacheState>>,
-    app: tauri::State<'_, Mutex<AppState>>,
-) -> Result<Order, Error> {
+    operations: Option<Vec<String>>) -> Result<Order, Error> {
+    let cache = crate::utils::modules::states::cache_mutex();
+    let app = crate::utils::modules::states::app_mutex();
     let cache = cache.lock()?.clone();
     let app = app.lock()?.clone();
     let order = app.wfm_client.order().cache_orders().get_by_id(&id);

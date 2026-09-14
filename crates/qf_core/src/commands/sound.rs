@@ -98,20 +98,19 @@ fn validate_file_name(file_name: &str) -> Result<(), Error> {
     }
 }
 
-#[tauri::command]
-pub async fn sound_get_custom_sounds(
-    app: tauri::State<'_, Mutex<AppState>>,
-) -> Result<Vec<CustomSound>, Error> {
+pub async fn sound_get_custom_sounds() -> Result<Vec<CustomSound>, Error> {
+    let app = crate::utils::modules::states::app_mutex();
     let app = app.lock()?;
     Ok(app.settings.notifications.custom_sounds.clone())
 }
 
-#[tauri::command]
 pub async fn sound_add_custom_sound(
     name: String,
-    file_path: String,
-    app: tauri::State<'_, Mutex<AppState>>,
+    file_name: String,
+    data_base64: String,
 ) -> Result<Vec<CustomSound>, Error> {
+    use base64::Engine;
+    let app = crate::utils::modules::states::app_mutex();
     let mut app = app.lock()?;
 
     let normalized_name = normalize_sound_name(&name)?;
@@ -123,41 +122,37 @@ pub async fn sound_add_custom_sound(
         .iter()
         .any(|sound| sound.name_key == normalized_name_key)
     {
-        return Err(Error::new(
-            "Sound",
-            "Sound name already exists.",
-            utils::get_location!(),
-        ));
+        return Err(Error::new("Sound", "Sound name already exists.", utils::get_location!()));
+    }
+    let extension = file_name
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_lowercase())
+        .filter(|e| ALLOWED_SOUND_EXTENSIONS.contains(&e.as_str()))
+        .ok_or_else(|| Error::new("Sound", "Only mp3, wav and ogg files are allowed.", utils::get_location!()))?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| Error::new("Sound", format!("Invalid file data: {}", e), utils::get_location!()))?;
+    if bytes.len() as u64 > MAX_SOUND_FILE_SIZE_BYTES {
+        return Err(Error::new("Sound", "Sound file is too large (max 10 MB).", utils::get_location!()));
     }
 
-    let extension = validate_sound_file(&file_path)?;
-
-    // Add file to sound dir
-    let sounds_path = helper::get_sounds_path();
-    let file_name = format!("{}.{}", uuid::Uuid::new_v4(), extension);
-    let destination = sounds_path.join(&file_name);
-
-    fs::copy(&file_path, &destination).map_err(|e| {
-        Error::new(
-            "Sound",
-            &format!("Failed to copy sound file: {}", e),
-            utils::get_location!(),
-        )
+    let stored_name = format!("{}.{}", uuid::Uuid::new_v4(), extension);
+    fs::write(helper::get_sounds_path().join(&stored_name), bytes).map_err(|e| {
+        Error::new("Sound", format!("Failed to save sound file: {}", e), utils::get_location!())
     })?;
 
-    // Add to settings
-    let new_sound = CustomSound::new(normalized_name, file_name);
-    app.settings.notifications.custom_sounds.push(new_sound);
+    app.settings
+        .notifications
+        .custom_sounds
+        .push(CustomSound::new(normalized_name, stored_name));
     app.settings.save()?;
-
     Ok(app.settings.notifications.custom_sounds.clone())
 }
 
-#[tauri::command]
 pub async fn sound_delete_custom_sound(
-    file_name: String,
-    app: tauri::State<'_, Mutex<AppState>>,
-) -> Result<Vec<CustomSound>, Error> {
+    file_name: String) -> Result<Vec<CustomSound>, Error> {
+    let app = crate::utils::modules::states::app_mutex();
     let mut app = app.lock()?;
 
     validate_file_name(&file_name)?;
@@ -186,15 +181,3 @@ pub async fn sound_delete_custom_sound(
     Ok(app.settings.notifications.custom_sounds.clone())
 }
 
-#[tauri::command]
-pub async fn sound_get_custom_sounds_path() -> Result<String, Error> {
-    let sounds_path = helper::get_sounds_path();
-    let path = sounds_path.to_str().ok_or_else(|| {
-        Error::new(
-            "Sound",
-            "Failed to resolve sounds path.",
-            utils::get_location!(),
-        )
-    })?;
-    Ok(path.to_string())
-}

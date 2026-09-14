@@ -2,21 +2,17 @@ use std::{collections::HashMap, sync::Mutex};
 
 use entity::{dto::*, stock_item::*};
 use service::{StockItemMutation, StockItemQuery};
-use tauri_plugin_dialog::DialogExt;
 use utils::{get_location, group_by, info, Error, LoggerOptions, OperationSet, SubType};
 use wf_market::enums::OrderType;
 
 use crate::{
-    add_metric,
     app::AppState,
     cache::CacheState,
     handlers::{handle_item_by_entity, handle_wfm_item, stock_item::handle_item},
     helper::{self},
-    types::PermissionsFlags,
-    APP, DATABASE,
+    DATABASE,
 };
 
-#[tauri::command]
 pub async fn get_stock_item_pagination(
     query: StockItemPaginationQueryDto,
 ) -> Result<PaginatedResult<stock_item::Model>, Error> {
@@ -27,7 +23,6 @@ pub async fn get_stock_item_pagination(
     };
 }
 
-#[tauri::command]
 pub async fn get_stock_item_financial_report(
     query: StockItemPaginationQueryDto,
 ) -> Result<FinancialReport, Error> {
@@ -35,7 +30,6 @@ pub async fn get_stock_item_financial_report(
     Ok(FinancialReport::from(&items.results))
 }
 
-#[tauri::command]
 pub async fn get_stock_item_status_counts(
     query: StockItemPaginationQueryDto,
 ) -> Result<HashMap<String, usize>, Error> {
@@ -46,7 +40,6 @@ pub async fn get_stock_item_status_counts(
         .collect::<HashMap<_, _>>())
 }
 
-#[tauri::command]
 pub async fn stock_item_create(input: CreateStockItem) -> Result<stock_item::Model, Error> {
     match handle_item_by_entity(input, "", OrderType::Buy, &OperationSet::new()).await {
         Ok((_, updated_item)) => return Ok(updated_item),
@@ -58,7 +51,6 @@ pub async fn stock_item_create(input: CreateStockItem) -> Result<stock_item::Mod
     }
 }
 
-#[tauri::command]
 pub async fn stock_item_sell(
     wfm_url: String,
     sub_type: Option<SubType>,
@@ -83,7 +75,6 @@ pub async fn stock_item_sell(
     }
 }
 
-#[tauri::command]
 pub async fn stock_item_delete(id: i64) -> Result<stock_item::Model, Error> {
     let conn = DATABASE.get().unwrap();
 
@@ -111,7 +102,6 @@ pub async fn stock_item_delete(id: i64) -> Result<stock_item::Model, Error> {
         e.with_location(get_location!())
             .log("stock_item_delete.log")
     })?;
-    add_metric!("stock_item_delete", "manual");
     match StockItemMutation::delete_by_id(conn, id).await {
         Ok(_) => {}
         Err(e) => return Err(e.with_location(get_location!())),
@@ -120,7 +110,6 @@ pub async fn stock_item_delete(id: i64) -> Result<stock_item::Model, Error> {
     Ok(item)
 }
 
-#[tauri::command]
 pub async fn stock_item_delete_multiple(ids: Vec<i64>) -> Result<i64, Error> {
     let conn = DATABASE.get().unwrap();
     let mut deleted_count = 0;
@@ -134,7 +123,6 @@ pub async fn stock_item_delete_multiple(ids: Vec<i64>) -> Result<i64, Error> {
     Ok(deleted_count)
 }
 
-#[tauri::command]
 pub async fn stock_item_update(input: UpdateStockItem) -> Result<stock_item::Model, Error> {
     let conn = DATABASE.get().unwrap();
     match StockItemMutation::update_by_id(conn, input).await {
@@ -143,7 +131,6 @@ pub async fn stock_item_update(input: UpdateStockItem) -> Result<stock_item::Mod
     }
 }
 
-#[tauri::command]
 pub async fn stock_item_update_multiple(
     ids: Vec<i64>,
     input: UpdateStockItem,
@@ -162,13 +149,11 @@ pub async fn stock_item_update_multiple(
     Ok(updated_items)
 }
 
-#[tauri::command]
 pub async fn stock_item_get_by_id(
     id: i64,
-    operations: Option<Vec<String>>,
-    cache: tauri::State<'_, Mutex<CacheState>>,
-    app: tauri::State<'_, Mutex<AppState>>,
-) -> Result<stock_item::Model, Error> {
+    operations: Option<Vec<String>>) -> Result<stock_item::Model, Error> {
+    let cache = crate::utils::modules::states::cache_mutex();
+    let app = crate::utils::modules::states::app_mutex();
     let cache = cache.lock()?.clone();
     let app = app.lock()?.clone();
     let conn = DATABASE.get().unwrap();
@@ -209,54 +194,14 @@ pub async fn stock_item_get_by_id(
 
     Ok(item)
 }
-#[tauri::command]
-pub async fn export_stock_item_json(
-    app_state: tauri::State<'_, Mutex<AppState>>,
-    mut query: StockItemPaginationQueryDto,
-) -> Result<String, Error> {
-    let app_state = app_state.lock()?.clone();
-    let app = APP.get().unwrap();
-    if let Err(e) = app_state.user.has_permission(PermissionsFlags::ExportData) {
-        e.log("export_stock_item_json.log");
-        return Err(e);
-    }
 
+pub async fn export_stock_item_json(
+    mut query: StockItemPaginationQueryDto,
+) -> Result<Vec<stock_item::Model>, Error> {
     let conn = DATABASE.get().unwrap();
     query.pagination.limit = -1; // fetch all
-    match StockItemQuery::get_all(conn, query).await {
-        Ok(stock_items) => {
-            let file_path = app
-                .dialog()
-                .file()
-                .add_filter("Quantframe_Stock_Item", &["json"])
-                .blocking_save_file();
-            if let Some(file_path) = file_path {
-                let json = serde_json::to_string_pretty(&stock_items.results).map_err(|e| {
-                    Error::new(
-                        "Command::ExportStockItemJson",
-                        format!("Failed to serialize stock item to JSON: {}", e),
-                        get_location!(),
-                    )
-                })?;
-                std::fs::write(file_path.as_path().unwrap(), json).map_err(|e| {
-                    Error::new(
-                        "Command::ExportStockItemJson",
-                        format!("Failed to write stock item to file: {}", e),
-                        get_location!(),
-                    )
-                })?;
-                info(
-                    "Command::ExportStockItemJson",
-                    format!("Exported stock item to JSON file: {}", file_path),
-                    &LoggerOptions::default(),
-                );
-                add_metric!("export_stock_item_json", "success");
-                return Ok(file_path.to_string());
-            }
-            // do something with the optional file path here
-            // the file path is `None` if the user closed the dialog
-            return Ok("".to_string());
-        }
-        Err(e) => return Err(e.with_location(get_location!())),
-    }
+    StockItemQuery::get_all(conn, query)
+        .await
+        .map(|page| page.results)
+        .map_err(|e| e.with_location(get_location!()))
 }

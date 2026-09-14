@@ -1,7 +1,6 @@
-use crate::{commands::item, handlers::*};
+use crate::handlers::*;
 use utils::{get_location, Error, OperationSet};
 
-#[tauri::command]
 pub async fn handles_handle_items(items: Vec<ItemEntity>) -> Result<i32, Error> {
     let mut total = 0;
     let mut processed_items = Vec::new();

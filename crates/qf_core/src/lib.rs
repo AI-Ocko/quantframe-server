@@ -8,6 +8,7 @@ use ::utils::Error;
 
 pub mod app;
 pub mod cache;
+pub mod commands;
 pub mod crypto;
 pub mod db;
 pub mod enums;
@@ -17,6 +18,7 @@ pub mod handlers;
 pub mod helper;
 mod macros;
 pub mod paths;
+pub mod startup;
 pub mod types;
 pub mod utils;
 pub mod web_auth;
