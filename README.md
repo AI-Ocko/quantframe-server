@@ -29,3 +29,31 @@ Only the warframe.market token is kept, encrypted with `qf_secret_key`. Your war
 - **Changing the web password:** edit `secrets/qf_web_password` and restart the container.
 - **Losing `qf_secret_key`:** the stored token can't be decrypted, so sign in to warframe.market again.
 - **Backups:** the `qf-data` volume holds `quantframe.sqlite`, and a `quantframe.sqlite_backup` copy is made on every start.
+
+## qf-helper (gaming PC)
+
+`qf-helper` runs on the PC that plays Warframe. Every 10 s it tells the server whether Warframe is running. The trader is only Ready while those heartbeats arrive, and it stops when Warframe closes or the heartbeats stop for more than 60 s.
+
+1. In the web UI, open **Live Scraper → Helper devices**, create a device and copy the `qf-helper.toml` it shows. The key is shown only once.
+2. Build and install it natively (not in Docker):
+   ```bash
+   cargo build --release -p qf-helper
+   install -Dm755 target/release/qf-helper ~/.local/bin/qf-helper
+   install -Dm600 /dev/stdin ~/.config/qf-helper/qf-helper.toml   # paste the config, then Ctrl-D
+   ~/.local/bin/qf-helper --once                                   # prints the state and exits 0 when accepted
+   ```
+3. Run it as a user service:
+   ```bash
+   install -Dm644 contrib/qf-helper.service ~/.config/systemd/user/qf-helper.service
+   systemctl --user daemon-reload
+   systemctl --user enable --now qf-helper
+   journalctl --user -u qf-helper -f
+   ```
+
+`qf-helper.toml`:
+
+```toml
+server_url = "http://ockohome:8080"
+device_key = "qfh_…"
+# ee_log_path = "/path/to/EE.log"   # optional; defaults to the Proton path under ~/.local/share/Steam
+```

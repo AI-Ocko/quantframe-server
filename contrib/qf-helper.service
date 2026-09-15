@@ -1,0 +1,12 @@
+[Unit]
+Description=Quantframe helper: heartbeats to quantframe-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/qf-helper
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
