@@ -12,7 +12,7 @@ import { getSafePage } from "@utils/helper";
 import { ColorInfo } from "@components/Shared/ColorInfo";
 import { SelectItemTags } from "@components/Forms/SelectItemTags";
 import { ActionWithTooltip } from "@components/Shared/ActionWithTooltip";
-import { faCoins, faHammer, faTrash } from "@fortawesome/free-solid-svg-icons";
+import { faCoins, faDownload, faHammer, faTrash } from "@fortawesome/free-solid-svg-icons";
 import { useMutations } from "./mutations";
 import { useModals } from "./modals";
 import { DatePickerInput } from "@mantine/dates";
@@ -67,7 +67,7 @@ export const TransactionPanel = ({ isActive }: TransactionPanelProps = {}) => {
   };
 
   // Mutations
-  const { updateMutation, deleteMutation, deleteMultipleMutation } = useMutations({
+  const { exportMutation, updateMutation, deleteMutation, deleteMultipleMutation } = useMutations({
     refetchQueries,
     setLoadingRows,
   });
@@ -132,6 +132,13 @@ export const TransactionPanel = ({ isActive }: TransactionPanelProps = {}) => {
         rightSectionWidth={35 * 5}
         rightSection={
           <Group gap={3}>
+            <ActionWithTooltip
+              tooltip={useTranslateButtons("export_transactions_tooltip")}
+              icon={faDownload}
+              iconProps={{ size: "xs" }}
+              actionProps={{ size: "sm" }}
+              onClick={() => exportMutation.mutate(queryData)}
+            />
             <ActionWithTooltip
               tooltip={useTranslateButtons("show_financial_report_tooltip")}
               color={showReport ? "blue" : "gray"}

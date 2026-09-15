@@ -498,7 +498,7 @@ These amendments take precedence over the earlier sections.
 - **A3 — No `/download` or `/upload` routes.**
   - Exports are RPC commands that return rows; the browser saves them as a JSON Blob.
   - Custom sounds upload as base64 through `sound_add_custom_sound`.
-  - Log export and `export_transaction_json` (which had no UI caller) are not exposed.
+  - Log export is not exposed. `export_transaction_json` is exposed the same way as the other exports.
   - `transaction_calculate_tax` is removed because trade tax is unavailable.
 - **A4 — `auth.json` still exists** for non-secret profile fields (username, id, avatar, status). `wfm_token` is `#[serde(skip)]` on `User`, so it is never written there or sent to the browser. The token lives only encrypted in `wfm_account`.
 - **A5 — Web login routes.** The login page is a server-rendered page at `GET|POST /login`, and logout is `POST /logout`. These replace `/auth/login` and `/auth/logout` in §7.1.

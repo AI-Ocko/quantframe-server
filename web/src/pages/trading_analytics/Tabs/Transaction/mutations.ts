@@ -5,6 +5,16 @@ import { createGenericMutation, MutationHooks } from "@utils/genericMutation.hel
 export const useMutations = ({ refetchQueries, setLoadingRows }: MutationHooks) => {
   const hooks = { refetchQueries, setLoadingRows };
 
+  const exportMutation = createGenericMutation(
+    {
+      mutationFn: (data: TauriTypes.TransactionControllerGetListParams) => api.transaction.exportJson(data),
+      successKey: "export_data",
+      errorKey: "export_data",
+      getSuccessMessage: (data: any) => ({ path: data }),
+    },
+    hooks,
+  );
+
   const updateMutation = createGenericMutation(
     {
       mutationFn: (data: TauriTypes.UpdateTransaction) => api.transaction.update(data),
@@ -40,6 +50,7 @@ export const useMutations = ({ refetchQueries, setLoadingRows }: MutationHooks) 
   );
 
   return {
+    exportMutation,
     updateMutation,
     deleteMutation,
     deleteMultipleMutation,

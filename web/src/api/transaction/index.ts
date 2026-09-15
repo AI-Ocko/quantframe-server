@@ -2,6 +2,7 @@ import { TauriClient } from "..";
 import { TauriTypes } from "../../types";
 import utc from "dayjs/plugin/utc";
 import dayjs from "dayjs";
+import { downloadJson } from "@utils/downloadJson";
 dayjs.extend(utc);
 
 export interface FinancialReport extends Omit<TauriTypes.FinancialReport, "properties"> {
@@ -42,5 +43,12 @@ export class TransactionModule {
   }
   deleteBulk = async (ids: number[]): Promise<{ deleted_count: number }> => {
     return await this.client.sendInvoke<{ deleted_count: number }>("transaction_delete_bulk", { ids });
+  };
+  exportJson = async (query: TauriTypes.TransactionControllerGetListParams): Promise<string> => {
+    const rows = await this.client.sendInvoke<unknown[]>("export_transaction_json", {
+      query: this.client.convertToTauriQuery(query),
+    });
+    downloadJson("quantframe_transactions.json", rows);
+    return "quantframe_transactions.json";
   };
 }

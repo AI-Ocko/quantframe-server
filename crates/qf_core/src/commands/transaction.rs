@@ -21,6 +21,17 @@ pub async fn get_transaction_pagination(
     };
 }
 
+pub async fn export_transaction_json(
+    mut query: TransactionPaginationQueryDto,
+) -> Result<Vec<transaction::Model>, Error> {
+    let conn = DATABASE.get().unwrap();
+    query.pagination.limit = -1; // fetch all
+    TransactionQuery::get_all(conn, query)
+        .await
+        .map(|page| page.results)
+        .map_err(|e| e.with_location(get_location!()))
+}
+
 pub async fn get_transaction_financial_report(
     query: TransactionPaginationQueryDto,
 ) -> Result<FinancialReport, Error> {

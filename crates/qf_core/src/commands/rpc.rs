@@ -85,6 +85,7 @@ rpc_table! {
     transaction_update => transaction::transaction_update { input: UpdateTransaction },
     transaction_delete => transaction::transaction_delete { id: i64 },
     transaction_delete_bulk => transaction::transaction_delete_bulk { ids: Vec<i64> },
+    export_transaction_json => transaction::export_transaction_json { query: TransactionPaginationQueryDto },
     get_trade_entry_pagination => trade_entry::get_trade_entry_pagination { query: TradeEntryPaginationQueryDto },
     trade_entry_get_by_id => trade_entry::trade_entry_get_by_id { id: i64 },
     trade_entry_create => trade_entry::trade_entry_create { input: CreateTradeEntry },
