@@ -26,6 +26,8 @@ export const NotificationsPanel = ({ form, onHideButtons }: NotificationsPanelPr
   const tabs = [
     { id: "on_new_conversation", labelKey: "on_new_conversation_title" },
     { id: "on_new_trade", labelKey: "on_new_trade_title" },
+    { id: "on_trader_stopped", labelKey: "on_trader_stopped_title" },
+    { id: "on_token_expiring", labelKey: "on_token_expiring_title" },
     { id: "on_wfm_chat_message", labelKey: "on_wfm_chat_message_title" },
   ] as const satisfies Array<{ id: NotificationKey; labelKey: string }>;
 

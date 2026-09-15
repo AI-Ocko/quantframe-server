@@ -29,6 +29,7 @@ export namespace TauriTypes {
     UpdateUser = "User:Update",
     RefreshSettings = "Settings:Refresh",
     UpdateLiveScraperRunningState = "LiveScraper:UpdateRunningState",
+    LifecycleState = "Lifecycle:State",
     OnLiveScraperMessage = "LiveScraper:OnMessage",
     RefreshCache = "Cache:Refresh",
     RefreshStockItems = "LiveScraper:RefreshStockItems",
@@ -213,6 +214,8 @@ export namespace TauriTypes {
     on_new_conversation: NotificationSetting;
     on_wfm_chat_message: NotificationSetting;
     on_new_trade: NotificationSetting;
+    on_trader_stopped: NotificationSetting;
+    on_token_expiring: NotificationSetting;
   }
   export interface NotificationSetting {
     system_notify: SystemNotify;
@@ -710,6 +713,9 @@ export namespace TauriTypes {
     wfm_url: string;
     wfm_id: string;
     uuid: string;
+    warm?: boolean;
+    history_days?: number;
+    name?: string;
     volume: number;
     max_price: number;
     min_price: number;
@@ -1053,5 +1059,55 @@ export namespace TauriTypes {
     hourly: MarketHourlyPoint[];
     daily: MarketDailyPoint[];
     last_swept_at?: string | null;
+  }
+  export type LifecycleState = "offline" | "ready" | "trading" | "stopping";
+  export interface TraderChecklist {
+    token_valid: boolean;
+    ws_connected: boolean;
+    game_data_loaded: boolean;
+    helper_ok: boolean;
+    helper_override: boolean;
+  }
+  export interface TraderOptions {
+    dry_run: boolean;
+    delete_buy_orders_on_stop: boolean;
+    helper_override: boolean;
+    last_stop_reason?: string | null;
+    last_stop_at?: string | null;
+  }
+  export interface TraderSessionSnapshot {
+    signed_in: boolean;
+    token_valid: boolean;
+    unauthorized: boolean;
+    ws_connected: boolean;
+    ws_down_for_s?: number | null;
+    last_me_ok_at?: string | null;
+    token_expires_at?: string | null;
+  }
+  export interface TraderStatus {
+    state: LifecycleState;
+    checklist: TraderChecklist;
+    options: TraderOptions;
+    session: TraderSessionSnapshot;
+    running_since?: string | null;
+    running_dry_run?: boolean | null;
+  }
+  export interface DryRunEntry {
+    id: number;
+    at: string;
+    action: "create" | "update" | "delete";
+    side: "buy" | "sell";
+    item_id: string;
+    sub_type: string;
+    price?: number | null;
+    quantity?: number | null;
+    reason: string;
+    forced_by: "global" | "not_warm";
+  }
+  export interface DryRunPage {
+    total: number;
+    page: number;
+    limit: number;
+    results: DryRunEntry[];
   }
 }
