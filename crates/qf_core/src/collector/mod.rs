@@ -2,6 +2,7 @@
 
 pub mod diff;
 pub mod orders;
+pub mod stats;
 pub mod store;
 
 use chrono::{DateTime, SecondsFormat, Utc};
