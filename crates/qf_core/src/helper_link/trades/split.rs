@@ -12,7 +12,8 @@ use crate::trader::price_source::key_of;
 
 /// Whole-platinum shares proportional to `weights`. An unknown or zero weight takes the mean of
 /// the known ones, so it is neither starved nor favoured; all unknown means equal shares.
-/// The rounding remainder lands on the first item.
+/// Each share is rounded down, then the platinum rounding left over is handed out one at a time
+/// from the first item forward, so the shares always sum to `total` and none is ever negative.
 pub fn split_platinum(total: i64, weights: &[Option<f64>]) -> Vec<i64> {
     if weights.is_empty() {
         return Vec::new();
@@ -21,9 +22,14 @@ pub fn split_platinum(total: i64, weights: &[Option<f64>]) -> Vec<i64> {
     let fill = if known.is_empty() { 1.0 } else { known.iter().sum::<f64>() / known.len() as f64 };
     let filled: Vec<f64> = weights.iter().map(|w| match w { Some(v) if *v > 0.0 => *v, _ => fill }).collect();
     let sum: f64 = filled.iter().sum();
-    let mut shares: Vec<i64> = filled.iter().map(|w| (total as f64 * w / sum).round() as i64).collect();
-    let remainder = total - shares.iter().sum::<i64>();
-    shares[0] += remainder;
+    let mut shares: Vec<i64> = filled.iter().map(|w| (total as f64 * w / sum).floor() as i64).collect();
+    let mut leftover = total - shares.iter().sum::<i64>();
+    let mut at = 0;
+    while leftover > 0 {
+        shares[at] += 1;
+        leftover -= 1;
+        at = (at + 1) % shares.len();
+    }
     shares
 }
 
@@ -93,6 +99,14 @@ mod tests {
         assert_eq!(split_platinum(100, &[None, None, None]), vec![34, 33, 33]);
         assert_eq!(split_platinum(70, &[None]), vec![70]);
         assert!(split_platinum(70, &[]).is_empty());
+    }
+
+    #[test]
+    fn shares_stay_non_negative_when_platinum_is_thinner_than_the_items() {
+        assert_eq!(split_platinum(3, &[None; 5]), vec![1, 1, 1, 0, 0]);
+        let six = split_platinum(4, &[None; 6]);
+        assert_eq!(six.iter().sum::<i64>(), 4);
+        assert!(six.iter().all(|&p| p >= 0), "no item is priced negatively: {six:?}");
     }
 
     #[test]

@@ -100,10 +100,16 @@ struct ItemDetailResponse {
     data: ItemDetail,
 }
 
-/// `GET /v2/item/{slug}` lists `setParts` as item ids; ids the index doesn't know are dropped.
+/// `GET /v2/item/{slug}` lists `setParts` as item ids. An id the index doesn't know makes the whole
+/// list an error: dropping it would leave a short list that folds an incomplete set as complete.
 pub fn parse_set_parts(json: &str, index: &ItemIndex) -> Result<Vec<String>, String> {
     let detail: ItemDetailResponse = serde_json::from_str(json).map_err(|e| e.to_string())?;
-    Ok(detail.data.set_parts.iter().filter_map(|id| index.by_id(id).map(|i| i.wfm_url.clone())).collect())
+    detail
+        .data
+        .set_parts
+        .iter()
+        .map(|id| index.by_id(id).map(|i| i.wfm_url.clone()).ok_or_else(|| format!("unknown item id {id}")))
+        .collect()
 }
 
 /// Memory, then `QF_DATA_DIR/cache/sets.json`, then one WFM fetch per unknown root.
@@ -133,6 +139,17 @@ impl SetCache {
         }
     }
 
+    /// Caches a freshly fetched list unless it is empty. An empty list would disable folding for
+    /// that root forever, so it is dropped and the next trade retries the fetch. `true` when stored.
+    fn remember(&self, root: &str, parts: Vec<String>) -> bool {
+        if parts.is_empty() {
+            warning("HelperLink:Sets", format!("WFM listed no set parts for {root}; not cached"), &LoggerOptions::default());
+            return false;
+        }
+        self.parts.lock().unwrap().insert(root.to_string(), parts);
+        true
+    }
+
     async fn fetch(&self, root: &str, index: &ItemIndex) -> Result<Vec<String>, String> {
         limiter::global().acquire(Lane::Hot).await;
         let response = self
@@ -160,10 +177,7 @@ impl SetSource for SetCache {
                 continue;
             }
             match self.fetch(root, index).await {
-                Ok(parts) => {
-                    self.parts.lock().unwrap().insert(root.clone(), parts);
-                    fetched_any = true;
-                }
+                Ok(parts) => fetched_any |= self.remember(root, parts),
                 Err(e) => warning("HelperLink:Sets", format!("Could not fetch set parts for {root}: {e}"), &LoggerOptions::default()),
             }
         }
@@ -246,9 +260,25 @@ mod tests {
     #[test]
     fn set_parts_parse_from_the_wfm_item_response() {
         let index = index();
-        let json = r#"{"data":{"slug":"wolf_sledge_set","setRoot":true,"setParts":["id_wolf_sledge_handle","id_wolf_sledge_set","unknown"]}}"#;
+        let json = r#"{"data":{"slug":"wolf_sledge_set","setRoot":true,"setParts":["id_wolf_sledge_handle","id_wolf_sledge_set"]}}"#;
         assert_eq!(parse_set_parts(json, &index).unwrap(), vec!["wolf_sledge_handle".to_string(), "wolf_sledge_set".to_string()]);
+        let unknown = r#"{"data":{"slug":"wolf_sledge_set","setParts":["id_wolf_sledge_handle","nope"]}}"#;
+        assert_eq!(parse_set_parts(unknown, &index).unwrap_err(), "unknown item id nope", "a short list would fold an incomplete set");
         assert!(parse_set_parts("nope", &index).is_err());
+        assert_eq!(parse_set_parts(r#"{"data":{"slug":"x"}}"#, &index).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_empty_parts_list_is_neither_cached_nor_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = SetCache::new(dir.path());
+        assert!(!cache.remember("wolf_sledge_set", Vec::new()), "an empty list is dropped");
+        assert!(cache.remember("mesa_prime_set", vec!["mesa_prime_blueprint".into()]));
+        assert!(!cache.parts.lock().unwrap().contains_key("wolf_sledge_set"));
+        cache.save();
+        let on_disk: PartsMap = serde_json::from_str(&std::fs::read_to_string(dir.path().join(SETS_FILE)).unwrap()).unwrap();
+        assert!(!on_disk.contains_key("wolf_sledge_set"), "the empty root never reaches sets.json");
+        assert!(on_disk.contains_key("mesa_prime_set"));
     }
 
     #[tokio::test]
