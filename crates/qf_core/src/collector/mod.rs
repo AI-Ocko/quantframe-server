@@ -1,6 +1,7 @@
 //! Market data collector (spec §5.4, §5.5 and amendments §15).
 
 pub mod diff;
+pub mod fetch;
 pub mod maintenance;
 pub mod orders;
 pub mod stats;
