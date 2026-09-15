@@ -17,6 +17,7 @@ pub mod game_data;
 pub mod handlers;
 pub mod helper;
 mod macros;
+pub mod market;
 pub mod paths;
 pub mod startup;
 pub mod types;
