@@ -27,3 +27,34 @@ pub async fn connect(data_dir: &Path) -> Result<DatabaseConnection, Error> {
     info("Db:Connect", "Database ready", &LoggerOptions::default());
     Ok(conn)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use service::sea_orm::{DbBackend, Statement};
+
+    #[tokio::test]
+    async fn migrations_create_collector_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = connect(dir.path()).await.unwrap();
+        for table in [
+            "sweep_state",
+            "sweep_summary",
+            "sweep_summary_hourly",
+            "last_seen_orders",
+            "vanished_orders",
+            "item_stats",
+            "item_stats_daily",
+        ] {
+            let row = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    [table.into()],
+                ))
+                .await
+                .unwrap();
+            assert!(row.is_some(), "{table} is missing");
+        }
+    }
+}

@@ -17,6 +17,7 @@ mod m20260710_125000_drop_min_price_columns;
 mod m20260715_160000_make_properties_nullable;
 mod m20260914_000001_create_wfm_account;
 mod m20260914_000002_create_web_auth;
+mod m20260915_000001_create_collector_tables;
 
 pub struct Migrator;
 
@@ -41,6 +42,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260715_160000_make_properties_nullable::Migration),
             Box::new(m20260914_000001_create_wfm_account::Migration),
             Box::new(m20260914_000002_create_web_auth::Migration),
+            Box::new(m20260915_000001_create_collector_tables::Migration),
         ]
     }
 }
