@@ -2,6 +2,7 @@
 
 pub mod apply;
 pub mod events;
+pub mod live;
 pub mod resolve;
 pub mod sets;
 pub mod split;

@@ -4,6 +4,7 @@ use wf_market::enums::OrderType;
 
 use crate::app::{ItemSettings, Settings};
 use crate::handlers::ItemEntity;
+use crate::helper_link::trades::ReviewItem;
 use crate::utils::WfmOrderPaginationQueryDto;
 use entity::{stock_item::*, trade_entry::*, transaction::*, wish_list::*};
 
@@ -68,6 +69,9 @@ rpc_table! {
     helper_devices => helper_link::helper_devices {},
     helper_device_create => helper_link::helper_device_create { name: String },
     helper_device_revoke => helper_link::helper_device_revoke { id: i64 },
+    helper_trades => helper_link::helper_trades { status: Option<String>, page: i64, limit: i64 },
+    helper_trade_apply => helper_link::helper_trade_apply { event_id: String, items: Vec<ReviewItem> },
+    helper_trade_ignore => helper_link::helper_trade_ignore { event_id: String },
     log => logs::log { cause: String, component: String, location: String, log_level: String, message: String, context: Option<Value> },
     get_stock_item_pagination => stock_item::get_stock_item_pagination { query: StockItemPaginationQueryDto },
     get_stock_item_financial_report => stock_item::get_stock_item_financial_report { query: StockItemPaginationQueryDto },
@@ -172,6 +176,20 @@ mod tests {
         }
         assert!(dispatch("helper_device_create", json!({})).await.unwrap().is_err(), "name is required");
         assert!(dispatch("helper_device_revoke", json!({"id": "one"})).await.unwrap().is_err(), "id must be a number");
+    }
+
+    #[tokio::test]
+    async fn helper_trade_commands_are_routable_and_validate_args() {
+        for name in ["helper_trades", "helper_trade_apply", "helper_trade_ignore"] {
+            assert!(COMMANDS.contains(&name), "{name}");
+        }
+        assert!(dispatch("helper_trades", json!({"page": 1})).await.unwrap().is_err(), "limit is required");
+        assert!(dispatch("helper_trade_apply", json!({"eventId": "x"})).await.unwrap().is_err(), "items are required");
+        assert!(
+            dispatch("helper_trade_apply", json!({"eventId": "x", "items": [{"slug": "a", "quantity": "one", "price": 1}]})).await.unwrap().is_err(),
+            "quantity must be a number"
+        );
+        assert!(dispatch("helper_trade_ignore", json!({})).await.unwrap().is_err(), "eventId is required");
     }
 
     #[test]
