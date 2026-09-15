@@ -13,4 +13,13 @@ export class HelperLinkModule {
   revoke(id: number) {
     return this.client.sendInvoke<boolean>("helper_device_revoke", { id });
   }
+  trades(status: TauriTypes.HelperEventStatus | null, page: number, limit: number) {
+    return this.client.sendInvoke<TauriTypes.HelperEventPage>("helper_trades", { status, page, limit });
+  }
+  applyTrade(eventId: string, items: TauriTypes.HelperReviewItem[]) {
+    return this.client.sendInvoke<TauriTypes.HelperEvent>("helper_trade_apply", { eventId, items });
+  }
+  ignoreTrade(eventId: string) {
+    return this.client.sendInvoke<TauriTypes.HelperEvent>("helper_trade_ignore", { eventId });
+  }
 }

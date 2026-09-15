@@ -1,7 +1,7 @@
 import { useTranslatePages } from "@hooks/useTranslate.hook";
 import { Container, Tabs } from "@mantine/core";
 import { useLocalStorage } from "@mantine/hooks";
-import { DryRunLogPanel, HelperDevicesPanel, ItemPanel, WishListPanel } from "./Tabs";
+import { DryRunLogPanel, HelperDevicesPanel, ItemPanel, TradesPanel, WishListPanel } from "./Tabs";
 import { TraderPanel } from "./TraderPanel";
 
 export default function LiveScraperPage() {
@@ -21,6 +21,11 @@ export default function LiveScraperPage() {
       label: useTranslateTabs("wish_list.title"),
       component: (isActive: boolean) => <WishListPanel isActive={isActive} />,
       id: "wish_list",
+    },
+    {
+      label: useTranslateForm("trades.title"),
+      component: (isActive: boolean) => <TradesPanel isActive={isActive} />,
+      id: "trades",
     },
     {
       label: useTranslateForm("trader.dry_run_log.title"),

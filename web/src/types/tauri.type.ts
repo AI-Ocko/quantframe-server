@@ -1129,4 +1129,56 @@ export namespace TauriTypes {
     limit: number;
     results: DryRunEntry[];
   }
+  export interface HelperRawItem {
+    name: string;
+    quantity: number;
+    rank?: number | null;
+  }
+  export interface HelperRawTrade {
+    player_name: string;
+    ee_timestamp: string;
+    offered: HelperRawItem[];
+    received: HelperRawItem[];
+  }
+  export type HelperTradeDirection = "purchase" | "sale";
+  export interface HelperResolvedItem {
+    name: string;
+    slug: string;
+    wfm_id: string;
+    item_name: string;
+    sub_type?: SubType | null;
+    quantity: number;
+    price: number;
+    matched_by: "name" | "override" | "set" | "review";
+  }
+  export interface HelperResolution {
+    direction?: HelperTradeDirection | null;
+    platinum: number;
+    items: HelperResolvedItem[];
+    extras: HelperRawItem[];
+  }
+  export type HelperEventStatus = "applied" | "needs_review" | "ignored";
+  export interface HelperEvent {
+    event_id: string;
+    device_name: string;
+    received_at: string;
+    detected_at: string;
+    status: HelperEventStatus;
+    reason?: string | null;
+    payload: HelperRawTrade;
+    resolution?: HelperResolution | null;
+    reviewed_at?: string | null;
+  }
+  export interface HelperEventPage {
+    total: number;
+    page: number;
+    limit: number;
+    results: HelperEvent[];
+  }
+  export interface HelperReviewItem {
+    slug: string;
+    sub_type?: SubType;
+    quantity: number;
+    price: number;
+  }
 }

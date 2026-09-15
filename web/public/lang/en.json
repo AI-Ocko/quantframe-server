@@ -49,6 +49,14 @@
         "success": {
           "title": "Trade with {{player_name}} complete",
           "message": "<blue>{{item_name}}</blue> X<blue>{{quantity}}</blue> <blue>{{trade_type}}</blue> For {{platinum}}p"
+        },
+        "applied": {
+          "title": "Trade with {{player_name}} recorded",
+          "message": "<blue>{{direction}}</blue> of {{items}} item(s) for <blue>{{platinum}}p</blue>"
+        },
+        "needs_review": {
+          "title": "Trade with {{player_name}} needs review",
+          "message": "{{reason}}. Open Live Scraper → Trades to finish it."
         }
       },
       "warframe_gdpr_data_loaded": {
@@ -2277,6 +2285,52 @@
         "created_warning": "This key is shown only once. Save it now.",
         "created_config": "Put this in ~/.config/qf-helper/qf-helper.toml on the gaming PC:",
         "done": "Done"
+      },
+      "trades": {
+        "title": "Trades",
+        "total": "{{total}} trades",
+        "status": {
+          "needs_review": "Needs review",
+          "applied": "Applied",
+          "ignored": "Ignored",
+          "all": "All"
+        },
+        "direction": {
+          "purchase": "Purchase",
+          "sale": "Sale"
+        },
+        "columns": {
+          "detected_at": "Detected",
+          "player": "Player",
+          "direction": "Direction",
+          "platinum": "Platinum",
+          "items": "Items",
+          "status": "Status",
+          "reason": "Reason"
+        },
+        "review": "Review",
+        "ignore": "Ignore",
+        "cancel": "Cancel",
+        "ignore_title": "Ignore trade",
+        "ignore_message": "The trade with {{player}} stays in the list as ignored. Stock, wish list and transactions don't change.",
+        "review_modal": {
+          "title": "Review trade with {{player}}",
+          "summary": "{{direction}} for {{platinum}} platinum",
+          "game_sent": "The game reported:",
+          "in_game": "In game: {{name}}",
+          "columns": {
+            "item": "Item",
+            "sub_type": "Rank / variant",
+            "quantity": "Quantity",
+            "price": "Line price"
+          },
+          "add_item": "Add item",
+          "remove": "Remove",
+          "split_equally": "Split platinum equally",
+          "sum_mismatch": "Line prices add up to {{sum}}p; the trade was {{platinum}}p.",
+          "cancel": "Cancel",
+          "apply": "Apply"
+        }
       },
       "export_json_tooltip": "Export Items to JSON (Patreon T1+)",
       "update_multiple_tooltip": "Update Multiple Items",
