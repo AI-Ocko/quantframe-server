@@ -1,0 +1,1140 @@
+{
+ "apiVersion": "0.25.0",
+ "data": [
+  {
+   "id": "5ad9684a69f3060a38106a87",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 187,
+   "perTrade": 1,
+   "amberStars": 0,
+   "cyanStars": 0,
+   "visible": true,
+   "createdAt": "2018-04-20T04:10:50Z",
+   "updatedAt": "2025-06-15T04:53:48Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user1",
+    "ingameName": "user1",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "5c3ae50c2cc6ce0162f41773",
+   "type": "sell",
+   "platinum": 90,
+   "quantity": 120,
+   "perTrade": 6,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2019-01-13T07:13:16Z",
+   "updatedAt": "2026-07-02T17:56:03Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user2",
+    "ingameName": "user2",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "5d213c98966b8900cd5cf74e",
+   "type": "buy",
+   "platinum": 5,
+   "quantity": 999,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2019-07-07T00:28:08Z",
+   "updatedAt": "2026-07-06T05:22:53Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user3",
+    "ingameName": "user3",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "5d7d04a9934a4d0466ebc779",
+   "type": "buy",
+   "platinum": 5,
+   "quantity": 100,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2019-09-14T15:18:01Z",
+   "updatedAt": "2026-08-04T09:37:15Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user4",
+    "ingameName": "user4",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "5d989c09d77305069666e4bd",
+   "type": "sell",
+   "platinum": 15,
+   "quantity": 9,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2019-10-05T13:35:05Z",
+   "updatedAt": "2026-03-25T15:56:08Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user5",
+    "ingameName": "user5",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "5f278cbd2cc95300a3275cfd",
+   "type": "buy",
+   "platinum": 42,
+   "quantity": 546,
+   "perTrade": 6,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2020-08-03T04:04:13Z",
+   "updatedAt": "2026-09-11T16:35:56Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user6",
+    "ingameName": "user6",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6073c93fa2082d026d01da76",
+   "type": "sell",
+   "platinum": 9,
+   "quantity": 1,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2021-04-12T04:14:55Z",
+   "updatedAt": "2026-06-09T08:22:18Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user7",
+    "ingameName": "user7",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6076aa392c953e029221531c",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 2,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2021-04-14T08:39:21Z",
+   "updatedAt": "2026-02-02T21:58:08Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user8",
+    "ingameName": "user8",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "607bd908d07cd70074543a7a",
+   "type": "sell",
+   "platinum": 20,
+   "quantity": 30,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2021-04-18T07:00:24Z",
+   "updatedAt": "2026-09-09T12:00:57Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user9",
+    "ingameName": "user9",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "60eb30a524a6540174568956",
+   "type": "sell",
+   "platinum": 20,
+   "quantity": 30,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2021-07-11T17:55:49Z",
+   "updatedAt": "2025-10-13T18:07:42Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user10",
+    "ingameName": "user10",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6246df49726b100039ab53af",
+   "type": "sell",
+   "platinum": 15,
+   "quantity": 4,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2022-04-01T11:17:29Z",
+   "updatedAt": "2026-08-31T22:49:31Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user11",
+    "ingameName": "user11",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6298f6c84670ac053a9eb721",
+   "type": "sell",
+   "platinum": 14,
+   "quantity": 1,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2022-06-02T17:43:36Z",
+   "updatedAt": "2022-06-02T17:43:36Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user12",
+    "ingameName": "user12",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "629f5c29ffa44c063b687e83",
+   "type": "sell",
+   "platinum": 9,
+   "quantity": 100,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2022-06-07T14:09:45Z",
+   "updatedAt": "2026-05-31T13:40:25Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user13",
+    "ingameName": "user13",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "62cd52e1e2e88e00fe1a93a0",
+   "type": "sell",
+   "platinum": 12,
+   "quantity": 3,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2022-07-12T10:54:25Z",
+   "updatedAt": "2026-08-24T15:49:56Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user14",
+    "ingameName": "user14",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6304c3fccb73e5014b1521be",
+   "type": "buy",
+   "platinum": 4,
+   "quantity": 7987,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2022-08-23T12:11:40Z",
+   "updatedAt": "2026-07-18T01:45:47Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user15",
+    "ingameName": "user15",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "634f414492f3eb096c521b61",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 130,
+   "perTrade": 1,
+   "amberStars": 0,
+   "cyanStars": 0,
+   "visible": true,
+   "createdAt": "2022-10-19T00:13:56Z",
+   "updatedAt": "2025-10-27T23:58:33Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user16",
+    "ingameName": "user16",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "63891bc0b1faca00187347a1",
+   "type": "buy",
+   "platinum": 6,
+   "quantity": 10,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2022-12-01T21:25:20Z",
+   "updatedAt": "2026-08-11T16:14:41Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user17",
+    "ingameName": "user17",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "63d6483430a32d07298223ad",
+   "type": "sell",
+   "platinum": 15,
+   "quantity": 12,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-01-29T10:19:32Z",
+   "updatedAt": "2026-09-13T17:06:54Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user18",
+    "ingameName": "user18",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "63f826a12b178c0172a350cc",
+   "type": "buy",
+   "platinum": 27,
+   "quantity": 420,
+   "perTrade": 6,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-02-24T02:53:21Z",
+   "updatedAt": "2026-09-03T20:59:25Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user19",
+    "ingameName": "user19",
+    "status": "online"
+   }
+  },
+  {
+   "id": "641852987d179f049b20606f",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 1,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-03-20T12:33:28Z",
+   "updatedAt": "2023-03-20T12:33:28Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user20",
+    "ingameName": "user20",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "642635a0e0c879080a7acfdb",
+   "type": "sell",
+   "platinum": 12,
+   "quantity": 30,
+   "perTrade": 1,
+   "amberStars": 0,
+   "cyanStars": 0,
+   "visible": true,
+   "createdAt": "2023-03-31T01:21:36Z",
+   "updatedAt": "2025-06-23T00:54:45Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user21",
+    "ingameName": "user21",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "64405b8fa822250829690649",
+   "type": "buy",
+   "platinum": 6,
+   "quantity": 6,
+   "perTrade": 1,
+   "amberStars": 0,
+   "cyanStars": 0,
+   "visible": true,
+   "createdAt": "2023-04-19T21:22:23Z",
+   "updatedAt": "2026-06-27T06:53:45Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user22",
+    "ingameName": "user22",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6456aea420b9c504e7ddd6dc",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 20,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-05-06T19:46:44Z",
+   "updatedAt": "2026-08-28T02:48:20Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user23",
+    "ingameName": "user23",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "645733b326946b06073aaf60",
+   "type": "sell",
+   "platinum": 25,
+   "quantity": 6404,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-05-07T05:14:27Z",
+   "updatedAt": "2025-03-23T11:30:29Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user24",
+    "ingameName": "user24",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6461144306007408bd0643af",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 6,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-05-14T17:02:59Z",
+   "updatedAt": "2026-09-07T10:28:17Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user25",
+    "ingameName": "user25",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6485323026946b1c6f2ab51c",
+   "type": "buy",
+   "platinum": 30,
+   "quantity": 6,
+   "perTrade": 6,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-06-11T02:32:16Z",
+   "updatedAt": "2026-06-04T02:50:20Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user26",
+    "ingameName": "user26",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "64b50292b487a90038c4d5c2",
+   "type": "buy",
+   "platinum": 6,
+   "quantity": 666,
+   "perTrade": 6,
+   "amberStars": 0,
+   "cyanStars": 0,
+   "visible": true,
+   "createdAt": "2023-07-17T08:57:54Z",
+   "updatedAt": "2026-06-12T16:22:26Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user27",
+    "ingameName": "user27",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "64c266d8b487a9041cc47ab8",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 2,
+   "perTrade": 1,
+   "amberStars": 0,
+   "cyanStars": 0,
+   "visible": true,
+   "createdAt": "2023-07-27T12:45:12Z",
+   "updatedAt": "2026-09-13T14:22:35Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user8",
+    "ingameName": "user8",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "64ec60bceffede0483705d0a",
+   "type": "sell",
+   "platinum": 50,
+   "quantity": 6,
+   "perTrade": 6,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-08-28T08:54:20Z",
+   "updatedAt": "2026-09-14T06:02:12Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user28",
+    "ingameName": "user28",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "651a5f6e000c96059b31732f",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 22,
+   "perTrade": 1,
+   "amberStars": 0,
+   "cyanStars": 0,
+   "visible": true,
+   "createdAt": "2023-10-02T06:13:02Z",
+   "updatedAt": "2026-02-22T12:43:53Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user29",
+    "ingameName": "user29",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "652557e256256c051d0ddb37",
+   "type": "sell",
+   "platinum": 11,
+   "quantity": 6,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-10-10T13:55:46Z",
+   "updatedAt": "2026-06-23T11:19:59Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user30",
+    "ingameName": "user30",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "655bc9755d2df010ec367f20",
+   "type": "sell",
+   "platinum": 15,
+   "quantity": 6,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-11-20T21:02:45Z",
+   "updatedAt": "2026-09-10T21:02:58Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user31",
+    "ingameName": "user31",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "655cdc0c0549dc12a357af8c",
+   "type": "sell",
+   "platinum": 20,
+   "quantity": 236,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-11-21T16:34:20Z",
+   "updatedAt": "2024-01-22T17:03:14Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user32",
+    "ingameName": "user32",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "658868255d2df02de37e97d5",
+   "type": "sell",
+   "platinum": 50,
+   "quantity": 10,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2023-12-24T17:19:33Z",
+   "updatedAt": "2024-03-03T16:09:09Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user33",
+    "ingameName": "user33",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "65ba7685506908007391eacc",
+   "type": "sell",
+   "platinum": 30,
+   "quantity": 46,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-01-31T16:34:13Z",
+   "updatedAt": "2025-03-15T15:24:27Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user34",
+    "ingameName": "user34",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "65bb0ad650ebee01ce7b1fda",
+   "type": "sell",
+   "platinum": 9,
+   "quantity": 6,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-02-01T03:07:02Z",
+   "updatedAt": "2026-09-06T01:41:33Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user35",
+    "ingameName": "user35",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "65cfd90eb3d251001fd89ffe",
+   "type": "sell",
+   "platinum": 13,
+   "quantity": 4,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-02-16T21:52:14Z",
+   "updatedAt": "2026-08-30T11:37:57Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user36",
+    "ingameName": "user36",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "65de70b8d995a500cd805880",
+   "type": "sell",
+   "platinum": 12,
+   "quantity": 493,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-02-27T23:31:04Z",
+   "updatedAt": "2026-09-07T20:37:22Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user37",
+    "ingameName": "user37",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "65fa1298a96306006123fb21",
+   "type": "sell",
+   "platinum": 15,
+   "quantity": 600,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-03-19T22:32:56Z",
+   "updatedAt": "2026-09-09T23:29:49Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user38",
+    "ingameName": "user38",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "66213313b0f809071b022af6",
+   "type": "sell",
+   "platinum": 12,
+   "quantity": 18,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-04-18T14:49:55Z",
+   "updatedAt": "2026-08-10T04:49:34Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user39",
+    "ingameName": "user39",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "66401ee2a963060ec4450f11",
+   "type": "sell",
+   "platinum": 12,
+   "quantity": 6,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-05-12T01:44:02Z",
+   "updatedAt": "2025-10-18T16:46:24Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user40",
+    "ingameName": "user40",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "665117f1a963061194ae1033",
+   "type": "sell",
+   "platinum": 19,
+   "quantity": 122,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-05-24T22:42:57Z",
+   "updatedAt": "2026-05-16T18:34:46Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user41",
+    "ingameName": "user41",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "66558950c405f616753d72f7",
+   "type": "sell",
+   "platinum": 9,
+   "quantity": 106,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-05-28T07:35:44Z",
+   "updatedAt": "2026-09-13T07:57:50Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user42",
+    "ingameName": "user42",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6665c536adc83a18988be801",
+   "type": "sell",
+   "platinum": 60,
+   "quantity": 702,
+   "perTrade": 6,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-06-09T15:07:34Z",
+   "updatedAt": "2026-09-14T16:37:30Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user43",
+    "ingameName": "user43",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6665fb9d5ca32214fb395392",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 17,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-06-09T18:59:41Z",
+   "updatedAt": "2026-09-07T18:45:24Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user44",
+    "ingameName": "user44",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "6673c4a6945432182544037d",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 1,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-06-20T05:56:54Z",
+   "updatedAt": "2024-08-13T14:08:39Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user45",
+    "ingameName": "user45",
+    "status": "ingame"
+   }
+  },
+  {
+   "id": "66814f21c405f61e0d9b5be7",
+   "type": "sell",
+   "platinum": 30,
+   "quantity": 74,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-06-30T12:27:13Z",
+   "updatedAt": "2025-09-27T15:31:12Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user46",
+    "ingameName": "user46",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "66932e0f6b1741030158dba0",
+   "type": "sell",
+   "platinum": 60,
+   "quantity": 120,
+   "perTrade": 6,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-07-14T01:46:55Z",
+   "updatedAt": "2026-09-13T12:44:05Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user47",
+    "ingameName": "user47",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "66952d17adc83a20f03cc832",
+   "type": "sell",
+   "platinum": 9,
+   "quantity": 2,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-07-15T14:07:19Z",
+   "updatedAt": "2026-08-15T12:08:11Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user48",
+    "ingameName": "user48",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "66a8805fc405f62509f2a335",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 2,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-07-30T05:55:43Z",
+   "updatedAt": "2026-09-08T09:51:10Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user49",
+    "ingameName": "user49",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "66aadeb7b12b74267da04d68",
+   "type": "sell",
+   "platinum": 60,
+   "quantity": 12,
+   "perTrade": 6,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-08-01T01:02:47Z",
+   "updatedAt": "2026-09-12T10:21:32Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user50",
+    "ingameName": "user50",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "66c4ce74adc83a29e4ba22fe",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 60,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-08-20T17:12:20Z",
+   "updatedAt": "2026-08-07T12:39:06Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user51",
+    "ingameName": "user51",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "66f7ad6c6b174116d299aa45",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 45,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-09-28T07:17:00Z",
+   "updatedAt": "2025-09-06T04:29:27Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user52",
+    "ingameName": "user52",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "671110c95ca3223553ad41cd",
+   "type": "sell",
+   "platinum": 13,
+   "quantity": 18,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-10-17T13:27:37Z",
+   "updatedAt": "2026-06-05T06:03:19Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user53",
+    "ingameName": "user53",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "67223d2ac405f63f012912b1",
+   "type": "sell",
+   "platinum": 54,
+   "quantity": 96,
+   "perTrade": 6,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-10-30T14:05:30Z",
+   "updatedAt": "2026-09-10T11:38:20Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user54",
+    "ingameName": "user54",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "67225da7c405f63f076612b4",
+   "type": "sell",
+   "platinum": 15,
+   "quantity": 9,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-10-30T16:24:07Z",
+   "updatedAt": "2025-05-12T05:59:08Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user55",
+    "ingameName": "user55",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "672481e0adc83a3f167b3f17",
+   "type": "sell",
+   "platinum": 15,
+   "quantity": 30,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-11-01T07:23:12Z",
+   "updatedAt": "2026-09-09T05:56:12Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user56",
+    "ingameName": "user56",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "675eb8c06ddaa40009ba99e2",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 4,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-12-15T11:08:48Z",
+   "updatedAt": "2026-09-01T08:59:59Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user57",
+    "ingameName": "user57",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "676cce3cf278b100316985b0",
+   "type": "buy",
+   "platinum": 6,
+   "quantity": 6,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-12-26T03:32:12Z",
+   "updatedAt": "2026-03-29T18:41:55Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user58",
+    "ingameName": "user58",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "676e04a299f7de000933bb06",
+   "type": "sell",
+   "platinum": 10,
+   "quantity": 1,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2024-12-27T01:36:34Z",
+   "updatedAt": "2024-12-27T01:36:34Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user59",
+    "ingameName": "user59",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "679225ab862c1d026570b07a",
+   "type": "sell",
+   "platinum": 15,
+   "quantity": 2,
+   "perTrade": 1,
+   "amberStars": 1,
+   "cyanStars": 2,
+   "visible": true,
+   "createdAt": "2025-01-23T11:19:07Z",
+   "updatedAt": "2025-01-23T11:19:29Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user60",
+    "ingameName": "user60",
+    "status": "online"
+   }
+  },
+  {
+   "id": "67c44d6840c8b300c75de5dc",
+   "type": "sell",
+   "platinum": 12,
+   "quantity": 12,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 1,
+   "visible": true,
+   "createdAt": "2025-03-02T12:22:00Z",
+   "updatedAt": "2026-09-12T11:41:43Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user61",
+    "ingameName": "user61",
+    "status": "offline"
+   }
+  },
+  {
+   "id": "69dda2f5a5f84bde56537cb4",
+   "type": "sell",
+   "platinum": 14,
+   "quantity": 360,
+   "perTrade": 1,
+   "amberStars": 2,
+   "cyanStars": 0,
+   "visible": true,
+   "createdAt": "2026-04-14T02:14:13Z",
+   "updatedAt": "2026-07-25T00:12:35Z",
+   "itemId": "588a789c3cf52c408a2f88dd",
+   "user": {
+    "id": "user62",
+    "ingameName": "user62",
+    "status": "offline"
+   }
+  }
+ ],
+ "error": null
+}

@@ -1,0 +1,13 @@
+{
+ "apiVersion": "0.0.0",
+ "error": null,
+ "data": [
+  {"id": "s1", "type": "sell", "platinum": 20, "quantity": 2, "perTrade": 1, "rank": 0, "visible": true, "createdAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-01T00:00:00Z", "itemId": "item1", "user": {"id": "u1", "ingameName": "Alpha", "slug": "alpha", "status": "ingame"}},
+  {"id": "s2", "type": "sell", "platinum": 18, "quantity": 1, "perTrade": 1, "rank": 0, "visible": true, "createdAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-01T00:00:00Z", "itemId": "item1", "user": {"id": "u2", "ingameName": "Bravo", "slug": "bravo", "status": "offline"}},
+  {"id": "s3", "type": "sell", "platinum": 25, "quantity": 1, "perTrade": 1, "rank": 0, "visible": true, "createdAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-01T00:00:00Z", "itemId": "item1", "user": {"id": "u3", "ingameName": "Charlie", "slug": "charlie", "status": "ingame"}},
+  {"id": "s4", "type": "sell", "platinum": 90, "quantity": 1, "perTrade": 1, "rank": 5, "visible": true, "createdAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-01T00:00:00Z", "itemId": "item1", "user": {"id": "u1", "ingameName": "Alpha", "slug": "alpha", "status": "ingame"}},
+  {"id": "b1", "type": "buy", "platinum": 15, "quantity": 5, "perTrade": 1, "rank": 0, "visible": true, "createdAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-01T00:00:00Z", "itemId": "item1", "user": {"id": "u4", "ingameName": "Delta", "slug": "delta", "status": "ingame"}},
+  {"id": "b2", "type": "buy", "platinum": 17, "quantity": 1, "perTrade": 1, "rank": 0, "visible": true, "createdAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-01T00:00:00Z", "itemId": "item1", "user": {"id": "u5", "ingameName": "Echo", "slug": "echo", "status": "online"}},
+  {"id": "h1", "type": "sell", "platinum": 1, "quantity": 1, "perTrade": 1, "rank": 0, "visible": false, "createdAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-01T00:00:00Z", "itemId": "item1", "user": {"id": "u6", "ingameName": "Foxtrot", "slug": "foxtrot", "status": "ingame"}}
+ ]
+}

@@ -8,6 +8,7 @@ use ::utils::Error;
 
 pub mod app;
 pub mod cache;
+pub mod collector;
 pub mod commands;
 pub mod crypto;
 pub mod db;
