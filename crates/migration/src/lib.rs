@@ -21,6 +21,7 @@ mod m20260915_000001_create_collector_tables;
 mod m20260916_000001_create_trader_tables;
 mod m20260917_000001_create_helper_keys;
 mod m20260917_000002_drop_helper_override;
+mod m20260918_000001_create_helper_events;
 
 pub struct Migrator;
 
@@ -49,6 +50,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260916_000001_create_trader_tables::Migration),
             Box::new(m20260917_000001_create_helper_keys::Migration),
             Box::new(m20260917_000002_drop_helper_override::Migration),
+            Box::new(m20260918_000001_create_helper_events::Migration),
         ]
     }
 }

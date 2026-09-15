@@ -47,6 +47,7 @@ mod tests {
             "item_stats",
             "item_stats_daily",
             "helper_keys",
+            "helper_events",
         ] {
             let row = conn
                 .query_one(Statement::from_sql_and_values(

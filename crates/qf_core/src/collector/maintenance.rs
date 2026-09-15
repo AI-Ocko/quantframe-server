@@ -20,6 +20,8 @@ pub struct HourlyReport {
     pub daily_rows: u64,
     pub deleted_summaries: u64,
     pub deleted_vanished: u64,
+    /// `helper_events` older than 90 days (amendment E5).
+    pub deleted_events: u64,
 }
 
 /// Resolves `pending` full vanishes whose 2 h window has closed (amendment B8). Returns the affected item ids.
@@ -266,7 +268,8 @@ pub async fn hourly(conn: &DatabaseConnection, now: DateTime<Utc>) -> Result<Hou
     let hourly_rows = rollup_hourly(conn, now).await?;
     let daily_rows = rollup_daily(conn, now).await?;
     let (deleted_summaries, deleted_vanished) = apply_retention(conn, now).await?;
-    Ok(HourlyReport { hourly_rows, daily_rows, deleted_summaries, deleted_vanished })
+    let deleted_events = crate::helper_link::trades::events::apply_retention(conn, now).await?;
+    Ok(HourlyReport { hourly_rows, daily_rows, deleted_summaries, deleted_vanished, deleted_events })
 }
 
 #[cfg(test)]

@@ -18,6 +18,9 @@ base64 = "0.22"
 getrandom = "0.2"
 hex = "0.4"
 sha2 = "0.10"
+async-trait = "0.1"
+toml = "0.8"
+qf_log_parser = { path = "../qf_log_parser" }
 wf-market = { path = "../wf-market" }
 migration = { path = "../migration" }
 service = { path = "../service" }
