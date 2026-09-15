@@ -981,4 +981,77 @@ export namespace TauriTypes {
   export type TradeEntryControllerGetListData = PaginatedDto & {
     results?: TradeEntry[];
   };
+  export interface CollectorLaneHealth {
+    swept_last_hour: number;
+    errors_last_hour: number;
+    last_sweep_at?: string | null;
+  }
+  export interface LimiterSnapshot {
+    granted_trader: number;
+    granted_hot: number;
+    granted_cold: number;
+    waiting: number;
+    paused_ms: number;
+    rate_limited_total: number;
+  }
+  export interface CollectorHealth {
+    running: boolean;
+    started_at?: string | null;
+    hot: CollectorLaneHealth;
+    cold: CollectorLaneHealth;
+    hot_items: number;
+    active_items: number;
+    inactive_items: number;
+    items_behind: number;
+    cold_pass_started_at?: string | null;
+    last_cold_pass_seconds?: number | null;
+    last_error?: string | null;
+    last_item_refresh_at?: string | null;
+    last_maintenance_at?: string | null;
+    limiter: LimiterSnapshot;
+  }
+  export interface MarketItemStats {
+    item_id: string;
+    sub_type: string;
+    volume: number;
+    avg_price?: number | null;
+    moving_avg?: number | null;
+    profit?: number | null;
+    min_price?: number | null;
+    max_price?: number | null;
+    median?: number | null;
+    history_days: number;
+    warm: boolean;
+    updated_at: string;
+  }
+  export interface MarketHourlyPoint {
+    hour: string;
+    min_sell_min?: number | null;
+    min_sell_avg?: number | null;
+    min_sell_max?: number | null;
+    max_buy_min?: number | null;
+    max_buy_avg?: number | null;
+    max_buy_max?: number | null;
+    sell_count_avg: number;
+    buy_count_avg: number;
+    samples: number;
+  }
+  export interface MarketDailyPoint {
+    day: string;
+    volume: number;
+    median?: number | null;
+    min_price?: number | null;
+    max_price?: number | null;
+  }
+  export interface MarketItemHistory {
+    item_id: string;
+    name: string;
+    slug: string;
+    sub_types: string[];
+    sub_type: string;
+    stats?: MarketItemStats | null;
+    hourly: MarketHourlyPoint[];
+    daily: MarketDailyPoint[];
+    last_swept_at?: string | null;
+  }
 }

@@ -30,6 +30,9 @@ const PLiveScraper = lazy(routeLoaders.liveScraper);
 // Trading Analytics
 const TradingAnalyticsPage = lazy(routeLoaders.tradingAnalytics);
 
+// Market Data
+const PMarketData = lazy(routeLoaders.marketData);
+
 // Warframe Market
 const PWarframeMarket = lazy(routeLoaders.warframeMarket);
 
@@ -67,6 +70,7 @@ export function AppRoutes() {
                 <Route path="live_scraper" element={<PLiveScraper />} />
                 <Route path="warframe-market" element={<PWarframeMarket />} />
                 <Route path="trading_analytics" element={<TradingAnalyticsPage />} />
+                <Route path="market_data" element={<PMarketData />} />
                 <Route path="trade_messages" element={<PTradeMessages />} />
                 <Route path="about" element={<AboutPage />} />
               </Route>

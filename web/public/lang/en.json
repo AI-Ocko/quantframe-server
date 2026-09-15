@@ -756,6 +756,7 @@
           "live_scraper": "Live Scraper",
           "warframe_market": "Warframe Market",
           "trading_analytics": "Trading Analytics",
+          "market_data": "Market Data",
           "trade_messages": "Trade Messages",
           "chat": "Chat",
           "wf_inventory": "WF Inventory",
@@ -1981,6 +1982,59 @@
     }
   },
   "pages": {
+    "market_data": {
+      "tabs": {
+        "collector": {
+          "title": "Collector",
+          "loading": "Loading collector health…",
+          "running": "Running",
+          "stopped": "Stopped",
+          "started_at": "Started {{at}}",
+          "paused": "Rate limited: paused {{seconds}} s",
+          "last_error": "Last error",
+          "active_items": "Active items",
+          "inactive_items": "Inactive items",
+          "hot_items": "Hot items",
+          "items_behind": "Items behind",
+          "last_cold_pass": "Last cold pass",
+          "minutes": "{{minutes}} min",
+          "rate_limited_total": "429s since start",
+          "lane": "Lane",
+          "swept_last_hour": "Sweeps (1 h)",
+          "errors_last_hour": "Errors (1 h)",
+          "requests_total": "Requests since start",
+          "last_sweep_at": "Last sweep",
+          "lanes": {
+            "trader": "Trader",
+            "hot": "Hot",
+            "cold": "Cold"
+          },
+          "footer": "Item list refreshed {{refresh}} · maintenance ran {{maintenance}}"
+        },
+        "price_history": {
+          "title": "Price history",
+          "sub_type": "Rank / variant",
+          "no_sub_type": "Default",
+          "days": "{{days}} d",
+          "pick_item": "Pick an item to see its collected prices.",
+          "warm": "Warm",
+          "warming_up": "Warming up ({{days}} of 7 days)",
+          "last_swept": "Last swept {{at}}",
+          "volume": "Trades / day",
+          "avg_price": "Avg price (48 h)",
+          "moving_avg": "Moving avg (7 d)",
+          "median": "Median (7 d)",
+          "profit": "Profit",
+          "min_price": "Min (7 d)",
+          "max_price": "Max (7 d)",
+          "hourly_title": "Lowest in-game sell and highest in-game buy (hourly average)",
+          "min_sell": "Min sell",
+          "max_buy": "Max buy",
+          "daily_title": "Probable trades per day",
+          "trades": "Trades"
+        }
+      }
+    },
     "home": {
       "cards": {
         "total": {

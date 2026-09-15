@@ -3,6 +3,7 @@ import { rpcInvoke as invoke } from "./transport";
 import { AppModule } from "./app";
 import { AuthModule } from "./auth";
 import { CacheModule } from "./cache";
+import { CollectorModule } from "./collector";
 import { DashboardModule } from "./dashboard";
 import { DebugModule } from "./debug";
 import { EventModule } from "./events";
@@ -29,6 +30,7 @@ export class TauriClient {
     this.auth = new AuthModule(this);
     this.user = new UserModule(this);
     this.cache = new CacheModule(this);
+    this.collector = new CollectorModule(this);
     this.live_scraper = new LiveScraperModule(this);
     this.log = new LogModule(this);
     this.stock_item = new StockItemModule(this);
@@ -162,6 +164,7 @@ export class TauriClient {
   dashboard: DashboardModule;
   events: EventModule;
   cache: CacheModule;
+  collector: CollectorModule;
   auth: AuthModule;
   log: LogModule;
   order: OrderModule;
