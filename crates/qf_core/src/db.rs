@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use migration::{Migrator, MigratorTrait};
-use service::sea_orm::{ConnectionTrait, Database, DatabaseConnection};
+pub use service::sea_orm::DatabaseConnection;
+use service::sea_orm::{ConnectionTrait, Database};
 use utils::{get_location, info, Error, LoggerOptions};
 
 pub const DB_FILE: &str = "quantframe.sqlite";
@@ -45,6 +46,7 @@ mod tests {
             "vanished_orders",
             "item_stats",
             "item_stats_daily",
+            "helper_keys",
         ] {
             let row = conn
                 .query_one(Statement::from_sql_and_values(

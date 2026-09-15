@@ -17,6 +17,7 @@ pub mod events;
 pub mod game_data;
 pub mod handlers;
 pub mod helper;
+pub mod helper_link;
 mod macros;
 pub mod market;
 pub mod paths;
