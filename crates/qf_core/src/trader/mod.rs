@@ -1,5 +1,6 @@
 //! Item trader (spec §5.6, §5.7 and amendments §16).
 
+pub mod controller;
 pub mod engine;
 pub mod helpers;
 pub mod item;
