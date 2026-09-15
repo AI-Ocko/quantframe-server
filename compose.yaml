@@ -7,6 +7,7 @@ services:
       - "8080:8080"
     environment:
       QF_PUBLIC_ORIGIN: ${QF_PUBLIC_ORIGIN:?set QF_PUBLIC_ORIGIN in .env}
+      QF_COLLECTOR: "on"
     volumes:
       - qf-data:/data
     secrets:

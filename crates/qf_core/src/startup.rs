@@ -15,6 +15,7 @@ pub struct CoreConfig {
     pub resources_dir: PathBuf,
     pub secret_key_hex: Option<String>,
     pub web_password_file: PathBuf,
+    pub collector_enabled: bool,
 }
 
 pub struct CoreHandles {
@@ -70,6 +71,13 @@ pub async fn start(cfg: CoreConfig) -> Result<CoreHandles, Error> {
             );
         }
     }
+
+    crate::collector::runner::start(crate::collector::runner::CollectorStart {
+        conn: conn.clone(),
+        cache_dir: paths::get().cache_dir(),
+        enabled: cfg.collector_enabled,
+    })
+    .await?;
 
     let _ = HAS_STARTED.set(true);
     info("Startup", "Core started", &LoggerOptions::default());
