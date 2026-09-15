@@ -83,6 +83,8 @@ pub async fn start(cfg: CoreConfig) -> Result<CoreHandles, Error> {
     })
     .await?;
 
+    crate::trader::start(conn.clone()).await?;
+
     let _ = HAS_STARTED.set(true);
     info("Startup", "Core started", &LoggerOptions::default());
     Ok(CoreHandles { web_password_hash })

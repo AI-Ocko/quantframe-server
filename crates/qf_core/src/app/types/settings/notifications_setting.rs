@@ -8,6 +8,26 @@ pub struct NotificationsSetting {
     pub on_new_conversation: NotificationSetting,
     pub on_wfm_chat_message: NotificationSetting,
     pub on_new_trade: NotificationSetting,
+    #[serde(default = "default_on_trader_stopped")]
+    pub on_trader_stopped: NotificationSetting,
+    #[serde(default = "default_on_token_expiring")]
+    pub on_token_expiring: NotificationSetting,
+}
+
+fn default_on_trader_stopped() -> NotificationSetting {
+    NotificationSetting::new(
+        DiscordNotify::new("<MENTION>\n```ansi\n\x1B[1;31m⛔ Trader stopped\x1B[0m\n\n\x1B[1;33m📝 Reason:\x1B[0m <REASON>\n\x1B[1;33m🧪 Mode:\x1B[0m   <MODE>\n\x1B[1;33m🕒 Time:\x1B[0m   <TIME>\n```", "", vec![]),
+        SystemNotify::new("Trader stopped", "<REASON>", "windows_xp_error.mp3", 1.0),
+        WebHookNotify::new("<WEBHOOK_URL>"),
+    )
+}
+
+fn default_on_token_expiring() -> NotificationSetting {
+    NotificationSetting::new(
+        DiscordNotify::new("<MENTION>\n```ansi\n\x1B[1;33m⚠️ warframe.market sign-in expires soon\x1B[0m\n\n\x1B[1;33m📅 Expires:\x1B[0m <EXPIRES_AT> (<DAYS_LEFT> days)\nSign in again from the web UI.\n```", "", vec![]),
+        SystemNotify::new("warframe.market sign-in expires soon", "Expires <EXPIRES_AT>", "cat_meow.mp3", 1.0),
+        WebHookNotify::new("<WEBHOOK_URL>"),
+    )
 }
 
 impl Default for NotificationsSetting {
@@ -29,6 +49,8 @@ impl Default for NotificationsSetting {
                 SystemNotify::new("Item <TR_TYPE>", "From: <PLAYER_NAME>\nOffered: <OF_COUNT> Received: <RE_COUNT> Plat: <TOTAL_PLAT>","cat_meow.mp3", 1.0),
                 WebHookNotify::new("<WEBHOOK_URL>"),
             ),
+            on_trader_stopped: default_on_trader_stopped(),
+            on_token_expiring: default_on_token_expiring(),
         }
     }
 }

@@ -84,8 +84,14 @@ impl Collector {
         self.hot.lock().unwrap().clone()
     }
 
+    /// Stock, wish list and, when Buy mode is on, the trader's buy candidates (amendments B3, C3).
     pub async fn refresh_hot_set(&self) -> Result<(), Error> {
-        let ids = store::hot_item_ids(&self.conn).await?;
+        let mut ids = store::hot_item_ids(&self.conn).await?;
+        if let Some(app) = states::try_app_state() {
+            let cache = states::cache_client()?;
+            let prices = crate::trader::price_source::StatsPriceSource::load(&self.conn, &cache).await?;
+            ids.extend(crate::trader::price_source::buy_candidate_ids(&app.settings, &prices));
+        }
         self.set_hot(ids);
         Ok(())
     }

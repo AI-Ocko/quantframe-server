@@ -7,6 +7,7 @@ pub mod item;
 pub mod item_entry;
 pub mod lifecycle;
 pub mod orders;
+pub mod platform;
 pub mod price_source;
 pub mod session;
 pub mod store;
@@ -50,4 +51,21 @@ impl TradeContext {
             banned: app.user.is_banned(),
         })
     }
+}
+
+static CONTROLLER: std::sync::OnceLock<Arc<controller::TraderController>> = std::sync::OnceLock::new();
+
+pub fn get() -> Option<Arc<controller::TraderController>> {
+    CONTROLLER.get().cloned()
+}
+
+/// Creates the controller (never trading), then supervises its monitor loop and the `/me` checks.
+pub async fn start(conn: DatabaseConnection) -> Result<(), Error> {
+    let platform = Arc::new(platform::LivePlatform::new(conn.clone()));
+    let controller = Arc::new(controller::TraderController::new(conn, platform).await?);
+    let _ = CONTROLLER.set(controller.clone());
+    let delay = std::time::Duration::from_secs(5);
+    crate::collector::runner::supervise("Trader:Monitor", delay, move || controller::monitor_loop(controller.clone()));
+    crate::collector::runner::supervise("Trader:Session", delay, session::me_check_loop);
+    Ok(())
 }
