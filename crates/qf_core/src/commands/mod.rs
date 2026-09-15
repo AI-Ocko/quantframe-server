@@ -5,6 +5,7 @@ pub mod collector;
 pub mod dashboard;
 pub mod debug;
 pub mod handlers;
+pub mod helper_link;
 pub mod logs;
 pub mod order;
 pub mod sound;

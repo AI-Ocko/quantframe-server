@@ -65,6 +65,9 @@ rpc_table! {
     trader_set_options => trader::trader_set_options { dry_run: Option<bool>, delete_buy_orders_on_stop: Option<bool> },
     trader_dry_run_log => trader::trader_dry_run_log { page: i64, limit: i64 },
     trader_interesting_items => trader::trader_interesting_items { settings: ItemSettings },
+    helper_devices => helper_link::helper_devices {},
+    helper_device_create => helper_link::helper_device_create { name: String },
+    helper_device_revoke => helper_link::helper_device_revoke { id: i64 },
     log => logs::log { cause: String, component: String, location: String, log_level: String, message: String, context: Option<Value> },
     get_stock_item_pagination => stock_item::get_stock_item_pagination { query: StockItemPaginationQueryDto },
     get_stock_item_financial_report => stock_item::get_stock_item_financial_report { query: StockItemPaginationQueryDto },
@@ -160,6 +163,15 @@ mod tests {
         }
         assert!(dispatch("trader_dry_run_log", json!({"page": 1})).await.unwrap().is_err(), "limit is required");
         assert!(dispatch("trader_set_options", json!({})).await.is_some(), "all options are optional");
+    }
+
+    #[tokio::test]
+    async fn helper_device_commands_are_routable_and_validate_args() {
+        for name in ["helper_devices", "helper_device_create", "helper_device_revoke"] {
+            assert!(COMMANDS.contains(&name), "{name}");
+        }
+        assert!(dispatch("helper_device_create", json!({})).await.unwrap().is_err(), "name is required");
+        assert!(dispatch("helper_device_revoke", json!({"id": "one"})).await.unwrap().is_err(), "id must be a number");
     }
 
     #[test]
