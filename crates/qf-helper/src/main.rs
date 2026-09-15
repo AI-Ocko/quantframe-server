@@ -4,7 +4,7 @@ use qf_helper::config::{default_config_path, Config};
 use qf_helper::heartbeat::{describe, Client, Heartbeat, Outcome};
 use qf_helper::process;
 
-const USAGE: &str = "Usage: qf-helper [--config <path>] [--once]";
+const USAGE: &str = "Usage: qf-helper [--config <path>] [--once] | qf-helper --parse <EE.log>";
 
 #[tokio::main]
 async fn main() {
@@ -16,6 +16,15 @@ async fn main() {
             "--config" => match args.next() {
                 Some(path) => config_path = Some(PathBuf::from(path)),
                 None => exit_with(2, &format!("--config needs a path\n{USAGE}")),
+            },
+            "--parse" => match args.next() {
+                Some(path) => {
+                    let bytes = std::fs::read(&path).unwrap_or_else(|e| exit_with(2, &format!("Cannot read {path}: {e}")));
+                    let events = qf_log_parser::scan_all(&bytes);
+                    println!("{}", serde_json::to_string_pretty(&events).expect("events serialize"));
+                    return;
+                }
+                None => exit_with(2, &format!("--parse needs a file\n{USAGE}")),
             },
             "--once" => once = true,
             "--help" | "-h" => {

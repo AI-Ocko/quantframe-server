@@ -18,6 +18,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread", "time", "signal"] }
 toml = "0.8"
+chrono = "0.4"
+qf_log_parser = { path = "../qf_log_parser" }
 
 [dev-dependencies]
 axum = "0.8"

@@ -2285,6 +2285,8 @@ name = "qf-helper"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
+ "qf_log_parser",
  "reqwest",
  "serde",
  "serde_json",
