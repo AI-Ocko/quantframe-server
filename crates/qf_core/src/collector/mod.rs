@@ -2,6 +2,7 @@
 
 pub mod diff;
 pub mod orders;
+pub mod store;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use service::sea_orm::{DbBackend, Statement, Value};
