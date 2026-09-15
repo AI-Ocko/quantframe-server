@@ -21,6 +21,7 @@ mod macros;
 pub mod market;
 pub mod paths;
 pub mod startup;
+pub mod trader;
 pub mod types;
 pub mod utils;
 pub mod web_auth;
