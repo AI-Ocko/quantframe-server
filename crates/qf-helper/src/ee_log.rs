@@ -26,7 +26,8 @@ impl Tail {
     }
 
     /// Reads whatever was appended since the last poll and returns the trades completed in it.
-    /// A file shorter than the last offset means a new game session: reading restarts from 0.
+    /// A file shorter than the last offset, or gone altogether, means a new game session: reading
+    /// restarts from 0 and the half-read dialog is forgotten.
     pub fn poll(&mut self) -> Vec<TradeEvent> {
         let len = match std::fs::metadata(&self.path) {
             Ok(meta) => meta.len(),
@@ -35,6 +36,9 @@ impl Tail {
                     eprintln!("EE.log not found at {}; waiting for Warframe to create it", self.path.display());
                     self.warned_missing = true;
                 }
+                // A file that vanished is a new session too: the next one starts from its beginning.
+                self.offset = 0;
+                self.scanner.reset();
                 return Vec::new();
             }
         };
@@ -122,5 +126,31 @@ mod tests {
         assert!(tail.poll().is_empty());
         std::fs::write(&path, format!("{DIALOG}{OK}")).unwrap();
         assert_eq!(tail.poll().len(), 1, "a file that appears is read from offset 0");
+    }
+
+    #[test]
+    fn a_deleted_file_resets_the_offset_and_the_half_read_dialog() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("EE.log");
+        append(&path, "0.001 Sys [Info]: old session\n");
+        let mut tail = Tail::start_at_end(&path);
+        append(&path, DIALOG);
+        assert!(tail.poll().is_empty(), "the dialog has no result yet");
+        let stale = tail.offset();
+
+        std::fs::remove_file(&path).unwrap();
+        assert!(tail.poll().is_empty());
+
+        // Longer than the stale offset, so only a real reset can stop the old dialog from pairing
+        // with this file's success marker.
+        std::fs::write(&path, format!("{}\n{OK}", "x".repeat(stale as usize))).unwrap();
+        assert!(tail.poll().is_empty(), "a dialog from before the delete never pairs across it");
+
+        append(&path, DIALOG);
+        append(&path, OK);
+        let events = tail.poll();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].trade.received[0].name, "Wolf Sledge Handle");
+        assert_eq!(tail.offset(), std::fs::metadata(&path).unwrap().len());
     }
 }

@@ -125,10 +125,10 @@ export function ReviewTradeModal({ event, onClose, onApplied }: ReviewTradeModal
                     />
                   </Table.Td>
                   <Table.Td>
-                    <NumberInput w={90} min={1} value={row.quantity} onChange={(value) => update(row.key, { quantity: Number(value) || 0 })} />
+                    <NumberInput w={90} min={1} allowDecimal={false} value={row.quantity} onChange={(value) => update(row.key, { quantity: Number(value) || 0 })} />
                   </Table.Td>
                   <Table.Td>
-                    <NumberInput w={110} min={0} value={row.price} onChange={(value) => update(row.key, { price: Number(value) || 0 })} />
+                    <NumberInput w={110} min={0} allowDecimal={false} value={row.price} onChange={(value) => update(row.key, { price: Number(value) || 0 })} />
                   </Table.Td>
                   <Table.Td>
                     <Button size="xs" variant="subtle" color="red" onClick={() => setRows((current) => current.filter((r) => r.key !== row.key))}>

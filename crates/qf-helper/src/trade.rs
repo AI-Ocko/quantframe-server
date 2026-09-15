@@ -10,7 +10,10 @@ use crate::heartbeat::REJECTED_BACKOFF;
 use crate::queue::{Queue, QueuedEvent};
 
 pub const RETRY_EVERY: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+/// Generous on purpose: the server applies the trade inside the request, and its WFM calls sit
+/// behind a rate limiter that can pause 5-60s after a 429. Timing out here cancels the handler
+/// mid-apply and strands the event row at needs_review/applying.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TradeOutcome {
