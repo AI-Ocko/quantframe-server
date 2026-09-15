@@ -31,6 +31,11 @@ pub fn app_state() -> Result<AppState, Error> {
     Ok(app_mutex().lock()?.clone())
 }
 
+/// The app state if it has been initialised (it isn't in unit tests or before startup finishes).
+pub fn try_app_state() -> Option<AppState> {
+    APP_STATE.get().and_then(|m| m.lock().ok()).map(|app| app.clone())
+}
+
 pub fn get_settings() -> Result<Settings, Error> {
     Ok(app_state()?.settings)
 }
