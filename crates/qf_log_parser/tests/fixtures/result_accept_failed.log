@@ -1,0 +1,10 @@
+845.518 Sys [Info]: Created /Lotus/Interface/Dialog.swf
+845.518 Script [Info]: Dialog.lua: Dialog::CreateOkCancel(description=Are you sure you want to accept this trade? You are offering:
+Galvanized Diffusion (GALVANIZED RANK 10)
+
+and will receive from PlayerB the following:
+Platinum x 65, title= leftItem=/Menu/Confirm_Item_Ok, rightItem=/Menu/Confirm_Item_Cancel)
+845.518 Script [Info]: Dialog.lua: SendResult_MENU_SELECT()
+845.518 Script [Info]: Dialog.lua: Dialog::SendResult(4)
+849.129 Sys [Warning]: HTTP/1.1 409 Conflict
+849.134 Sys [Info]: OnTradeAccepted failed: -13

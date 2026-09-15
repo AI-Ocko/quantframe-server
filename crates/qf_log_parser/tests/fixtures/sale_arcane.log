@@ -1,0 +1,9 @@
+1170.388 Sys [Info]: Created /Lotus/Interface/Dialog.swf
+1170.388 Script [Info]: Dialog.lua: Dialog::CreateOkCancel(description=Are you sure you want to accept this trade? You are offering:
+Arcane Nullifier 
+
+and will receive from PlayerB the following:
+Platinum x 70, title= leftItem=/Menu/Confirm_Item_Ok, rightItem=/Menu/Confirm_Item_Cancel)
+1170.388 Script [Info]: Dialog.lua: SendResult_MENU_SELECT()
+1170.388 Script [Info]: Dialog.lua: Dialog::SendResult(4)
+1174.495 Script [Info]: Dialog.lua: Dialog::CreateOk(description=The trade was successful!, title= leftItem=/Menu/Confirm_Item_Ok)

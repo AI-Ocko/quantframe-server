@@ -1,0 +1,12 @@
+422.424 Sys [Info]: Created /Lotus/Interface/Dialog.swf
+422.424 Script [Info]: Dialog.lua: Dialog::CreateOkCancel(description=Are you sure you want to accept this trade? You are offering:
+Platinum x 30
+
+and will receive from PlayerA the following:
+Wolf Sledge Blueprint
+Wolf Sledge Motor
+Wolf Sledge Head
+Wolf Sledge Handle, title= leftItem=/Menu/Confirm_Item_Ok, rightItem=/Menu/Confirm_Item_Cancel)
+422.424 Script [Info]: Dialog.lua: SendResult_MENU_SELECT()
+422.424 Script [Info]: Dialog.lua: Dialog::SendResult(4)
+427.411 Script [Info]: Dialog.lua: Dialog::CreateOk(description=The trade was successful!, title= leftItem=/Menu/Confirm_Item_Ok)

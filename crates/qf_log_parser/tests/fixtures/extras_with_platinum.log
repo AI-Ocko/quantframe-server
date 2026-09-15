@@ -1,0 +1,16 @@
+3020.824 Sys [Info]: Created /Lotus/Interface/Dialog.swf
+3020.824 Script [Info]: Dialog.lua: Dialog::CreateOkCancel(description=Are you sure you want to accept this trade? You are offering:
+Sevagoth Prime Blueprint
+Sevagoth Prime Systems Blueprint
+Sevagoth Prime Neuroptics Blueprint
+Sevagoth Prime Chassis Blueprint
+
+and will receive from PlayerF the following:
+Platinum x 43
+Parry (COMMON RANK 0)
+Pistol Gambit (COMMON RANK 0)
+Pistol Gambit (COMMON RANK 0)
+Pistol Gambit (COMMON RANK 0), title= leftItem=/Menu/Confirm_Item_Ok, rightItem=/Menu/Confirm_Item_Cancel)
+3020.824 Script [Info]: Dialog.lua: SendResult_MENU_SELECT()
+3020.824 Script [Info]: Dialog.lua: Dialog::SendResult(4)
+3026.000 Script [Info]: Dialog.lua: Dialog::CreateOk(description=The trade was successful!, title= leftItem=/Menu/Confirm_Item_Ok)

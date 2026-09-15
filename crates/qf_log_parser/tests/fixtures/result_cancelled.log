@@ -1,0 +1,9 @@
+200.000 Sys [Info]: Created /Lotus/Interface/Dialog.swf
+200.000 Script [Info]: Dialog.lua: Dialog::CreateOkCancel(description=Are you sure you want to accept this trade? You are offering:
+Platinum x 40
+
+and will receive from PlayerA the following:
+Adaptation (RARE RANK 10), title= leftItem=/Menu/Confirm_Item_Ok, rightItem=/Menu/Confirm_Item_Cancel)
+200.000 Script [Info]: Dialog.lua: SendResult_MENU_SELECT()
+200.000 Script [Info]: Dialog.lua: Dialog::SendResult(4)
+203.000 Script [Info]: Dialog.lua: Dialog::CreateOk(description=The trade was cancelled, title= leftItem=/Menu/Confirm_Item_Ok)

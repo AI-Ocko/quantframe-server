@@ -2337,6 +2337,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qf_log_parser"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "quanta"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
