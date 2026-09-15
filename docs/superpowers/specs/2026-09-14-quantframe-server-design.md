@@ -1,7 +1,7 @@
 # quantframe-server — Design Spec
 
 - **Date:** 2026-09-14
-- **Status:** Approved 2026-09-14. Amended by §14 during phase 1 planning and §15 during phase 2 planning.
+- **Status:** Approved 2026-09-14. Amended by §14 (phase 1), §15 (phase 2) and §16 (phase 3) planning.
 - **Source:** fork of [quantframe-react](https://github.com/Kenya-DK/quantframe-react) by Kenya-DK at commit `3d59c4e7` (v1.6.28)
 - **License:** GPLv3, inherited from quantframe-react. Keep the upstream `LICENSE` and credit Kenya-DK in the README.
 
@@ -539,3 +539,44 @@ These amendments take precedence over the earlier sections.
 - **B11 — When stats are recomputed.** `item_stats` is recomputed after every successful sweep, and for every item whose pending rows are resolved. Resolution runs every 5 min. Rollups (`sweep_summary_hourly` for the last 48 h, `item_stats_daily` for the last 3 days) and retention run hourly and are idempotent (`INSERT OR REPLACE`).
 - **B12 — `QF_COLLECTOR`** (`on` default, or `off`) turns off all collector tasks, for desktop development. Any other value is a configuration error.
 - **B13 — Screens.** Collector health and price history are the two tabs of one **Market Data** page. They are fed by the RPC commands `collector_health` and `market_item_history { wfmUrl, subType?, days }`. Price history shows hourly rollups, so the current hour appears after the next hourly run.
+
+## 16. Amendments from phase 3 planning (2026-09-15)
+
+These amendments take precedence over the earlier sections.
+
+- **C1 — Module and RPC names.**
+  - The trader is `qf_core::trader`: a port of upstream `live_scraper` `client.rs`, `modules/item.rs`, `modules/helpers.rs` and `types/item_entry.rs`, with riven and syndicate code removed.
+  - The RPC commands are `trader_status`, `trader_start`, `trader_stop`, `trader_set_options`, `trader_dry_run_log` and `trader_interesting_items`. The `live_scraper` ban in the RPC allowlist test stays.
+  - The web `live_scraper` API module calls these commands.
+- **C2 — `PriceSource`.**
+  - `StatsPriceSource` is loaded from `item_stats` at the start of every trader cycle.
+  - `ItemPriceInfo` keeps the upstream fields (except the `properties` bag) and adds `warm` and `history_days`.
+  - `profit_margin`, `trading_tax` and `week_price_shift` are always 0, and their buy filters always pass.
+  - Buy candidates pass the volume, profit and average-price filters. They are sorted by volume, highest first, and capped at 150.
+- **C3 — Hot set.** When `Buy` is in `trade_modes`, the collector adds the current buy candidates to the hot set every 60 s, whether or not the trader is running, so candidates warm up before trading.
+- **C4 — `OrderWriter` becomes `TradeOrders`.**
+  - Routing: global dry-run gives `DryRun(Global)`. With it off, an item that isn't warm gives `DryRun(NotWarm)`, and anything else is `Live`.
+  - Simulated orders live in an in-memory book. Under global dry-run it starts as a copy of the real cached orders, so the trader sees the same state it would live. Simulated order ids are `dry-<uuid>`.
+  - `update` and `delete` go to the simulated book when the id is in it, or when global dry-run is on.
+  - Every simulated write inserts a `dry_run_log` row. The table gains a `side` column; `action` is `create`, `update` or `delete`.
+  - The trader monitor deletes `dry_run_log` rows older than 30 days every hour.
+- **C5 — Upstream bug fixes.**
+  - Sell-side repricing reads `settings.wts.max_price_drop` and `settings.wts.min_listings_below` (upstream read `wtb`, spec §5.6).
+  - The buy-side max-stock-quantity delete now deletes the existing order. Upstream called `progress_order` with empty operations, so it did nothing.
+- **C6 — Failures.**
+  - `TradeOrders` counts consecutive failed live order calls (create, update, delete); a success resets the count.
+  - The run loop stops at 5.
+  - A `check()` error is classified as upstream does: WFM `ParsingError`, `BadRequest`, `Unknown`, `InternalServerError` or `InvalidType` is `Critical` and stops the trader; anything else is logged and the loop continues.
+- **C7 — Lifecycle inputs.**
+  - `token_valid`: signed in, no 401 since the last good `/me`, and `/me` succeeded within 20 min. `/me` is checked every 15 min.
+  - `ws_connected`: taken from the websocket's internal connected, disconnected and reconnecting callbacks.
+  - `game_data_loaded`: the tradable item list isn't empty.
+  - `helper_ok` in phase 3: `helper_override && dry_run`.
+  - The monitor ticks every 5 s. Stop triggers, first match wins: signed out, 401, websocket down for more than 60 s, `helper_ok` false, then the engine exiting (critical, failures or panic), plus the Stop button.
+- **C8 — `trader_state` columns** are `dry_run`, `delete_buy_orders_on_stop`, `helper_override` (removed in phase 4), `last_stop_reason` and `last_stop_at`. Changing `dry_run` is refused while `Trading`.
+- **C9 — Stop sequence.** Status is set to `invisible` even in dry-run. Buy orders are deleted on stop only when `delete_buy_orders_on_stop` is on and the run was live. Deleted orders are the real cached buy orders.
+- **C10 — Alerts.**
+  - New notification settings: `notifications.on_trader_stopped` (variables `<REASON>`, `<MODE>`, `<TIME>`) and `notifications.on_token_expiring` (variables `<EXPIRES_AT>`, `<DAYS_LEFT>`), each with Discord, system and webhook channels.
+  - The token-expiry alert fires at most once per 24 h, and only while the token expires within 7 days.
+- **C11 — Screens.** A Trader panel at the top of the Live Scraper page shows the state badge, the checklist, Start/Stop, option toggles and the last stop reason. A Dry-run log tab on the same page shows the newest entries first.
+- **C12 — Session hooks.** Startup (with a websocket) and `auth_login` mark the session signed in, with the token expiry read from the JWT. `auth_logout` marks it signed out.

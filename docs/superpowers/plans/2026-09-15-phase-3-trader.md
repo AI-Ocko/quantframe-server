@@ -33,10 +33,9 @@
 - **Upstream behaviour is kept** unless an amendment in §16 says otherwise.
 - **Tests:** run `cargo test -p qf_core --lib` and `cargo test -p qf-server`; never bare `--workspace`. For the web, run `python3 scripts/check-rpc-commands.py` and `(cd web && pnpm build)`.
 - **Docker** runs on ockohome only (`ssh christopher@ockohome`, `~/stacks/quantframe-server`).
-- **Commits:** conventional commits, ending with:
+- **Commits:** conventional commits, ending with the line below. No `Claude-Session:` trailer (user decision, 2026-09-14).
   ```
   Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-  Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37
   ```
 - **Pushes:** push `phase-3-trader` after each task; never push `main` from this plan.
 
@@ -155,8 +154,7 @@ These amendments take precedence over the earlier sections.
 git add docs/superpowers
 git commit -m "docs: add phase 3 trader plan and spec amendments
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push -u origin phase-3-trader
 ```
 
@@ -487,8 +485,7 @@ Expected: `test result: ok. 2 passed`. The migration runs through `crate::db::co
 git add crates/migration/src crates/qf_core/src/trader crates/qf_core/src/lib.rs
 git commit -m "feat(trader): add trader_state and dry_run_log tables with store
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -815,8 +812,7 @@ If `ItemSettings::default()` sets non-default wtb values, the explicit assignmen
 git add crates/qf_core/src
 git commit -m "feat(trader): price trader decisions from collected item stats
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -1114,8 +1110,7 @@ Expected: all pass.
 git add crates/qf_core/src
 git commit -m "feat(trader): track warframe.market session, websocket and token expiry
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -1543,8 +1538,7 @@ If `CreateOrderParams::new_with_subtype` takes `impl Into<String>` rather than `
 git add crates/qf_core/src/trader
 git commit -m "feat(trader): route order writes to warframe.market or a logged dry-run book
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -2371,8 +2365,7 @@ If a `service`/`entity` import path differs, find the right one with `grep -rn "
 git add crates/qf_core/src/trader
 git commit -m "feat(trader): port item entries and trading helpers onto TradeOrders
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -3231,8 +3224,7 @@ git commit -m "feat(trader): port item buy, sell and wish-list decisions with go
 Fixes sell repricing reading wtb max price drop settings, and the no-op
 max-stock delete.
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -3406,8 +3398,7 @@ Expected: `test result: ok. 4 passed`.
 git add crates/qf_core/src/trader
 git commit -m "feat(trader): add run loop that stops on critical errors and repeated order failures
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -3580,8 +3571,7 @@ Expected: `test result: ok. 4 passed`.
 git add crates/qf_core/src/trader
 git commit -m "feat(trader): add lifecycle checklist and stop-trigger rules
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -4066,8 +4056,7 @@ Expected: `test result: ok. 8 passed`.
 git add crates/qf_core/src/trader
 git commit -m "feat(trader): add lifecycle controller with start, stop and monitor tick
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -4350,8 +4339,7 @@ If `Box::pin(crate::commands::user::user_set_status(...))` fails with "future ca
 git add crates/qf_core/src
 git commit -m "feat(trader): wire live platform, stop and expiry alerts, and buy candidates into the hot set
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -4476,8 +4464,7 @@ Expected: all pass, and `allowlist_has_no_removed_features` still passes.
 git add crates/qf_core/src/commands
 git commit -m "feat(core): expose trader status, start, stop, options and dry-run log over rpc
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -4901,8 +4888,7 @@ Expected: `0 missing`; `pnpm build` passes with no TypeScript errors.
 git add web/src web/public/lang/en.json
 git commit -m "feat(web): add trader panel, dry-run log and trader notification settings
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
@@ -4958,14 +4944,13 @@ On `http://ockohome:8080/live_scraper`:
 
 - [ ] **Step 4: Write the acceptance record and commit**
 
-`docs/PHASE-3-ACCEPTANCE.md`: a table of checks 1–9 with Result and Notes, using the observed values, plus a `## Follow-ups` section.
+`docs/PHASE-3-ACCEPTANCE.md`: a table of checks 1–9 with Result and Notes, using the observed values, plus a `## Follow-ups` section. The follow-ups must include importing the user's existing desktop trading data (user request, 2026-09-14). The source is `~/.local/share/dev.kenya.quantframe/quantframeV2.sqlite`, which held `transaction` 280 rows and `stock_item` 16 rows on 2026-09-14. Rivens are out of scope. This isn't scheduled into a phase yet.
 
 ```bash
 git add docs/PHASE-3-ACCEPTANCE.md
 git commit -m "docs: record phase 3 dry-run acceptance
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_013NC5CFvPw228FZN8b2mL37"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
