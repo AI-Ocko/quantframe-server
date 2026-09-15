@@ -3,6 +3,7 @@
 pub mod diff;
 pub mod fetch;
 pub mod health;
+pub mod history;
 pub mod maintenance;
 pub mod orders;
 pub mod runner;

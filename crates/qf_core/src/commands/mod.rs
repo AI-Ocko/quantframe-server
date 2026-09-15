@@ -1,6 +1,7 @@
 pub mod app;
 pub mod auth;
 pub mod cache;
+pub mod collector;
 pub mod dashboard;
 pub mod debug;
 pub mod handlers;

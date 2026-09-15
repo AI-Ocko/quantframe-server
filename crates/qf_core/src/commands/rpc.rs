@@ -57,6 +57,8 @@ rpc_table! {
     dashboard_summary => dashboard::dashboard_summary {},
     cache_get_tradable_items => cache::cache_get_tradable_items {},
     cache_get_theme_presets => cache::cache_get_theme_presets {},
+    collector_health => collector::collector_health {},
+    market_item_history => collector::market_item_history { wfm_url: String, sub_type: Option<String>, days: i64 },
     log => logs::log { cause: String, component: String, location: String, log_level: String, message: String, context: Option<Value> },
     get_stock_item_pagination => stock_item::get_stock_item_pagination { query: StockItemPaginationQueryDto },
     get_stock_item_financial_report => stock_item::get_stock_item_financial_report { query: StockItemPaginationQueryDto },
@@ -135,6 +137,14 @@ mod tests {
         assert!(ok.is_ok(), "{:?}", ok.err());
         let bad = dispatch("log", json!({"cause": 1})).await.unwrap();
         assert!(bad.is_err());
+    }
+
+    #[tokio::test]
+    async fn collector_commands_are_routable_and_validate_args() {
+        assert!(COMMANDS.contains(&"collector_health"));
+        assert!(COMMANDS.contains(&"market_item_history"));
+        let bad = dispatch("market_item_history", json!({"wfmUrl": "x"})).await.unwrap();
+        assert!(bad.is_err(), "days is required");
     }
 
     #[test]
