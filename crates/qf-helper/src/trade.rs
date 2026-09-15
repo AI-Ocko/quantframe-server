@@ -110,20 +110,33 @@ pub fn now_rfc3339() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// Appends everything still pending to the queue, oldest first, keeping whatever could not be written.
+/// The tail never replays a dialog, so an event dropped here would be lost for good.
+fn persist(queue: &Queue, pending: &mut Vec<QueuedEvent>) {
+    pending.retain(|queued| match queue.push(queued) {
+        Ok(()) => {
+            println!("{}", describe(&queued.trade, "queued"));
+            false
+        }
+        Err(e) => {
+            eprintln!("cannot queue trade: {e}");
+            true
+        }
+    });
+}
+
 /// Polls EE.log every second, queues successes and drains the queue oldest first.
 pub async fn run(config: Config, queue: Queue) -> ! {
     let client = TradeClient::new(&config.server_url, &config.device_key);
     let mut tail = Tail::start_at_end(&config.ee_log_path);
     println!("watching {} from byte {} ({} queued trade(s))", config.ee_log_path.display(), tail.offset(), queue.len());
     let mut wait_until: Option<Instant> = None;
+    let mut pending: Vec<QueuedEvent> = Vec::new();
     loop {
         for event in tail.poll() {
-            let queued = QueuedEvent { event_id: event.event_id, detected_at: now_rfc3339(), trade: event.trade };
-            match queue.push(&queued) {
-                Ok(()) => println!("{}", describe(&queued.trade, "queued")),
-                Err(e) => eprintln!("cannot queue trade: {e}"),
-            }
+            pending.push(QueuedEvent { event_id: event.event_id, detected_at: now_rfc3339(), trade: event.trade });
         }
+        persist(&queue, &mut pending);
         if wait_until.is_none_or(|until| Instant::now() >= until) {
             wait_until = None;
             loop {
@@ -239,6 +252,26 @@ mod tests {
         assert!(matches!(failed, TradeOutcome::Failed(_)));
         assert!(!failed.removes_from_queue());
         assert_eq!(failed.next_delay(), Some(RETRY_EVERY));
+    }
+
+    #[test]
+    fn events_that_cannot_be_queued_are_retried_on_the_next_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        // A file where the queue's directory belongs: create_dir_all, and so push, fails.
+        let blocker = dir.path().join("state");
+        std::fs::write(&blocker, "").unwrap();
+        let queue = Queue::new(blocker.join("qf-helper/trade-queue.jsonl"));
+        let mut pending = vec![event("ok-1"), event("ok-2")];
+
+        persist(&queue, &mut pending);
+        assert_eq!(pending.len(), 2, "events the queue rejected are kept for the next tick");
+        assert_eq!(queue.len(), 0);
+
+        std::fs::remove_file(&blocker).unwrap();
+        persist(&queue, &mut pending);
+        assert!(pending.is_empty(), "the retry drains the kept events");
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue.peek().unwrap().unwrap().event_id, "ok-1", "oldest first");
     }
 
     #[test]

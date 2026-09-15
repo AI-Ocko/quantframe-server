@@ -77,7 +77,12 @@ impl Queue {
         if !text.is_empty() {
             text.push('\n');
         }
-        std::fs::write(&self.path, text).map_err(|e| format!("cannot write {}: {e}", self.path.display()))
+        // Replaced atomically: a crash between truncating and writing would lose every queued event.
+        let mut temp = self.path.clone().into_os_string();
+        temp.push(".tmp");
+        let temp = PathBuf::from(temp);
+        std::fs::write(&temp, text).map_err(|e| format!("cannot write {}: {e}", temp.display()))?;
+        std::fs::rename(&temp, &self.path).map_err(|e| format!("cannot replace {}: {e}", self.path.display()))
     }
 
     pub fn len(&self) -> usize {
@@ -121,6 +126,24 @@ mod tests {
         queue.pop().unwrap();
         assert!(queue.is_empty());
         queue.pop().unwrap();
+    }
+
+    #[test]
+    fn pop_keeps_the_rest_of_the_queue_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trade-queue.jsonl");
+        let queue = Queue::new(path.clone());
+        for id in ["a", "b", "c"] {
+            queue.push(&event(id)).unwrap();
+        }
+        queue.pop().unwrap();
+        let left: Vec<String> = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str::<QueuedEvent>(l).unwrap().event_id)
+            .collect();
+        assert_eq!(left, ["b", "c"], "pop removes only the head");
+        assert!(!dir.path().join("trade-queue.jsonl.tmp").exists(), "the temp file is renamed away");
     }
 
     #[test]
