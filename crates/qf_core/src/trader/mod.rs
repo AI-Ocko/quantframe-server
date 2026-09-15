@@ -1,6 +1,7 @@
 //! Item trader (spec §5.6, §5.7 and amendments §16).
 
 pub mod helpers;
+pub mod item;
 pub mod item_entry;
 pub mod orders;
 pub mod price_source;
