@@ -1,7 +1,7 @@
 # quantframe-server — Design Spec
 
 - **Date:** 2026-09-14
-- **Status:** Approved 2026-09-14. Amended by §14 (phase 1), §15 (phase 2) and §16 (phase 3) planning.
+- **Status:** Approved 2026-09-14. Amended by §14 (phase 1), §15 (phase 2), §16 (phase 3) and §17 (phase 4a) planning.
 - **Source:** fork of [quantframe-react](https://github.com/Kenya-DK/quantframe-react) by Kenya-DK at commit `3d59c4e7` (v1.6.28)
 - **License:** GPLv3, inherited from quantframe-react. Keep the upstream `LICENSE` and credit Kenya-DK in the README.
 
@@ -580,3 +580,56 @@ These amendments take precedence over the earlier sections.
   - The token-expiry alert fires at most once per 24 h, and only while the token expires within 7 days.
 - **C11 — Screens.** A Trader panel at the top of the Live Scraper page shows the state badge, the checklist, Start/Stop, option toggles and the last stop reason. A Dry-run log tab on the same page shows the newest entries first.
 - **C12 — Session hooks.** Startup (with a websocket) and `auth_login` mark the session signed in, with the token expiry read from the JWT. `auth_logout` marks it signed out.
+
+## 17. Amendments from phase 4a planning (2026-09-15)
+
+These amendments take precedence over the earlier sections.
+
+- **D1 — Phase 4 is split.**
+  - **4a, helper link:** device keys, the heartbeat, in-game detection, the lifecycle checklist and stop triggers, and a heartbeat-only `qf-helper`. The phase 3 helper override is removed here.
+  - **4b, trade events:** WFCD `warframe-items` and `overrides.toml`, the `qf_log_parser` crate, `POST /helper/trade`, `helper_events`, trade resolution and the review modal.
+  - The §11 phase 4 list is covered by 4a and 4b together.
+- **D2 — Names.**
+  - The server module is `qf_core::helper_link` with `keys` and `presence`, because `qf_core::helper` already holds upstream utilities.
+  - The helper is the crate `crates/qf-helper`: library `qf_helper`, binary `qf-helper`.
+- **D3 — Device keys.**
+  - A key is `qfh_` followed by 64 lowercase hex characters (32 random bytes).
+  - `helper_keys` is `id, name, key_hash UNIQUE, created_at, last_seen_at, revoked_at`. `key_hash` is the SHA-256 hex of the whole key.
+  - Names are 1–64 characters after trimming.
+  - Revoking sets `revoked_at`; a revoked key can't be restored, and a new key is created instead. Every successful authentication updates `last_seen_at`.
+  - RPC commands:
+    - `helper_devices` returns every device, active first.
+    - `helper_device_create { name }` returns `{ device, key }`.
+    - `helper_device_revoke { id }` returns whether a key was revoked.
+- **D4 — Heartbeat endpoint.**
+  - `POST /helper/heartbeat` with `Authorization: Bearer <key>` and a JSON body `{ warframe_running: bool, version: string }`. It returns `204`.
+  - A missing, unknown or revoked key returns `401` with `{component, message}`.
+  - The route is outside the Origin check and the session middleware.
+  - Presence is kept in memory: the last heartbeat wins across devices, and a server restart clears it.
+- **D5 — Lifecycle.**
+  - Checklist items `helper_connected` (a heartbeat within 30 s) and `warframe_running` (from the latest heartbeat) replace `helper_ok` and `helper_override`.
+  - Stop triggers, first match wins: signed out, 401, websocket down for more than 60 s, then no heartbeat for more than 60 s (`helper_silent`), then `warframe_running = false` (`warframe_closed`), plus engine exits and the Stop button.
+  - A heartbeat between 30 and 60 s old doesn't stop trading, but Start stays disabled.
+  - `TraderStatus` gains `helper: { connected, warframe_running, seconds_since_heartbeat, last_heartbeat_at, device_name, version }`.
+- **D6 — The helper override is removed.**
+  - Migration `m20260917_000002` drops `trader_state.helper_override`.
+  - `trader_set_options` takes `{ dryRun?, deleteBuyOrdersOnStop? }`.
+  - `StopReason::HelperLost` is replaced by `HelperSilent` and `WarframeClosed`.
+- **D7 — `qf-helper` behaviour.**
+  - **Config:** `$XDG_CONFIG_HOME/qf-helper/qf-helper.toml`, falling back to `~/.config/qf-helper/qf-helper.toml`; `--config <path>` overrides it.
+    - Unknown keys are rejected.
+    - `server_url` must start with `http://` or `https://` (a trailing `/` is trimmed).
+    - `device_key` must start with `qfh_`.
+    - `ee_log_path` is parsed now and used in 4b.
+  - **Detection:** Warframe is running when some process other than the helper has a command-line argument whose file name, after the last `/` or `\`, equals `Warframe.x64.exe`, ignoring ASCII case. Matching a whole argument's file name avoids false positives from shell commands that merely mention the name.
+  - **Heartbeat:** every 10 s, with a 5 s request timeout.
+    - After a `401` it waits 60 s before retrying.
+    - Other failures retry on the normal 10 s schedule.
+    - It logs to stdout (journald) only when the state line changes.
+  - **One-shot mode:** `--once` sends one heartbeat, prints the result and exits with 0 when accepted, 1 otherwise.
+- **D8 — Install.**
+  - `cargo build --release -p qf-helper`, installed as `~/.local/bin/qf-helper`, run by the `systemd --user` unit `contrib/qf-helper.service`.
+  - The Docker image is unchanged: it still builds only `qf-server`.
+- **D9 — Screens.**
+  - Helper devices is a tab on the Live Scraper page.
+  - A new key is shown once in a modal, together with a ready-to-paste `qf-helper.toml`. There's no copy button, because the clipboard API isn't available on a plain-HTTP LAN origin.
