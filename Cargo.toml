@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["crates/entity", "crates/migration", "crates/service", "crates/utils", "crates/qf_core", "crates/qf-server"]
+members = ["crates/entity", "crates/migration", "crates/service", "crates/utils", "crates/qf_core", "crates/wf-market", "crates/qf-server"]

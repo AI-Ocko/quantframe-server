@@ -1,0 +1,5 @@
+/static
+/target
+.env
+.idea/
+Cargo.lock

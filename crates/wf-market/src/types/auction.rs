@@ -1,0 +1,229 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+use crate::{enums::*, types::*};
+use uuid::Uuid;
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+pub struct Auction {
+    pub id: String,
+    pub minimal_reputation: i32,
+    #[serde(rename = "winner")]
+    pub winner_id: Option<String>,
+    pub private: bool,
+    pub visible: bool,
+    pub note_raw: String,
+    pub note: String,
+    pub starting_price: i32,
+    pub buyout_price: Option<i32>,
+    pub is_direct_sell: bool,
+    pub top_bid: Option<i32>,
+    pub created: String,
+    pub updated: String,
+    pub platform: String,
+    pub closed: bool,
+    pub is_marked_for: Option<String>,
+    pub marked_operation_at: Option<String>,
+    pub item: AuctionItem,
+    #[serde(default)]
+    pub uuid: String,
+    #[serde(default, flatten)]
+    pub properties: Properties, // Additional properties for the item
+}
+impl Auction {
+    pub fn apply_uuid(&mut self) {
+        if self.uuid.is_empty() {
+            self.uuid = self.item.uuid().to_string();
+        }
+    }
+}
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct AuctionWithOwner {
+    #[serde(flatten)]
+    pub auction: Auction,
+
+    pub owner: UserShort,
+}
+impl AuctionWithOwner {
+    pub fn apply_uuid(&mut self) {
+        self.auction.apply_uuid();
+    }
+}
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+pub struct AuctionItem {
+    #[serde(rename = "type")]
+    pub item_type: AuctionType,
+
+    pub weapon_url_name: String,
+
+    // RIVEN
+    #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
+    pub mod_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attributes: Option<Vec<ItemAttribute>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub re_rolls: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mastery_level: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mod_rank: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polarity: Option<String>,
+
+    // SISTER / LICH
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quirk: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub having_ephemera: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub damage: Option<i32>,
+
+    // Similarity information for the item Is not from WFM
+    #[serde(default)]
+    pub similarity: Similarity,
+
+    #[serde(default, flatten)]
+    pub properties: Properties, // Additional properties for the item
+}
+impl AuctionItem {
+    /// Generate a UUID based on all fields + attributes
+    pub fn uuid(&self) -> Uuid {
+        let mut input = String::new();
+
+        input.push_str(&format!("type:{};", self.item_type as i32));
+        input.push_str(&format!("weapon:{};", self.weapon_url_name));
+
+        if let Some(v) = &self.mod_name {
+            input.push_str(&format!("mod_name:{};", v.to_lowercase()));
+        }
+        if let Some(v) = &self.re_rolls {
+            input.push_str(&format!("re_rolls:{};", v));
+        }
+        if let Some(v) = &self.mastery_level {
+            input.push_str(&format!("mastery:{};", v));
+        }
+        if let Some(v) = &self.mod_rank {
+            input.push_str(&format!("mod_rank:{};", v));
+        }
+        if let Some(v) = &self.polarity {
+            input.push_str(&format!("polarity:{};", v.to_lowercase()));
+        }
+        if let Some(v) = &self.quirk {
+            input.push_str(&format!("quirk:{};", v.to_lowercase()));
+        }
+        if let Some(v) = &self.element {
+            input.push_str(&format!("element:{};", v.to_lowercase()));
+        }
+        if let Some(v) = &self.having_ephemera {
+            input.push_str(&format!("ephemera:{};", v));
+        }
+        if let Some(v) = &self.damage {
+            input.push_str(&format!("damage:{};", v));
+        }
+        if let Some(attrs) = &self.attributes {
+            // Sort attributes by URL name
+            let mut sorted_attrs = attrs.clone();
+            sorted_attrs.sort_by_key(|a| a.url_name.clone());
+            for a in sorted_attrs {
+                input.push_str(&format!("attr:{}:{}:{};", a.url_name, a.positive, a.value));
+            }
+        }
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
+    }
+
+    /// Compare this auction item's attributes (candidate) against the provided `attributes` (reference/base).
+    /// - missing: in base but not in this item
+    /// - extra:   in this item but not in base
+    pub fn apply_similarity(&mut self, base: &[ItemAttribute]) -> Similarity {
+        if self.item_type != AuctionType::Riven {
+            return Similarity::default();
+        }
+
+        let cand = self.attributes.as_deref().unwrap_or(&[]);
+
+        let base_set: HashSet<_> = base.iter().map(AttrKey::from).collect();
+        let cand_set: HashSet<_> = cand.iter().map(AttrKey::from).collect();
+
+        let missing = base_set
+            .difference(&cand_set)
+            .map(|k| format!("{}:{}", k.name, k.positive))
+            .collect();
+
+        let extra = cand_set
+            .difference(&base_set)
+            .map(|k| format!("{}:{}", k.name, k.positive))
+            .collect();
+
+        let intersection = base_set.intersection(&cand_set).count() as f32;
+        let union = base_set.union(&cand_set).count() as f32;
+
+        let similarity = Similarity {
+            score: if union > 0.0 {
+                intersection / union
+            } else {
+                -1.0
+            },
+            missing,
+            extra,
+        };
+
+        self.similarity = similarity.clone();
+        similarity
+    }
+
+    /// Convert attributes to raw format for easier processing in other parts of the code
+    /// Example usage: `auction_item.as_raw_attributes()` will return `Vec<(String, f64, bool)>` representing the attributes in raw format
+    pub fn as_raw_attributes(&self) -> Vec<(String, f64, bool)> {
+        self.attributes
+            .as_ref()
+            .unwrap_or(&vec![])
+            .iter()
+            .map(|att| att.to_raw())
+            .collect()
+    }
+}
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ItemAttribute {
+    pub url_name: String,
+    pub positive: bool,
+    pub value: f64,
+    #[serde(default, flatten)]
+    pub properties: Properties, // Additional properties for the attribute
+}
+
+impl ItemAttribute {
+    pub fn new(url_name: impl Into<String>, positive: bool, value: f64) -> Self {
+        Self {
+            url_name: url_name.into(),
+            positive,
+            value,
+            properties: Properties::default(),
+        }
+    }
+    pub fn new_with_properties(
+        url_name: impl Into<String>,
+        positive: bool,
+        value: f64,
+        properties: serde_json::Value,
+    ) -> Self {
+        Self {
+            url_name: url_name.into(),
+            positive,
+            value,
+            properties: Properties::from(properties),
+        }
+    }
+    pub fn to_raw(&self) -> (String, f64, bool) {
+        (self.url_name.clone(), self.value, self.positive)
+    }
+}
+pub trait IntoRawVec {
+    fn into_raw(self) -> Vec<(String, f64, bool)>;
+}
+
+impl IntoRawVec for Vec<ItemAttribute> {
+    fn into_raw(self) -> Vec<(String, f64, bool)> {
+        self.into_iter().map(|att| att.to_raw()).collect()
+    }
+}

@@ -3995,7 +3995,6 @@ dependencies = [
 [[package]]
 name = "wf-market"
 version = "0.1.11"
-source = "git+https://github.com/KibbeWater/wf-market?rev=aba1d268a7a0f76d54ba3dcd862d2f3a4f7e3496#aba1d268a7a0f76d54ba3dcd862d2f3a4f7e3496"
 dependencies = [
  "chrono",
  "futures-util",

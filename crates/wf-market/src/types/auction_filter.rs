@@ -1,0 +1,108 @@
+use serde::Serialize;
+
+use crate::{
+    enums::{AuctionType, Polarity, StatusType},
+    types::ItemAttribute,
+};
+
+#[derive(Clone, Default, Serialize)]
+pub struct AuctionFilter {
+    #[serde(rename = "type")]
+    pub auction_type: AuctionType,
+    pub weapon_url_name: String,
+    pub positive_stats: Option<String>,
+    pub negative_stats: Option<String>,
+    pub sort_by: Option<String>,
+    pub polarity: Option<Polarity>,
+    pub mastery_rank_min: Option<u32>,
+    pub mastery_rank_max: Option<u32>,
+    pub re_rolls_min: Option<u32>,
+    pub re_rolls_max: Option<u32>,
+    pub buyout_policy: Option<String>,
+
+    #[serde(skip)]
+    pub user_activity: Option<StatusType>,
+
+    #[serde(skip)]
+    pub similarity: Option<i64>,
+
+    #[serde(skip)]
+    pub similarity_attributes: Option<Vec<ItemAttribute>>,
+}
+
+impl AuctionFilter {
+    pub fn new(auction_type: AuctionType, weapon_url_name: &str) -> Self {
+        AuctionFilter {
+            auction_type: auction_type,
+            positive_stats: None,
+            negative_stats: None,
+            sort_by: None,
+            weapon_url_name: weapon_url_name.to_string(),
+            polarity: None,
+            mastery_rank_min: None,
+            mastery_rank_max: None,
+            re_rolls_min: None,
+            re_rolls_max: None,
+            buyout_policy: None,
+            user_activity: None,
+            similarity: None,
+            similarity_attributes: None,
+        }
+    }
+
+    pub fn with_positive_stats(mut self, positive_stats: Vec<String>) -> Self {
+        self.positive_stats = Some(positive_stats.join(","));
+        self
+    }
+
+    pub fn with_negative_stats(mut self, negative_stats: Vec<String>) -> Self {
+        self.negative_stats = Some(negative_stats.join(","));
+        self
+    }
+
+    pub fn with_sort_by<S: Into<String>>(mut self, sort_by: S) -> Self {
+        self.sort_by = Some(sort_by.into());
+        self
+    }
+
+    pub fn with_polarity(mut self, polarity: Polarity) -> Self {
+        self.polarity = Some(polarity);
+        self
+    }
+
+    pub fn with_mastery_rank_min(mut self, mastery_rank_min: u32) -> Self {
+        self.mastery_rank_min = Some(mastery_rank_min);
+        self
+    }
+
+    pub fn with_mastery_rank_max(mut self, mastery_rank_max: u32) -> Self {
+        self.mastery_rank_max = Some(mastery_rank_max);
+        self
+    }
+
+    pub fn with_re_rolls_min(mut self, re_rolls_min: u32) -> Self {
+        self.re_rolls_min = Some(re_rolls_min);
+        self
+    }
+
+    pub fn with_re_rolls_max(mut self, re_rolls_max: u32) -> Self {
+        self.re_rolls_max = Some(re_rolls_max);
+        self
+    }
+
+    pub fn with_buyout_policy<S: Into<String>>(mut self, buyout_policy: S) -> Self {
+        self.buyout_policy = Some(buyout_policy.into());
+        self
+    }
+
+    pub fn with_user_activity(mut self, user_activity: StatusType) -> Self {
+        self.user_activity = Some(user_activity);
+        self
+    }
+
+    pub fn with_similarity(mut self, similarity: i64, attributes: Vec<ItemAttribute>) -> Self {
+        self.similarity = Some(similarity);
+        self.similarity_attributes = Some(attributes);
+        self
+    }
+}

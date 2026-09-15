@@ -17,7 +17,7 @@ argon2 = "0.5"
 base64 = "0.22"
 getrandom = "0.2"
 hex = "0.4"
-wf-market = { git = "https://github.com/KibbeWater/wf-market", rev = "aba1d268a7a0f76d54ba3dcd862d2f3a4f7e3496" }
+wf-market = { path = "../wf-market" }
 migration = { path = "../migration" }
 service = { path = "../service" }
 entity = { path = "../entity" }
