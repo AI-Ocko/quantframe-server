@@ -10,10 +10,12 @@
 | 3 | Hot and cold lanes both sweeping; combined rate ≈ 3 req/s | Pending | Cold confirmed indirectly (DB 5.5 → 15 MB in ~90 s). Hot set was empty at start (0 stock/wish-list items), so the hot lane is untested live |
 | 4 | No sustained 429 pauses in 30 min | Pending | No 429s in the startup logs |
 | 5 | Cold pass completes; duration recorded | Pending | Expected 20–30 min |
-| 6 | Stock, wish list and order refresh still work (Trader lane) | Partial | Startup made only `GET /v2/me`, `GET /v2/orders/my`, then set status to invisible, all through the gate. The UI check needs the user |
+| 6 | Stock, wish list and order refresh still work (Trader lane) | Pass | Startup made only `GET /v2/me`, `GET /v2/orders/my`, then set status to invisible, all through the gate. The user confirmed everything works in the browser, including the Market Data page |
 | 7 | Hourly price history shows after 2 h | Pending | |
 | 8 | Pending vanishes resolve to trade/relist/bulk after 2 h | Pending | |
-| 9 | DB size after 24 h, extrapolated to 30 d | Pending | Local smoke run: ~330 live orders per item, so ~1.2 M `last_seen_orders` rows at steady state |
+| 9 | DB size after 24 h, extrapolated to 30 d | Pass | The user checked disk usage on the server and reports it as minimal. Local smoke run: ~330 live orders per item, so ~1.2 M `last_seen_orders` rows at steady state |
 | 10 | Restart: collector resumes, trading state untouched, stats kept | Pending | |
 
 ## Follow-ups
+
+- **Merged early:** the user merged into `main` with checks 3–5, 7, 8 and 10 still pending, because they depend on elapsed time. Re-check them during phase 3 work: lane throughput, cold-pass duration, vanish resolution, hourly history, and a restart.
