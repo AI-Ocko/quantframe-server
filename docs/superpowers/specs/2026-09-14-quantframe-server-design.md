@@ -1,7 +1,7 @@
 # quantframe-server — Design Spec
 
 - **Date:** 2026-09-14
-- **Status:** Approved 2026-09-14. Amended by §14 during phase 1 planning.
+- **Status:** Approved 2026-09-14. Amended by §14 during phase 1 planning and §15 during phase 2 planning.
 - **Source:** fork of [quantframe-react](https://github.com/Kenya-DK/quantframe-react) by Kenya-DK at commit `3d59c4e7` (v1.6.28)
 - **License:** GPLv3, inherited from quantframe-react. Keep the upstream `LICENSE` and credit Kenya-DK in the README.
 
@@ -508,3 +508,34 @@ These amendments take precedence over the earlier sections.
   - The data directory is `QF_DATA_DIR`, holding `quantframe.sqlite`, `sounds/`, `cache/`, `logs/` and `device_id`.
   - Built-in sounds are served from `QF_RESOURCES_DIR/sounds` at `/sounds/builtin/*`, and custom sounds at `/sounds/custom/*`.
   - `QF_SECRET_KEY_FILE` holds 64 hex characters (`openssl rand -hex 32`).
+
+## 15. Amendments from phase 2 planning (2026-09-15)
+
+These amendments take precedence over the earlier sections.
+
+- **B1 — One gate for wf-market.** The vendored `wf-market` crate gets a process-wide `RequestGate` that every `call_api` request passes before it is sent and that sees every response status. The server installs a gate that takes a `Trader`-lane token and reports 429s to the limiter. The `/v2/items` refresh takes a `Hot`-lane token.
+- **B2 — Collector HTTP client.** The collector does not use `wf-market`. It calls the public `GET /v2/orders/item/{slug}` with its own unauthenticated `reqwest` client (headers `Platform: pc`, `Language: en`, `Crossplay: true`), through the limiter.
+- **B3 — Hot set in phase 2** is every `wfm_id` in `stock_item` and `wish_list`. Phase 3 adds the trader's buy candidates.
+- **B4 — `sub_type` key.** `""` when an order has no rank or variant fields. Otherwise it is `key=value` parts in the fixed order `rank`, `charges`, `subtype`, `amber`, `cyan`, joined by `;`. Examples: `rank=5`, `subtype=intact`, `amber=0;cyan=1`.
+- **B5 — Orders with `visible = false`** are ignored everywhere.
+- **B6 — `sweep_summary` columns.**
+  - `min_sell` and `max_buy` are taken over orders from users whose status is `ingame`.
+  - `sell_count` and `buy_count` count all visible orders; `sell_ingame` and `buy_ingame` count the in-game ones.
+  - `top_sells` and `top_buys` are JSON arrays of up to 5 in-game orders as `[platinum, quantity]`, best price first.
+  - The live spread used by `profit` (§5.5) is `min_sell − max_buy` from the item's latest sweep.
+- **B7 — `sweep_state` columns** add `slug`, `first_swept_at` (for `history_days`) and `last_attempt_at` (cold ordering, so failing items don't block the pass).
+  - `expected_interval_s` is 300 for hot sweeps.
+  - For cold sweeps it is the duration of the last complete cold pass. Before the first pass completes, it is the number of active items in seconds, with a minimum of 60.
+  - The gap rule (§5.5 rule 3) compares `gap_seconds` with `3 × max(previous expected_interval_s, current expected_interval_s)`, so an item that moves from hot to cold isn't wrongly marked `gap`.
+- **B8 — Vanish statuses.**
+  - A full vanish is stored as `gap` straight away when rule 3 fails, and as `pending` otherwise.
+  - A partial fill is stored as `trade` straight away, with `quantity` set to the drop.
+  - Once the 2 h window has closed, a `pending` row becomes one of:
+    - `bulk`: the same user has at least `bulk_pull_threshold` (3) **full** vanishes, across all items, within ±15 min of this one. Each sweep sees only one item, so the "same sweep" in rule 2 becomes a 30-minute window.
+    - `relist`: an order from the same user on the same `(item, sub_type, side)` was first seen after the vanish and no more than 2 h later, in either `last_seen_orders` or `vanished_orders`.
+    - `trade`: neither of the above.
+- **B9 — Trade counting.** Each `trade` row counts as one probable trade at its `platinum` (per unit). `volume` is trades in the last 7 days divided by 7.
+- **B10 — Retries.** A 5xx, timeout, other unexpected status or 429 is retried at most twice. Each retry waits 0.5–1.5 s of jitter and takes a new limiter token. A 429 also triggers the limiter pause. A 404 is not retried.
+- **B11 — When stats are recomputed.** `item_stats` is recomputed after every successful sweep, and for every item whose pending rows are resolved. Resolution runs every 5 min. Rollups (`sweep_summary_hourly` for the last 48 h, `item_stats_daily` for the last 3 days) and retention run hourly and are idempotent (`INSERT OR REPLACE`).
+- **B12 — `QF_COLLECTOR`** (`on` default, or `off`) turns off all collector tasks, for desktop development. Any other value is a configuration error.
+- **B13 — Screens.** Collector health and price history are the two tabs of one **Market Data** page. They are fed by the RPC commands `collector_health` and `market_item_history { wfmUrl, subType?, days }`. Price history shows hourly rollups, so the current hour appears after the next hourly run.
