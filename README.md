@@ -65,3 +65,12 @@ device_key = "qfh_…"
 - Events the server hasn't accepted yet wait in `~/.local/state/qf-helper/trade-queue.jsonl` and are replayed in order.
 - `qf-helper --parse /path/to/EE.log` prints the trades found in a log file as JSON, without a server.
 - The journal shows one line per trade: `trade detected: sale 70p with <player>, 1 items; server: applied`.
+
+**Names that don't resolve.** The server matches in-game names against warframe.market's English names. For the rare miss, create `overrides.toml` in the data volume (`docker compose exec quantframe-server sh -c 'cat > /data/overrides.toml'` or edit it on the host) mapping the in-game name to the warframe.market slug:
+
+```toml
+[names]
+"Primed Fir" = "primed_firestorm"
+```
+
+It is read on every trade, so no restart is needed. The review modal shows the exact name the game sent.

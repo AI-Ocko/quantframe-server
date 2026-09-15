@@ -1,6 +1,9 @@
 //! Trade events reported by `qf-helper` (spec §5.8, amendments E1–E9).
 
 pub mod events;
+pub mod resolve;
+pub mod sets;
+pub mod split;
 
 use serde::{Deserialize, Serialize};
 use utils::SubType;
