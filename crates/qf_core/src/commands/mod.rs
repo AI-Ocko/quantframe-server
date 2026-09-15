@@ -10,6 +10,7 @@ pub mod order;
 pub mod sound;
 pub mod stock_item;
 pub mod trade_entry;
+pub mod trader;
 pub mod transaction;
 pub mod user;
 pub mod wish_list;

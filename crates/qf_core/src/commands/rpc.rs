@@ -2,7 +2,7 @@ use serde_json::Value;
 use utils::{get_location, Error, SubType};
 use wf_market::enums::OrderType;
 
-use crate::app::Settings;
+use crate::app::{ItemSettings, Settings};
 use crate::handlers::ItemEntity;
 use crate::utils::WfmOrderPaginationQueryDto;
 use entity::{stock_item::*, trade_entry::*, transaction::*, wish_list::*};
@@ -59,6 +59,12 @@ rpc_table! {
     cache_get_theme_presets => cache::cache_get_theme_presets {},
     collector_health => collector::collector_health {},
     market_item_history => collector::market_item_history { wfm_url: String, sub_type: Option<String>, days: i64 },
+    trader_status => trader::trader_status {},
+    trader_start => trader::trader_start {},
+    trader_stop => trader::trader_stop {},
+    trader_set_options => trader::trader_set_options { dry_run: Option<bool>, delete_buy_orders_on_stop: Option<bool>, helper_override: Option<bool> },
+    trader_dry_run_log => trader::trader_dry_run_log { page: i64, limit: i64 },
+    trader_interesting_items => trader::trader_interesting_items { settings: ItemSettings },
     log => logs::log { cause: String, component: String, location: String, log_level: String, message: String, context: Option<Value> },
     get_stock_item_pagination => stock_item::get_stock_item_pagination { query: StockItemPaginationQueryDto },
     get_stock_item_financial_report => stock_item::get_stock_item_financial_report { query: StockItemPaginationQueryDto },
@@ -145,6 +151,15 @@ mod tests {
         assert!(COMMANDS.contains(&"market_item_history"));
         let bad = dispatch("market_item_history", json!({"wfmUrl": "x"})).await.unwrap();
         assert!(bad.is_err(), "days is required");
+    }
+
+    #[tokio::test]
+    async fn trader_commands_are_routable_and_validate_args() {
+        for name in ["trader_status", "trader_start", "trader_stop", "trader_set_options", "trader_dry_run_log", "trader_interesting_items"] {
+            assert!(COMMANDS.contains(&name), "{name}");
+        }
+        assert!(dispatch("trader_dry_run_log", json!({"page": 1})).await.unwrap().is_err(), "limit is required");
+        assert!(dispatch("trader_set_options", json!({})).await.is_some(), "all options are optional");
     }
 
     #[test]
