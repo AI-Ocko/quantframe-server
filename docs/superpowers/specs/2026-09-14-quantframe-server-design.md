@@ -1,7 +1,7 @@
 # quantframe-server — Design Spec
 
 - **Date:** 2026-09-14
-- **Status:** Approved 2026-09-14. Amended by §14 (phase 1), §15 (phase 2), §16 (phase 3) and §17 (phase 4a) planning.
+- **Status:** Approved 2026-09-14. Amended by §14 (phase 1), §15 (phase 2), §16 (phase 3), §17 (phase 4a) and §18 (phase 4b) planning.
 - **Source:** fork of [quantframe-react](https://github.com/Kenya-DK/quantframe-react) by Kenya-DK at commit `3d59c4e7` (v1.6.28)
 - **License:** GPLv3, inherited from quantframe-react. Keep the upstream `LICENSE` and credit Kenya-DK in the README.
 
@@ -633,3 +633,56 @@ These amendments take precedence over the earlier sections.
 - **D9 — Screens.**
   - Helper devices is a tab on the Live Scraper page.
   - A new key is shown once in a modal, together with a ready-to-paste `qf-helper.toml`. There's no copy button, because the clipboard API isn't available on a plain-HTTP LAN origin.
+
+## 18. Amendments from phase 4b planning (2026-09-15)
+
+These amendments take precedence over the earlier sections. They were decided against 167 real trade bundles that the desktop Quantframe left under `~/.local/share/dev.kenya.quantframe/logs` (2026-09-07 to 2026-09-14), each holding the raw EE.log lines and the upstream parser's log.
+
+- **E1 — Names resolve through WFM English names; WFCD is dropped.**
+  - Of the 114 distinct traded item names in the bundles, an exact match on the `/v2/items` English name resolves 95 before rank handling and line joining, and about 112 after. The WFCD name-to-`uniqueName`-to-`gameRef` join resolves 83 and misses every prime warframe blueprint part, because WFCD calls them "Chassis" rather than "Chassis Blueprint".
+  - Normalisation before matching: trim, remove trailing characters in U+E000–U+F8FF, collapse runs of whitespace, compare case-insensitively with `i18n.en.name`.
+  - `QF_DATA_DIR/overrides.toml` is optional and holds a `[names]` table mapping an in-game display name to a WFM slug. It is read on every resolution; a missing file is empty, and an invalid file is logged and treated as empty.
+  - Superseded: the WFCD bullets in §5.2, decision D9 in §2, the "WFCD refresh fails" row in §8 and the "GameData matcher" test in §9. `game_data_unmatched` is not built.
+- **E2 — The trade dialog is parsed from a byte stream, not line by line.** The crate is `crates/qf_log_parser` (library `qf_log_parser`, dependencies `serde`, `serde_json` and `sha2` only). Warframe writes the dialog in chunks that can split a word, a rank suffix or the end marker across two lines, so the scanner accumulates text instead of matching lines.
+  - Start marker: `Dialog::CreateOkCancel(description=Are you sure you want to accept this trade? You are offering:`. End marker: `, title= leftItem=/Menu/Confirm_Item_Ok, rightItem=/Menu/Confirm_Item_Cancel)`. The text between them is split on `\r` and `\n`, trimmed, and empty pieces are dropped.
+  - The piece `and will receive from <name> the following:` separates the offered lines from the received lines. The player name loses its trailing U+E000–U+F8FF characters.
+  - Result markers after a dialog: `description=The trade was successful!` reports the trade; `description=The trade failed.`, `description=The trade was cancelled` and `OnTradeAccepted failed` discard it. A new start marker before any result discards the pending dialog. Only successes leave the helper.
+  - Each remaining piece is a raw item `{ name, quantity, rank }`: `Platinum x N` is platinum with quantity N; `<name> (<WORD> RANK <n>)` gives the name and rank n (the word is a rarity or a mod family such as GALVANIZED and is ignored); trailing U+E000–U+F8FF glyphs on arcanes are removed and their count is the rank (the bundles confirm five glyphs on rank-5 arcanes and three on a rank-3 one); pieces with the same name and rank fold into one item with the summed quantity.
+  - `event_id` is the SHA-256 hex of the start line's EE.log timestamp, a newline, and the dialog text between the markers. `detected_at` is the helper's UTC wall clock when the success marker was seen. This replaces the §5.8 definition.
+  - Only the English strings are supported. The Russian set from upstream is not ported.
+- **E3 — Helper tailing and queue.**
+  - The helper polls `ee_log_path` (D7) every 1 s and reads the bytes added since its last offset. On start it begins at the end of the file, so earlier trades are never replayed. When the file is shorter than the offset or missing, the offset resets to 0 and the scanner state is cleared; a missing file is warned about once and polling continues.
+  - Unsent events are appended, one JSON object per line, to `$XDG_STATE_HOME/qf-helper/trade-queue.jsonl`, falling back to `~/.local/state/qf-helper/trade-queue.jsonl`. The queue is replayed oldest first before new events. A 2xx removes the line; 401 waits 60 s as the heartbeat does; 400, 404, 409, 413 and 422 drop the line with a log line; anything else, including network errors, retries every 10 s.
+  - `qf-helper --parse <file>` runs the scanner over a whole file, prints the trades as a JSON array and exits 0. It needs no server.
+  - Each reported trade logs one stdout line: `trade detected: <purchase|sale|unknown> <platinum>p with <player>, <n> items; server: <status>`.
+- **E4 — `POST /helper/trade`.**
+  - Authenticated as in D4. Body: `{ event_id: 64 lowercase hex, detected_at: RFC 3339, trade: { player_name, ee_timestamp, offered: [RawItem], received: [RawItem] } }` with `RawItem = { name, quantity, rank? }`.
+  - Returns `200 { status: "applied" | "needs_review" | "ignored" | "duplicate", reason? }`. A malformed body returns 400. A known `event_id` returns `duplicate` and changes nothing. The event is processed inside the request.
+- **E5 — `helper_events`.** Migration `m20260918_000001_create_helper_events` creates `event_id TEXT PRIMARY KEY, device_name TEXT NOT NULL, received_at TEXT NOT NULL, detected_at TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('applied','needs_review','ignored')), reason TEXT, payload TEXT NOT NULL, resolution TEXT, reviewed_at TEXT`. `payload` is the E4 `trade` object. `resolution` is `{ direction, platinum, items: [{ name, slug, item_name, sub_type, quantity, price, matched_by }], extras: [RawItem] }` with `matched_by` one of `name`, `override`, `set` or `review`; it is stored for `needs_review` events too, holding whatever resolved. The hourly maintenance job deletes rows older than 90 days. The §6 row is replaced by this.
+- **E6 — Classification.** Sum the platinum on each side. Platinum offered and none received is a **purchase** whose goods are the received items. Platinum received and none offered is a **sale** whose goods are the offered items. Platinum on both sides or on neither is `needs_review` with reason `no_platinum_side`. Non-platinum items on the platinum side are **extras**: recorded in the resolution, never applied, and never a reason for review. The bundles show a fish and junk mods handed over alongside platinum.
+- **E7 — Resolution and sets.**
+  - Each goods item resolves by E1. A rank becomes `SubType::rank(rank)`, capped at the item's `max_rank` when one is known. Items without a rank get no sub type.
+  - Sets fold lazily. When a goods side has two or more resolved items, the candidate roots are the items tagged `set` whose English name without the trailing ` Set` is a prefix of at least two of those items' names. For each candidate the server fetches `GET /v2/item/{slug}` once for its `setParts`, caching the result in memory and in `QF_DATA_DIR/cache/sets.json`. If the goods cover every part other than the root, they are replaced by the root with quantity equal to the smallest part quantity; leftover parts stay as individual items.
+  - Any goods item that doesn't resolve makes the event `needs_review` with reason `unresolved: <name>`.
+- **E8 — Applying.**
+  - An event is applied automatically when `live_scraper.general.auto_trade` is on and every goods item resolved. With `auto_trade` off every event is `needs_review`; the setting is the kill switch.
+  - Platinum split. Each item's weight is the price of the user's own current WFM order for that slug and sub type, from the WFM client's cached orders: a sell order for a sale, a buy order for a purchase. Items without one use `item_stats.median` for the item and sub type. If no item has a weight, the weights are equal. Line prices are `total × weight / Σweight` rounded to whole platinum, then adjusted so they sum to the total, with the remainder on the first item. A line price is the total for that line, matching how the handlers already divide by quantity.
+  - Per item, in order: for a purchase, `handle_wish_list` with `OrderType::Buy` and `ReturnOn:NotFound`, then `handle_item`; for a sale, `handle_item` with `OrderType::Sell` and `SkipWFMCheck:ItemSell_NotFound`. Every call carries `SetDate:<detected_at>`. Real WFM orders are closed or adjusted through the handlers' existing path regardless of global dry-run, the same as the manual "sold" action, because the trade really happened.
+  - If a handler fails part-way, the event becomes `needs_review` with reason `apply_failed: <component>`, the resolution is kept, and the completed items are logged so they aren't applied twice.
+  - After an applied event: `RefreshStockItems`, `RefreshWishListItems` and `RefreshTransactions` are broadcast, `notify_gui!("on_trade_event", "green.7", "applied", …)` goes to open browsers, and `notifications.on_new_trade` sends with the upstream variables. A `needs_review` event sends `notify_gui!("on_trade_event", "yellow", "needs_review", …)`.
+- **E9 — RPC.**
+  - `helper_trades { status?: string, page: i64, limit: i64 }` returns `{ total, results: [HelperEvent] }`, newest first.
+  - `helper_trade_apply { event_id, items: [{ slug, sub_type?, quantity, price }] }` applies E8 with the given items, using the stored direction, player and time, then sets `applied`, `matched_by: review` and `reviewed_at`.
+  - `helper_trade_ignore { event_id }` sets `ignored` with reason `reviewed`.
+  - Apply and ignore are refused unless the event is `needs_review`, and apply is also refused when the stored resolution has no direction (reason `no_platinum_side`).
+- **E10 — Browser.**
+  - A **Trades** tab on the Live Scraper page lists events with a status filter that defaults to needs_review, and columns for detected time, player, direction, platinum, items, status and reason. Row actions are Review and Ignore; Review is disabled for events without a direction, which can only be ignored.
+  - The Review modal shows one row per goods item: the item picker the stock form already uses, sub type, quantity and price. Resolved items are prefilled from the stored resolution; prices default to an equal split of the total, editable. Apply calls `helper_trade_apply`.
+  - Toasts use the `on_trade_event.applied` and `on_trade_event.needs_review` notification keys.
+  - The `ee_log_path` field is removed from the Advanced settings tab. The setting stays in the struct so saved settings keep loading.
+- **E11 — Tests.**
+  - `qf_log_parser`: fixtures under `crates/qf_log_parser/tests/fixtures/` are raw lines from the real bundles with the player names replaced. They cover a purchase of four set parts, a sale of an arcane, a mod name split across lines, an end marker split across lines, a line with quantity, extras beside platinum, a failed and a cancelled result, and an `OnTradeAccepted failed`. Every fixture is fed in chunk sizes of 1, 7, 64 and the whole file and must give identical trades and event ids.
+  - Server: unit tests for normalisation, overrides, rank capping, classification, extras, set folding against a small item list, and the split rule; an integration test of the trade route covering 401, 400, applied, needs_review and duplicate.
+  - Web: `python3 scripts/check-rpc-commands.py` and `pnpm build`.
+- **E12 — Acceptance.** One real sale and one real purchase in game apply automatically; a trade with an unresolved name lands in the tab and is applied from the modal; a helper restart with a queued event delivers it; replaying the same event returns `duplicate`.
+- **E13 — Out of scope.** Riven trades, prices for item-for-item trades, the Russian dialog strings, the WFCD data source and the review of extras.
