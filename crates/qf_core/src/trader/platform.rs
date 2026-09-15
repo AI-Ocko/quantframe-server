@@ -19,6 +19,7 @@ use super::orders::TradeOrders;
 use super::session::{self, SessionSnapshot};
 use super::TradeContext;
 use crate::collector::ts;
+use crate::helper_link::presence::{self, HelperSnapshot};
 use crate::types::UIEvent;
 use crate::utils::modules::states;
 use crate::send_event;
@@ -36,6 +37,10 @@ impl LivePlatform {
 impl Platform for LivePlatform {
     fn session(&self, now: DateTime<Utc>) -> SessionSnapshot {
         session::get().snapshot(now)
+    }
+
+    fn helper(&self, now: DateTime<Utc>) -> HelperSnapshot {
+        presence::get().snapshot(now)
     }
 
     fn game_data_loaded(&self) -> bool {

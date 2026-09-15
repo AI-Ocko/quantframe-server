@@ -31,9 +31,8 @@ pub async fn trader_stop() -> Result<TraderStatus, Error> {
 pub async fn trader_set_options(
     dry_run: Option<bool>,
     delete_buy_orders_on_stop: Option<bool>,
-    helper_override: Option<bool>,
 ) -> Result<TraderOptions, Error> {
-    controller()?.set_options(dry_run, delete_buy_orders_on_stop, helper_override).await
+    controller()?.set_options(dry_run, delete_buy_orders_on_stop).await
 }
 
 pub async fn trader_dry_run_log(page: i64, limit: i64) -> Result<DryRunPage, Error> {

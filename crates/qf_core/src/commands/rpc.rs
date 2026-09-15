@@ -62,7 +62,7 @@ rpc_table! {
     trader_status => trader::trader_status {},
     trader_start => trader::trader_start {},
     trader_stop => trader::trader_stop {},
-    trader_set_options => trader::trader_set_options { dry_run: Option<bool>, delete_buy_orders_on_stop: Option<bool>, helper_override: Option<bool> },
+    trader_set_options => trader::trader_set_options { dry_run: Option<bool>, delete_buy_orders_on_stop: Option<bool> },
     trader_dry_run_log => trader::trader_dry_run_log { page: i64, limit: i64 },
     trader_interesting_items => trader::trader_interesting_items { settings: ItemSettings },
     log => logs::log { cause: String, component: String, location: String, log_level: String, message: String, context: Option<Value> },

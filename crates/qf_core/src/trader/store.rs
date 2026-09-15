@@ -12,7 +12,6 @@ use super::DRY_RUN_RETENTION_DAYS;
 pub struct TraderOptions {
     pub dry_run: bool,
     pub delete_buy_orders_on_stop: bool,
-    pub helper_override: bool,
     pub last_stop_reason: Option<String>,
     pub last_stop_at: Option<String>,
 }
@@ -43,7 +42,7 @@ pub async fn load_options(conn: &DatabaseConnection) -> Result<TraderOptions, Er
     const C: &str = "Trader:LoadOptions";
     let row = conn
         .query_one(stmt(
-            "SELECT dry_run, delete_buy_orders_on_stop, helper_override, last_stop_reason, last_stop_at
+            "SELECT dry_run, delete_buy_orders_on_stop, last_stop_reason, last_stop_at
              FROM trader_state WHERE id = 1",
             vec![],
         ))
@@ -53,23 +52,17 @@ pub async fn load_options(conn: &DatabaseConnection) -> Result<TraderOptions, Er
     Ok(TraderOptions {
         dry_run: row.try_get::<i64>("", "dry_run").map_err(|e| db_err(C, e))? != 0,
         delete_buy_orders_on_stop: row.try_get::<i64>("", "delete_buy_orders_on_stop").map_err(|e| db_err(C, e))? != 0,
-        helper_override: row.try_get::<i64>("", "helper_override").map_err(|e| db_err(C, e))? != 0,
         last_stop_reason: row.try_get("", "last_stop_reason").map_err(|e| db_err(C, e))?,
         last_stop_at: row.try_get("", "last_stop_at").map_err(|e| db_err(C, e))?,
     })
 }
 
-pub async fn save_flags(
-    conn: &DatabaseConnection,
-    dry_run: bool,
-    delete_buy_orders_on_stop: bool,
-    helper_override: bool,
-) -> Result<(), Error> {
+pub async fn save_flags(conn: &DatabaseConnection, dry_run: bool, delete_buy_orders_on_stop: bool) -> Result<(), Error> {
     exec(
         conn,
         "Trader:SaveFlags",
-        "UPDATE trader_state SET dry_run = ?, delete_buy_orders_on_stop = ?, helper_override = ? WHERE id = 1",
-        vec![(dry_run as i64).into(), (delete_buy_orders_on_stop as i64).into(), (helper_override as i64).into()],
+        "UPDATE trader_state SET dry_run = ?, delete_buy_orders_on_stop = ? WHERE id = 1",
+        vec![(dry_run as i64).into(), (delete_buy_orders_on_stop as i64).into()],
     )
     .await
     .map(|_| ())
@@ -183,12 +176,12 @@ pub(crate) mod tests {
         let options = load_options(&conn).await.unwrap();
         assert_eq!(
             options,
-            TraderOptions { dry_run: true, delete_buy_orders_on_stop: false, helper_override: false, last_stop_reason: None, last_stop_at: None }
+            TraderOptions { dry_run: true, delete_buy_orders_on_stop: false, last_stop_reason: None, last_stop_at: None }
         );
-        save_flags(&conn, false, true, true).await.unwrap();
+        save_flags(&conn, false, true).await.unwrap();
         record_stop(&conn, "Stop button", parse_ts("2026-09-16T00:00:00Z").unwrap()).await.unwrap();
         let options = load_options(&conn).await.unwrap();
-        assert!(!options.dry_run && options.delete_buy_orders_on_stop && options.helper_override);
+        assert!(!options.dry_run && options.delete_buy_orders_on_stop);
         assert_eq!(options.last_stop_reason.as_deref(), Some("Stop button"));
         assert_eq!(options.last_stop_at.as_deref(), Some("2026-09-16T00:00:00Z"));
     }

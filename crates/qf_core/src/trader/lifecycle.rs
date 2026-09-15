@@ -1,6 +1,8 @@
-//! Pure lifecycle rules: readiness checklist and stop triggers (spec §5.7, amendment C7).
+//! Pure lifecycle rules: readiness checklist and stop triggers (spec §5.7, amendments C7, D5).
 
 use serde::Serialize;
+
+use crate::helper_link::presence::SILENT_AFTER_S;
 
 pub const WS_DOWN_LIMIT_S: i64 = 60;
 
@@ -18,19 +20,16 @@ pub struct Checklist {
     pub token_valid: bool,
     pub ws_connected: bool,
     pub game_data_loaded: bool,
-    pub helper_ok: bool,
-    pub helper_override: bool,
+    /// A qf-helper heartbeat arrived within `READY_WITHIN_S`.
+    pub helper_connected: bool,
+    /// The latest heartbeat reported Warframe running.
+    pub warframe_running: bool,
 }
 
 impl Checklist {
     pub fn ready(&self) -> bool {
-        self.token_valid && self.ws_connected && self.game_data_loaded && self.helper_ok
+        self.token_valid && self.ws_connected && self.game_data_loaded && self.helper_connected && self.warframe_running
     }
-}
-
-/// Phase 3 has no helper: the dry-run-only override stands in for it (spec §11 phase 3).
-pub fn helper_ok(helper_override: bool, dry_run: bool) -> bool {
-    helper_override && dry_run
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -40,7 +39,8 @@ pub enum StopReason {
     SignedOut,
     Unauthorized,
     WebsocketDown,
-    HelperLost,
+    HelperSilent,
+    WarframeClosed,
     TraderCritical(String),
     OrderFailures(u32),
     TraderPanic(String),
@@ -53,7 +53,8 @@ impl StopReason {
             StopReason::SignedOut => "Signed out of warframe.market".into(),
             StopReason::Unauthorized => "warframe.market returned 401 Unauthorized".into(),
             StopReason::WebsocketDown => format!("warframe.market websocket down for more than {} s", WS_DOWN_LIMIT_S),
-            StopReason::HelperLost => "Helper unavailable (the helper override needs dry-run)".into(),
+            StopReason::HelperSilent => format!("No qf-helper heartbeat for more than {} s", SILENT_AFTER_S),
+            StopReason::WarframeClosed => "Warframe closed on the gaming PC".into(),
             StopReason::TraderCritical(message) => format!("Trader error: {}", message),
             StopReason::OrderFailures(count) => format!("{} consecutive order failures", count),
             StopReason::TraderPanic(message) => format!("Trader panicked: {}", message),
@@ -66,7 +67,9 @@ pub struct TriggerInput {
     pub signed_in: bool,
     pub unauthorized: bool,
     pub ws_down_for_s: Option<i64>,
-    pub helper_ok: bool,
+    /// `None` when no heartbeat has arrived since the server started.
+    pub helper_seconds_since: Option<i64>,
+    pub warframe_running: bool,
 }
 
 /// First matching stop trigger while trading. Engine exits are handled by the controller.
@@ -77,8 +80,10 @@ pub fn stop_trigger(input: &TriggerInput) -> Option<StopReason> {
         Some(StopReason::Unauthorized)
     } else if input.ws_down_for_s.is_some_and(|s| s > WS_DOWN_LIMIT_S) {
         Some(StopReason::WebsocketDown)
-    } else if !input.helper_ok {
-        Some(StopReason::HelperLost)
+    } else if input.helper_seconds_since.is_none_or(|s| s > SILENT_AFTER_S) {
+        Some(StopReason::HelperSilent)
+    } else if !input.warframe_running {
+        Some(StopReason::WarframeClosed)
     } else {
         None
     }
@@ -89,28 +94,28 @@ mod tests {
     use super::*;
 
     fn healthy() -> TriggerInput {
-        TriggerInput { signed_in: true, unauthorized: false, ws_down_for_s: None, helper_ok: true }
+        TriggerInput {
+            signed_in: true,
+            unauthorized: false,
+            ws_down_for_s: None,
+            helper_seconds_since: Some(5),
+            warframe_running: true,
+        }
     }
 
     #[test]
     fn ready_needs_every_checklist_item() {
-        let all = Checklist { token_valid: true, ws_connected: true, game_data_loaded: true, helper_ok: true, helper_override: true };
+        let all = Checklist { token_valid: true, ws_connected: true, game_data_loaded: true, helper_connected: true, warframe_running: true };
         assert!(all.ready());
         for broken in [
             Checklist { token_valid: false, ..all.clone() },
             Checklist { ws_connected: false, ..all.clone() },
             Checklist { game_data_loaded: false, ..all.clone() },
-            Checklist { helper_ok: false, ..all.clone() },
+            Checklist { helper_connected: false, ..all.clone() },
+            Checklist { warframe_running: false, ..all.clone() },
         ] {
             assert!(!broken.ready());
         }
-    }
-
-    #[test]
-    fn helper_override_only_counts_in_dry_run() {
-        assert!(helper_ok(true, true));
-        assert!(!helper_ok(true, false));
-        assert!(!helper_ok(false, true));
     }
 
     #[test]
@@ -119,14 +124,18 @@ mod tests {
         assert_eq!(stop_trigger(&TriggerInput { signed_in: false, unauthorized: true, ..healthy() }), Some(StopReason::SignedOut));
         assert_eq!(stop_trigger(&TriggerInput { unauthorized: true, ws_down_for_s: Some(99), ..healthy() }), Some(StopReason::Unauthorized));
         assert_eq!(stop_trigger(&TriggerInput { ws_down_for_s: Some(60), ..healthy() }), None, "60 s is allowed");
-        assert_eq!(stop_trigger(&TriggerInput { ws_down_for_s: Some(61), helper_ok: false, ..healthy() }), Some(StopReason::WebsocketDown));
-        assert_eq!(stop_trigger(&TriggerInput { helper_ok: false, ..healthy() }), Some(StopReason::HelperLost));
+        assert_eq!(stop_trigger(&TriggerInput { ws_down_for_s: Some(61), helper_seconds_since: None, ..healthy() }), Some(StopReason::WebsocketDown));
+        assert_eq!(stop_trigger(&TriggerInput { helper_seconds_since: None, ..healthy() }), Some(StopReason::HelperSilent));
+        assert_eq!(stop_trigger(&TriggerInput { helper_seconds_since: Some(60), ..healthy() }), None, "a heartbeat 60 s old is allowed");
+        assert_eq!(stop_trigger(&TriggerInput { helper_seconds_since: Some(61), warframe_running: false, ..healthy() }), Some(StopReason::HelperSilent));
+        assert_eq!(stop_trigger(&TriggerInput { warframe_running: false, ..healthy() }), Some(StopReason::WarframeClosed));
     }
 
     #[test]
     fn stop_reasons_serialize_with_kind_and_detail() {
         assert_eq!(serde_json::to_value(StopReason::OrderFailures(5)).unwrap(), serde_json::json!({"kind": "order_failures", "detail": 5}));
         assert_eq!(serde_json::to_value(StopReason::UserStop).unwrap(), serde_json::json!({"kind": "user_stop"}));
-        assert_eq!(StopReason::OrderFailures(5).describe(), "5 consecutive order failures");
+        assert_eq!(serde_json::to_value(StopReason::WarframeClosed).unwrap(), serde_json::json!({"kind": "warframe_closed"}));
+        assert_eq!(StopReason::HelperSilent.describe(), "No qf-helper heartbeat for more than 60 s");
     }
 }
