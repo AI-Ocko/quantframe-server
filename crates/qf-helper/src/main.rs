@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use qf_helper::config::{default_config_path, Config};
 use qf_helper::heartbeat::{describe, Client, Heartbeat, Outcome};
-use qf_helper::process;
+use qf_helper::queue::{default_queue_path, Queue};
+use qf_helper::{process, trade};
 
 const USAGE: &str = "Usage: qf-helper [--config <path>] [--once] | qf-helper --parse <EE.log>";
 
@@ -47,6 +48,10 @@ async fn main() {
     );
 
     let client = Client::new(&config.server_url, &config.device_key);
+    if !once {
+        let queue = Queue::new(default_queue_path(std::env::var("XDG_STATE_HOME").ok().as_deref(), &home));
+        tokio::spawn(trade::run(config.clone(), queue));
+    }
     let own_pid = std::process::id();
     let mut last_line = String::new();
     loop {

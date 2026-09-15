@@ -5,3 +5,5 @@ pub mod config;
 pub mod ee_log;
 pub mod heartbeat;
 pub mod process;
+pub mod queue;
+pub mod trade;

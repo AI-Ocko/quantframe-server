@@ -57,3 +57,11 @@ server_url = "http://ockohome:8080"
 device_key = "qfh_…"
 # ee_log_path = "/path/to/EE.log"   # optional; defaults to the Proton path under ~/.local/share/Steam
 ```
+
+### Trade reporting
+
+`qf-helper` also follows `EE.log` from the moment it starts (earlier trades are never replayed) and reports every trade Warframe confirms with "The trade was successful!" to the server. The server records the transaction, updates stock and your real warframe.market order, or parks the trade under **Live Scraper → Trades** for review when a name doesn't resolve.
+
+- Events the server hasn't accepted yet wait in `~/.local/state/qf-helper/trade-queue.jsonl` and are replayed in order.
+- `qf-helper --parse /path/to/EE.log` prints the trades found in a log file as JSON, without a server.
+- The journal shows one line per trade: `trade detected: sale 70p with <player>, 1 items; server: applied`.
