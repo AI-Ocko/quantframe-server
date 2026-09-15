@@ -34,6 +34,8 @@ pub async fn auth_login(email: String, password: String) -> Result<User, Error> 
     app.user = updated_user.clone();
     app.wfm_socket = Some(ws);
     send_event!(UIEvent::RefreshCache, "Cache refreshed successfully");
+    crate::trader::session::get()
+        .mark_signed_in(chrono::Utc::now(), crate::crypto::jwt_expiry(&app.wfm_client.get_token()));
     Ok(updated_user)
 }
 
@@ -57,5 +59,6 @@ pub async fn auth_logout() -> Result<User, Error> {
     let mut app = app.lock()?;
     app.user = new_user.clone();
     app.wfm_socket = None;
+    crate::trader::session::get().mark_signed_out();
     Ok(new_user)
 }

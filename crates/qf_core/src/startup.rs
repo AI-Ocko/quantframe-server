@@ -63,6 +63,10 @@ pub async fn start(cfg: CoreConfig) -> Result<CoreHandles, Error> {
         app.wfm_client.order().cache_orders_mut().apply_item_info(&cache)?;
     }
     if states::app_state()?.wfm_socket.is_some() {
+        crate::trader::session::get().mark_signed_in(
+            chrono::Utc::now(),
+            crypto::jwt_expiry(&states::app_state()?.wfm_client.get_token()),
+        );
         if let Err(e) = crate::commands::user::user_set_status("invisible".to_string()).await {
             error(
                 "Startup",

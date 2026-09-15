@@ -69,16 +69,19 @@ pub async fn setup_socket(
         .create_websocket(ApiVersion::V2)
         .set_log_unhandled(true)
         .register_callback("internal/connected", move |msg, _, _| {
+            crate::trader::session::get().set_ws_connected(true, chrono::Utc::now());
             send_ws_state("Main:Connected", msg);
             Ok(())
         })
         .unwrap()
         .register_callback("internal/disconnected", move |msg, _, _| {
+            crate::trader::session::get().set_ws_connected(false, chrono::Utc::now());
             send_ws_state("Main:Disconnected", msg);
             Ok(())
         })
         .unwrap()
         .register_callback("internal/reconnecting", move |msg, _, _| {
+            crate::trader::session::get().set_ws_connected(false, chrono::Utc::now());
             send_ws_state("Main:Disconnected", msg);
             Ok(())
         })
