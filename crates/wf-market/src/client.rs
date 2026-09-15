@@ -306,6 +306,10 @@ impl<State: Clone + 'static> Client<State> {
             tokio::time::sleep(std::time::Duration::from_secs_f64(wait_time_sec)).await;
             self.clear_wait_time(key.clone());
         }
+        // quantframe-server patch: shared request budget (PATCHES.md, change 4).
+        if let Some(gate) = crate::gate::installed() {
+            gate.acquire().await;
+        }
         limiter.until_ready().await;
 
         self.emit(
@@ -333,6 +337,9 @@ impl<State: Clone + 'static> Client<State> {
                 );
                 let headers = resp.headers().clone();
                 let status = resp.status();
+                if let Some(gate) = crate::gate::installed() {
+                    gate.on_status(status.as_u16());
+                }
                 error.set_status_code(status.as_u16());
 
                 let body = match resp.text().await {

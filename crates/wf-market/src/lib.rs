@@ -41,6 +41,7 @@ pub use client::*;
 pub mod endpoints;
 pub mod enums;
 pub mod errors;
+pub mod gate;
 pub mod types;
 pub mod utils;
 // pub use client::Client;

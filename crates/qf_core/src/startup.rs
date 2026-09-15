@@ -44,6 +44,7 @@ pub async fn start(cfg: CoreConfig) -> Result<CoreHandles, Error> {
         }
     };
     crypto::init_key(key);
+    crate::market::gate::install();
 
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
