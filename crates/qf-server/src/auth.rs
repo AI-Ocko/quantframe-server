@@ -83,3 +83,30 @@ pub fn token_from_headers(headers: &HeaderMap) -> Option<String> {
         .find(|(name, _)| *name == COOKIE_NAME)
         .map(|(_, value)| value.to_string())
 }
+
+/// The token from `Authorization: Bearer <token>` (scheme is case-insensitive).
+pub fn bearer_from_headers(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    let token = token.trim();
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then(|| token.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bearer_tokens_are_read_from_the_authorization_header() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(bearer_from_headers(&headers), None);
+        headers.insert(header::AUTHORIZATION, "Bearer qfh_abc".parse().unwrap());
+        assert_eq!(bearer_from_headers(&headers).as_deref(), Some("qfh_abc"));
+        headers.insert(header::AUTHORIZATION, "bearer  qfh_abc ".parse().unwrap());
+        assert_eq!(bearer_from_headers(&headers).as_deref(), Some("qfh_abc"));
+        headers.insert(header::AUTHORIZATION, "Basic qfh_abc".parse().unwrap());
+        assert_eq!(bearer_from_headers(&headers), None);
+        headers.insert(header::AUTHORIZATION, "Bearer ".parse().unwrap());
+        assert_eq!(bearer_from_headers(&headers), None);
+    }
+}

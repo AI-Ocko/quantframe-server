@@ -5,7 +5,9 @@ use axum::{
     http::{header, Method, Request, StatusCode},
     Router,
 };
+use chrono::Utc;
 use http_body_util::BodyExt;
+use qf_core::helper_link::{keys, presence};
 use qf_server::{
     auth::{LoginLimiter, Sessions},
     routes::{router, ServerState},
@@ -27,6 +29,7 @@ fn app() -> (Router, ServerState, tempfile::TempDir) {
         web_dir: dir.path().join("web"),
         resources_dir: dir.path().join("resources"),
         data_dir: dir.path().to_path_buf(),
+        db: None,
     };
     (router(state.clone()), state, dir)
 }
@@ -134,4 +137,65 @@ async fn session_serves_app_and_dispatches_rpc() {
     assert_eq!(ok.status(), StatusCode::OK);
     let body = ok.into_body().collect().await.unwrap().to_bytes();
     assert!(&body[..] == b"false" || &body[..] == b"true");
+}
+
+async fn helper_app() -> (Router, ServerState, tempfile::TempDir) {
+    let (_, mut state, dir) = app();
+    state.db = Some(qf_core::db::connect(dir.path()).await.unwrap());
+    (router(state.clone()), state, dir)
+}
+
+fn heartbeat(key: Option<&str>, body: &str) -> Request<Body> {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri("/helper/heartbeat")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(key) = key {
+        req = req.header(header::AUTHORIZATION, format!("Bearer {key}"));
+    }
+    req.body(Body::from(body.to_string())).unwrap()
+}
+
+const BEAT: &str = r#"{"warframe_running": true, "version": "0.1.0"}"#;
+
+#[tokio::test]
+async fn heartbeat_requires_a_valid_device_key() {
+    let (app, _, _dir) = helper_app().await;
+    let missing = app.clone().oneshot(heartbeat(None, BEAT)).await.unwrap();
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+    let wrong = app.oneshot(heartbeat(Some("qfh_0000"), BEAT)).await.unwrap();
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn heartbeat_needs_no_origin_or_session_and_records_presence() {
+    let (app, state, _dir) = helper_app().await;
+    let db = state.db.as_ref().unwrap();
+    let created = keys::create(db, "http-test-pc", Utc::now()).await.unwrap();
+
+    let res = app.oneshot(heartbeat(Some(&created.key), BEAT)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    let snap = presence::get().snapshot(Utc::now());
+    assert!(snap.connected && snap.warframe_running);
+    assert_eq!(snap.device_name.as_deref(), Some("http-test-pc"));
+    assert!(keys::list(db).await.unwrap()[0].last_seen_at.is_some());
+}
+
+#[tokio::test]
+async fn revoked_keys_are_rejected() {
+    let (app, state, _dir) = helper_app().await;
+    let db = state.db.as_ref().unwrap();
+    let created = keys::create(db, "revoked-pc", Utc::now()).await.unwrap();
+    keys::revoke(db, created.device.id, Utc::now()).await.unwrap();
+    let res = app.oneshot(heartbeat(Some(&created.key), BEAT)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn heartbeat_body_must_say_whether_warframe_is_running() {
+    let (app, state, _dir) = helper_app().await;
+    let created = keys::create(state.db.as_ref().unwrap(), "bad-body-pc", Utc::now()).await.unwrap();
+    let res = app.oneshot(heartbeat(Some(&created.key), r#"{"version": "0.1.0"}"#)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }

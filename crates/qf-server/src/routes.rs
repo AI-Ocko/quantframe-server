@@ -4,7 +4,7 @@ use axum::{
     body::Bytes,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        DefaultBodyLimit, Path, Request, State,
+        DefaultBodyLimit, Extension, Path, Request, State,
     },
     http::{header, HeaderMap, Method, StatusCode},
     middleware::{self, Next},
@@ -17,7 +17,13 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast::error::RecvError;
 use tower_http::services::{ServeDir, ServeFile};
 
-use crate::auth::{cleared_cookie, session_cookie, token_from_headers, LoginLimiter, Sessions};
+use chrono::Utc;
+use qf_core::helper_link::{
+    keys::{self, DeviceIdentity},
+    presence::{self, Heartbeat},
+};
+
+use crate::auth::{bearer_from_headers, cleared_cookie, session_cookie, token_from_headers, LoginLimiter, Sessions};
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -28,6 +34,8 @@ pub struct ServerState {
     pub web_dir: PathBuf,
     pub resources_dir: PathBuf,
     pub data_dir: PathBuf,
+    /// `None` only in tests that don't exercise the helper routes.
+    pub db: Option<qf_core::db::DatabaseConnection>,
 }
 
 pub fn router(state: ServerState) -> Router {
@@ -40,14 +48,44 @@ pub fn router(state: ServerState) -> Router {
         .fallback_service(spa)
         .layer(middleware::from_fn_with_state(state.clone(), require_session));
 
+    // The helper authenticates with a device key, so it sits outside the Origin check and sessions (amendment D4).
+    let helper = Router::new()
+        .route("/helper/heartbeat", post(helper_heartbeat))
+        .layer(middleware::from_fn_with_state(state.clone(), require_device_key));
+
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/login", get(login_page).post(login_submit))
         .route("/logout", post(logout))
         .merge(protected)
         .layer(middleware::from_fn_with_state(state.clone(), check_origin))
+        .merge(helper)
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
         .with_state(state)
+}
+
+async fn require_device_key(State(state): State<ServerState>, mut req: Request, next: Next) -> Response {
+    let Some(db) = state.db.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Database not ready").into_response();
+    };
+    let unauthorized = || {
+        (StatusCode::UNAUTHORIZED, Json(json!({"component": "Helper", "message": "Invalid or revoked device key"})))
+            .into_response()
+    };
+    let Some(key) = bearer_from_headers(req.headers()) else { return unauthorized() };
+    match keys::authenticate(db, &key, Utc::now()).await {
+        Ok(Some(device)) => {
+            req.extensions_mut().insert(device);
+            next.run(req).await
+        }
+        Ok(None) => unauthorized(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
+    }
+}
+
+async fn helper_heartbeat(Extension(device): Extension<DeviceIdentity>, Json(heartbeat): Json<Heartbeat>) -> StatusCode {
+    presence::get().record(&device.name, heartbeat, Utc::now());
+    StatusCode::NO_CONTENT
 }
 
 async fn check_origin(State(state): State<ServerState>, req: Request, next: Next) -> Response {
