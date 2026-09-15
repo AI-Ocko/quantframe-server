@@ -28,6 +28,7 @@ async fn main() {
         resources_dir: cfg.resources_dir.clone(),
         data_dir: cfg.data_dir.clone(),
         db: qf_core::DATABASE.get().cloned(),
+        trade_env: Arc::new(qf_core::helper_link::trades::live::LiveEnv),
     };
     let listener = tokio::net::TcpListener::bind(&cfg.bind).await.unwrap_or_else(|e| {
         eprintln!("Cannot bind {}: {e}", cfg.bind);

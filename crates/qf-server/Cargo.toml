@@ -28,3 +28,6 @@ qf_core = { path = "../qf_core" }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 tempfile = "3"
+async-trait = "0.1"
+utils = { path = "../utils" }
+wf-market = { path = "../wf-market" }

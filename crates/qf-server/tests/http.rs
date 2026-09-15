@@ -7,7 +7,20 @@ use axum::{
 };
 use chrono::Utc;
 use http_body_util::BodyExt;
+use std::collections::HashMap;
+
+use async_trait::async_trait;
+use qf_core::cache::types::{CacheTradableItem, SubType as CacheSubType};
+use qf_core::helper_link::trades::{
+    apply::ItemApplier,
+    events::{self, HelperEvent},
+    resolve::Overrides,
+    sets::{PartsMap, SetSource},
+    Direction, ResolvedItem, TradeEnv,
+};
 use qf_core::helper_link::{keys, presence};
+use serde_json::{json, Value};
+use wf_market::enums::OrderType;
 use qf_server::{
     auth::{LoginLimiter, Sessions},
     routes::{router, ServerState},
@@ -30,6 +43,7 @@ fn app() -> (Router, ServerState, tempfile::TempDir) {
         resources_dir: dir.path().join("resources"),
         data_dir: dir.path().to_path_buf(),
         db: None,
+        trade_env: Arc::new(FakeTrades::default()),
     };
     (router(state.clone()), state, dir)
 }
@@ -145,6 +159,53 @@ async fn helper_app() -> (Router, ServerState, tempfile::TempDir) {
     (router(state.clone()), state, dir)
 }
 
+/// Resolves "Arcane Nullifier" only and applies everything without touching handlers.
+#[derive(Default)]
+struct FakeTrades {
+    parts: PartsMap,
+}
+
+#[async_trait]
+impl ItemApplier for FakeTrades {
+    async fn apply_item(&self, _direction: Direction, _item: &ResolvedItem, _player: &str, _detected_at: &str) -> Result<(), utils::Error> {
+        Ok(())
+    }
+}
+
+impl TradeEnv for FakeTrades {
+    fn auto_trade(&self) -> bool {
+        true
+    }
+    fn tradable_items(&self) -> Vec<CacheTradableItem> {
+        vec![CacheTradableItem {
+            name: "Arcane Nullifier".into(),
+            unique_name: String::new(),
+            wfm_id: "id_arcane_nullifier".into(),
+            wfm_url: "arcane_nullifier".into(),
+            trade_tax: 0,
+            mr_requirement: 0,
+            tags: vec!["arcane_enhancement".into()],
+            icon: String::new(),
+            bulk_tradable: false,
+            sub_type: Some(CacheSubType { max_rank: Some(5), variants: None, amber_stars: None, cyan_stars: None }),
+            variant_to_unique_name: HashMap::new(),
+        }]
+    }
+    fn overrides(&self) -> Overrides {
+        Overrides::default()
+    }
+    fn own_price(&self, _item: &ResolvedItem, _order_type: OrderType) -> Option<i64> {
+        None
+    }
+    fn sets(&self) -> &dyn SetSource {
+        &self.parts
+    }
+    fn applier(&self) -> &dyn ItemApplier {
+        self
+    }
+    fn notify(&self, _event: &HelperEvent) {}
+}
+
 fn heartbeat(key: Option<&str>, body: &str) -> Request<Body> {
     let mut req = Request::builder()
         .method(Method::POST)
@@ -198,4 +259,80 @@ async fn heartbeat_body_must_say_whether_warframe_is_running() {
     let created = keys::create(state.db.as_ref().unwrap(), "bad-body-pc", Utc::now()).await.unwrap();
     let res = app.oneshot(heartbeat(Some(&created.key), r#"{"version": "0.1.0"}"#)).await.unwrap();
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+fn trade(key: Option<&str>, body: &str) -> Request<Body> {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri("/helper/trade")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(key) = key {
+        req = req.header(header::AUTHORIZATION, format!("Bearer {key}"));
+    }
+    req.body(Body::from(body.to_string())).unwrap()
+}
+
+fn sale_body(event_id: &str, item: &str) -> String {
+    json!({
+        "event_id": event_id,
+        "detected_at": "2026-09-15T10:00:00Z",
+        "trade": {
+            "player_name": "PlayerB",
+            "ee_timestamp": "1170.388",
+            "offered": [{"name": item, "quantity": 1, "rank": 5}],
+            "received": [{"name": "Platinum", "quantity": 70}]
+        }
+    })
+    .to_string()
+}
+
+async fn json_of(res: axum::response::Response) -> Value {
+    serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap()
+}
+
+#[tokio::test]
+async fn trade_requires_a_valid_device_key() {
+    let (app, _, _dir) = helper_app().await;
+    let res = app.clone().oneshot(trade(None, &sale_body(&"a".repeat(64), "Arcane Nullifier"))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    let res = app.oneshot(trade(Some("qfh_0000"), &sale_body(&"a".repeat(64), "Arcane Nullifier"))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn malformed_trade_bodies_are_400() {
+    let (app, state, _dir) = helper_app().await;
+    let created = keys::create(state.db.as_ref().unwrap(), "trade-400-pc", Utc::now()).await.unwrap();
+    for body in ["not json".to_string(), "{}".to_string(), sale_body("ABC", "Arcane Nullifier")] {
+        let res = app.clone().oneshot(trade(Some(&created.key), &body)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(json_of(res).await["component"], "Helper");
+    }
+}
+
+#[tokio::test]
+async fn a_resolved_trade_is_applied_and_a_replay_is_a_duplicate() {
+    let (app, state, _dir) = helper_app().await;
+    let db = state.db.as_ref().unwrap();
+    let created = keys::create(db, "trade-pc", Utc::now()).await.unwrap();
+    let id = "a".repeat(64);
+
+    let res = app.clone().oneshot(trade(Some(&created.key), &sale_body(&id, "Arcane Nullifier"))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_of(res).await, json!({"status": "applied"}));
+    let stored = events::get(db, &id).await.unwrap().unwrap();
+    assert_eq!((stored.status.as_str(), stored.device_name.as_str()), ("applied", "trade-pc"));
+
+    let res = app.oneshot(trade(Some(&created.key), &sale_body(&id, "Arcane Nullifier"))).await.unwrap();
+    assert_eq!(json_of(res).await, json!({"status": "duplicate"}));
+    assert_eq!(events::list(db, None, 1, 10).await.unwrap().total, 1);
+}
+
+#[tokio::test]
+async fn an_unresolved_trade_needs_review() {
+    let (app, state, _dir) = helper_app().await;
+    let created = keys::create(state.db.as_ref().unwrap(), "review-pc", Utc::now()).await.unwrap();
+    let res = app.oneshot(trade(Some(&created.key), &sale_body(&"b".repeat(64), "Mystery Thing"))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_of(res).await, json!({"status": "needs_review", "reason": "unresolved: Mystery Thing"}));
 }

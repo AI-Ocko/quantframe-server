@@ -21,6 +21,7 @@ use chrono::Utc;
 use qf_core::helper_link::{
     keys::{self, DeviceIdentity},
     presence::{self, Heartbeat},
+    trades::{self, IncomingTrade, TradeEnv},
 };
 
 use crate::auth::{bearer_from_headers, cleared_cookie, session_cookie, token_from_headers, LoginLimiter, Sessions};
@@ -36,6 +37,8 @@ pub struct ServerState {
     pub data_dir: PathBuf,
     /// `None` only in tests that don't exercise the helper routes.
     pub db: Option<qf_core::db::DatabaseConnection>,
+    /// Resolves and applies helper trades (amendment E8); tests use a fake.
+    pub trade_env: Arc<dyn TradeEnv>,
 }
 
 pub fn router(state: ServerState) -> Router {
@@ -51,6 +54,7 @@ pub fn router(state: ServerState) -> Router {
     // The helper authenticates with a device key, so it sits outside the Origin check and sessions (amendment D4).
     let helper = Router::new()
         .route("/helper/heartbeat", post(helper_heartbeat))
+        .route("/helper/trade", post(helper_trade))
         .layer(middleware::from_fn_with_state(state.clone(), require_device_key));
 
     Router::new()
@@ -86,6 +90,26 @@ async fn require_device_key(State(state): State<ServerState>, mut req: Request, 
 async fn helper_heartbeat(Extension(device): Extension<DeviceIdentity>, Json(heartbeat): Json<Heartbeat>) -> StatusCode {
     presence::get().record(&device.name, heartbeat, Utc::now());
     StatusCode::NO_CONTENT
+}
+
+/// Amendment E4. The body is parsed by hand so a wrong shape is 400, as the helper expects.
+async fn helper_trade(State(state): State<ServerState>, Extension(device): Extension<DeviceIdentity>, body: Bytes) -> Response {
+    let bad_request =
+        |message: String| (StatusCode::BAD_REQUEST, Json(json!({"component": "Helper", "message": message}))).into_response();
+    let incoming: IncomingTrade = match serde_json::from_slice(&body) {
+        Ok(incoming) => incoming,
+        Err(e) => return bad_request(format!("Invalid trade body: {e}")),
+    };
+    if let Err(message) = trades::validate(&incoming) {
+        return bad_request(message);
+    }
+    let Some(db) = state.db.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Database not ready").into_response();
+    };
+    match trades::handle_incoming(db, state.trade_env.as_ref(), &device.name, incoming, Utc::now()).await {
+        Ok(outcome) => (StatusCode::OK, Json(outcome)).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
+    }
 }
 
 async fn check_origin(State(state): State<ServerState>, req: Request, next: Next) -> Response {
