@@ -1,0 +1,23 @@
+services:
+  quantframe-server:
+    build: .
+    image: quantframe-server:local
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      QF_PUBLIC_ORIGIN: ${QF_PUBLIC_ORIGIN:?set QF_PUBLIC_ORIGIN in .env}
+    volumes:
+      - qf-data:/data
+    secrets:
+      - qf_secret_key
+      - qf_web_password
+
+secrets:
+  qf_secret_key:
+    file: ./secrets/qf_secret_key
+  qf_web_password:
+    file: ./secrets/qf_web_password
+
+volumes:
+  qf-data: {}
