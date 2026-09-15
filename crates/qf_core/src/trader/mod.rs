@@ -4,6 +4,7 @@ pub mod engine;
 pub mod helpers;
 pub mod item;
 pub mod item_entry;
+pub mod lifecycle;
 pub mod orders;
 pub mod price_source;
 pub mod session;
