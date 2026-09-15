@@ -1065,13 +1065,31 @@ export namespace TauriTypes {
     token_valid: boolean;
     ws_connected: boolean;
     game_data_loaded: boolean;
-    helper_ok: boolean;
-    helper_override: boolean;
+    helper_connected: boolean;
+    warframe_running: boolean;
+  }
+  export interface TraderHelperSnapshot {
+    connected: boolean;
+    warframe_running: boolean;
+    seconds_since_heartbeat?: number | null;
+    last_heartbeat_at?: string | null;
+    device_name?: string | null;
+    version?: string | null;
+  }
+  export interface HelperDevice {
+    id: number;
+    name: string;
+    created_at: string;
+    last_seen_at?: string | null;
+    revoked_at?: string | null;
+  }
+  export interface HelperDeviceCreated {
+    device: HelperDevice;
+    key: string;
   }
   export interface TraderOptions {
     dry_run: boolean;
     delete_buy_orders_on_stop: boolean;
-    helper_override: boolean;
     last_stop_reason?: string | null;
     last_stop_at?: string | null;
   }
@@ -1089,6 +1107,7 @@ export namespace TauriTypes {
     checklist: TraderChecklist;
     options: TraderOptions;
     session: TraderSessionSnapshot;
+    helper: TraderHelperSnapshot;
     running_since?: string | null;
     running_dry_run?: boolean | null;
   }

@@ -11,7 +11,7 @@ const STATE_COLOR: Record<TauriTypes.LifecycleState, string> = {
   stopping: "orange",
 };
 
-type OptionsInput = { dryRun?: boolean; deleteBuyOrdersOnStop?: boolean; helperOverride?: boolean };
+type OptionsInput = { dryRun?: boolean; deleteBuyOrdersOnStop?: boolean };
 
 export function TraderPanel() {
   const t = (key: string, context?: { [key: string]: any }) => useTranslatePages(`live_scraper.trader.${key}`, context);
@@ -35,7 +35,8 @@ export function TraderPanel() {
     ["token_valid", status.checklist.token_valid],
     ["ws_connected", status.checklist.ws_connected],
     ["game_data_loaded", status.checklist.game_data_loaded],
-    ["helper_ok", status.checklist.helper_ok],
+    ["helper_connected", status.checklist.helper_connected],
+    ["warframe_running", status.checklist.warframe_running],
   ];
   const failure = start.error ?? stop.error ?? options.error;
 
@@ -80,17 +81,21 @@ export function TraderPanel() {
             </List.Item>
           ))}
         </List>
+        <Text size="sm" c="dimmed">
+          {status.helper.last_heartbeat_at
+            ? t("helper_line", {
+                device: status.helper.device_name ?? "",
+                version: status.helper.version ?? "",
+                seconds: status.helper.seconds_since_heartbeat ?? 0,
+              })
+            : t("helper_none")}
+        </Text>
         <Group>
           <Switch
             label={t("options.dry_run")}
             checked={status.options.dry_run}
             disabled={active}
             onChange={(e) => options.mutate({ dryRun: e.currentTarget.checked })}
-          />
-          <Switch
-            label={t("options.helper_override")}
-            checked={status.options.helper_override}
-            onChange={(e) => options.mutate({ helperOverride: e.currentTarget.checked })}
           />
           <Switch
             label={t("options.delete_buy_orders_on_stop")}

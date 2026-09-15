@@ -13,7 +13,7 @@ export class LiveScraperModule {
   stop() {
     return this.client.sendInvoke<TauriTypes.TraderStatus>("trader_stop");
   }
-  setOptions(options: { dryRun?: boolean; deleteBuyOrdersOnStop?: boolean; helperOverride?: boolean }) {
+  setOptions(options: { dryRun?: boolean; deleteBuyOrdersOnStop?: boolean }) {
     return this.client.sendInvoke<TauriTypes.TraderOptions>("trader_set_options", options);
   }
   dryRunLog(page: number, limit: number) {

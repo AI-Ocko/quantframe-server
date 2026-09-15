@@ -2236,14 +2236,16 @@
           "token_valid": "warframe.market sign-in valid",
           "ws_connected": "warframe.market websocket connected",
           "game_data_loaded": "Item list loaded",
-          "helper_ok": "Helper connected (override available in dry-run until phase 4)"
+          "helper_connected": "qf-helper connected (heartbeat in the last 30 s)",
+          "warframe_running": "Warframe running on the gaming PC"
         },
         "options": {
           "dry_run": "Dry-run",
-          "helper_override": "Helper override",
           "delete_buy_orders_on_stop": "Delete buy orders on stop"
         },
         "last_stop": "Last stop: {{reason}} ({{at}})",
+        "helper_line": "Last heartbeat from {{device}} (qf-helper {{version}}) {{seconds}} s ago",
+        "helper_none": "No qf-helper heartbeat since the server started",
         "dry_run_log": {
           "title": "Dry-run log",
           "total": "{{total}} simulated order writes",
@@ -2257,6 +2259,24 @@
           "forced_by": "Forced by",
           "reason": "Reason"
         }
+      },
+      "helper_devices": {
+        "title": "Helper devices",
+        "description": "Each gaming PC running qf-helper needs its own device key. Keys are shown once; revoke a key you no longer use.",
+        "name": "Device name",
+        "name_placeholder": "gaming-pc",
+        "create": "Create key",
+        "columns": { "name": "Name", "created_at": "Created", "last_seen_at": "Last heartbeat", "status": "Status" },
+        "active": "Active",
+        "revoked": "Revoked",
+        "revoke": "Revoke",
+        "cancel": "Cancel",
+        "revoke_title": "Revoke device key",
+        "revoke_message": "{{name}} will be rejected on its next heartbeat. This can't be undone; create a new key instead.",
+        "created_title": "Key for {{name}}",
+        "created_warning": "This key is shown only once. Save it now.",
+        "created_config": "Put this in ~/.config/qf-helper/qf-helper.toml on the gaming PC:",
+        "done": "Done"
       },
       "export_json_tooltip": "Export Items to JSON (Patreon T1+)",
       "update_multiple_tooltip": "Update Multiple Items",
