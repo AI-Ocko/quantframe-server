@@ -40,7 +40,7 @@ The dry-run trader start logged fifty `Trader:Item:Delete` "Deleted order with I
 
 ## Follow-ups
 
-1. **Auto-scroll in the Log tab does not work** (check 3, open, pinned for a future session). Two candidates from the review notes: the scroll effect's deps do not include `levels`, so toggling a level can leave the view mid-buffer unpaused (`Log/index.tsx:54-57`); and the pane's `calc(100vh - 320px)` box (`Log/index.tsx:98`) may not be the element that actually scrolls. Neither was confirmed — the root cause was not investigated.
+1. **Auto-scroll in the Log tab does not work** (check 3, open, pinned for a future session). *Closed 2026-09-16: the user re-tested and confirmed it works; no code change was made.* Two candidates from the review notes: the scroll effect's deps do not include `levels`, so toggling a level can leave the view mid-buffer unpaused (`Log/index.tsx:54-57`); and the pane's `calc(100vh - 320px)` box (`Log/index.tsx:98`) may not be the element that actually scrolls. Neither was confirmed — the root cause was not investigated.
 2. **Dry-run delete log wording.** A dry-run trader start prints "Deleted order with ID: `<real wfm id>`" for simulated book deletes (see the note above). Say "simulated" in the line, or suppress it under dry-run.
 3. **`RequestError.content` is logged unmasked** and therefore appears in full in the second (full-context) line of a large error in the Log tab. This is the masking item the plan asked to add; pre-existing, not changed by 4d.
 4. **Spec L6 wording nit** from the re-review: L6 says "the sink and `tail` both read `CACHED_LOGS`"; the sink is fed directly by `dolog` and does not read the cache.
