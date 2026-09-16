@@ -1154,6 +1154,61 @@ export namespace TauriTypes {
     by_action: DryRunSummaryByAction[];
     by_item: DryRunSummaryByItem[];
   }
+  export interface AnalyticsItemRow {
+    wfm_id: string;
+    wfm_url: string;
+    item_name: string;
+    sub_type: string;
+    purchases: number;
+    bought_qty: number;
+    spend: number;
+    sales: number;
+    sold_qty: number;
+    revenue: number;
+    profit: number;
+    avg_buy?: number | null;
+    avg_sell?: number | null;
+    avg_days_held?: number | null;
+  }
+  export interface AnalyticsStockRow {
+    id: number;
+    wfm_id: string;
+    wfm_url: string;
+    item_name: string;
+    sub_type: string;
+    owned: number;
+    bought: number;
+    list_price?: number | null;
+    status: string;
+    created_at: string;
+    days_in_stock: number;
+    median?: number | null;
+    moving_avg?: number | null;
+    volume?: number | null;
+    warm: boolean;
+    unrealised?: number | null;
+    list_vs_median?: number | null;
+  }
+  export interface AnalyticsPartnerRow {
+    user_name: string;
+    trades: number;
+    bought_count: number;
+    bought_plat: number;
+    sold_count: number;
+    sold_plat: number;
+    profit: number;
+    last_trade_at: string;
+  }
+  export type AnalyticsBucket = "day" | "week";
+  export interface AnalyticsTimelineRow {
+    bucket_start: string;
+    sales: number;
+    purchases: number;
+    revenue: number;
+    expenses: number;
+    profit: number;
+    cumulative_profit: number;
+  }
   export interface HelperRawItem {
     name: string;
     quantity: number;

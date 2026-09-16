@@ -2719,6 +2719,80 @@
               "show_financial_report_tooltip": "Show report"
             }
           }
+        },
+        "items": {
+          "title": "Items P&L",
+          "range": "Date range",
+          "search": "Search items",
+          "columns": {
+            "item": "Item",
+            "sub_type": "Rank / variant",
+            "purchases": "Bought",
+            "bought_qty": "Qty",
+            "spend": "Spend",
+            "sales": "Sold",
+            "sold_qty": "Qty",
+            "revenue": "Revenue",
+            "profit": "Profit",
+            "avg_buy": "Avg buy",
+            "avg_sell": "Avg sell",
+            "avg_days_held": "Days held"
+          },
+          "empty": "No transactions in this range."
+        },
+        "stock": {
+          "title": "Stock performance",
+          "columns": {
+            "item": "Item",
+            "sub_type": "Rank / variant",
+            "owned": "Owned",
+            "bought": "Bought at",
+            "list_price": "Listed at",
+            "median": "Median (7 d)",
+            "moving_avg": "Moving avg",
+            "volume": "Trades / day",
+            "unrealised": "Unrealised",
+            "list_vs_median": "List vs median",
+            "days_in_stock": "Days in stock",
+            "status": "Status"
+          },
+          "warm": "Warm",
+          "cold": "Warming up",
+          "no_stats": "Not tracked",
+          "empty": "No stock."
+        },
+        "partners": {
+          "title": "Trading partners",
+          "range": "Date range",
+          "columns": {
+            "user": "User",
+            "trades": "Trades",
+            "bought_count": "Bought from",
+            "bought_plat": "Paid",
+            "sold_count": "Sold to",
+            "sold_plat": "Received",
+            "profit": "Profit",
+            "last_trade_at": "Last trade"
+          },
+          "empty": "No trading partners in this range."
+        },
+        "timeline": {
+          "title": "Profit timeline",
+          "range": "Date range",
+          "bucket": {
+            "day": "Day",
+            "week": "Week"
+          },
+          "profit": "Profit",
+          "cumulative": "Cumulative profit",
+          "totals": {
+            "revenue": "Revenue",
+            "expenses": "Expenses",
+            "profit": "Profit",
+            "sales": "Sales",
+            "purchases": "Purchases"
+          },
+          "empty": "No transactions in this range."
         }
       }
     },

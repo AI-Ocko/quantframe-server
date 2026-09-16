@@ -2,7 +2,7 @@ import { useTranslatePages } from "@hooks/useTranslate.hook";
 import { Tabs } from "@mantine/core";
 import { useLocalStorage } from "@mantine/hooks";
 import { useMemo } from "react";
-import { TransactionPanel } from "./Tabs";
+import { ItemsPanel, StockPanel, TransactionPanel } from "./Tabs";
 import classes from "./TradingAnalytics.module.css";
 
 export default function TradingAnalyticsPage() {
@@ -19,6 +19,8 @@ export default function TradingAnalyticsPage() {
         component: (isActive: boolean) => <TransactionPanel isActive={isActive} />,
         id: "transaction",
       },
+      { label: useTranslateTabs("items.title"), component: (isActive: boolean) => <ItemsPanel isActive={isActive} />, id: "items" },
+      { label: useTranslateTabs("stock.title"), component: (isActive: boolean) => <StockPanel isActive={isActive} />, id: "stock" },
     ],
     [],
   );

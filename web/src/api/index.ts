@@ -1,5 +1,6 @@
 import { ResponseError, TauriTypes } from "$types";
 import { rpcInvoke as invoke } from "./transport";
+import { AnalyticsModule } from "./analytics";
 import { AppModule } from "./app";
 import { AuthModule } from "./auth";
 import { CacheModule } from "./cache";
@@ -26,6 +27,7 @@ export class TauriClient {
   // private _logs: string[] = [];
   constructor() {
     this.app = new AppModule(this);
+    this.analytics = new AnalyticsModule(this);
     this.dashboard = new DashboardModule(this);
     this.events = new EventModule(this);
     this.auth = new AuthModule(this);
@@ -162,6 +164,7 @@ export class TauriClient {
     return queryParams;
   }
   // Modules
+  analytics: AnalyticsModule;
   app: AppModule;
   dashboard: DashboardModule;
   events: EventModule;
