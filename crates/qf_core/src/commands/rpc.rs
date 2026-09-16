@@ -2,6 +2,7 @@ use serde_json::Value;
 use utils::{get_location, Error, SubType};
 use wf_market::enums::OrderType;
 
+use crate::analytics::Bucket;
 use crate::app::{ItemSettings, Settings};
 use crate::handlers::ItemEntity;
 use crate::helper_link::trades::ReviewItem;
@@ -60,6 +61,10 @@ rpc_table! {
     cache_get_theme_presets => cache::cache_get_theme_presets {},
     collector_health => collector::collector_health {},
     market_item_history => collector::market_item_history { wfm_url: String, sub_type: Option<String>, days: i64 },
+    analytics_items => analytics::analytics_items { from: String, to: String },
+    analytics_stock => analytics::analytics_stock {},
+    analytics_partners => analytics::analytics_partners { from: String, to: String },
+    analytics_timeline => analytics::analytics_timeline { from: String, to: String, bucket: Bucket },
     trader_status => trader::trader_status {},
     trader_start => trader::trader_start {},
     trader_stop => trader::trader_stop {},
@@ -163,6 +168,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn analytics_commands_are_routable_and_validate_args() {
+        for name in ["analytics_items", "analytics_stock", "analytics_partners", "analytics_timeline"] {
+            assert!(COMMANDS.contains(&name), "{name}");
+        }
+        assert!(dispatch("analytics_items", json!({"from": "2026-09-01"})).await.unwrap().is_err(), "to is required");
+        assert!(dispatch("analytics_partners", json!({})).await.unwrap().is_err(), "from is required");
+        assert!(
+            dispatch("analytics_timeline", json!({"from": "2026-09-01", "to": "2026-09-10", "bucket": "month"})).await.unwrap().is_err(),
+            "bucket must be day or week"
+        );
+    }
+
+    #[tokio::test]
     async fn trader_commands_are_routable_and_validate_args() {
         for name in ["trader_status", "trader_start", "trader_stop", "trader_set_options", "trader_dry_run_log", "trader_dry_run_summary", "trader_interesting_items"] {
             assert!(COMMANDS.contains(&name), "{name}");
@@ -208,7 +226,7 @@ mod tests {
     fn allowlist_has_no_removed_features() {
         for name in COMMANDS {
             for banned in [
-                "riven", "auction", "chat", "analytics", "alert", "syndicate", "wfgdpr",
+                "riven", "auction", "chat", "alert", "syndicate", "wfgdpr",
                 "wf_inventory", "live_scraper", "permission", "exit", "calculate_tax",
             ] {
                 assert!(!name.contains(banned), "{name} must not be exposed");
