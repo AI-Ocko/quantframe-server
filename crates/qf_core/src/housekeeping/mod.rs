@@ -33,7 +33,9 @@ pub struct TickReport {
     pub backup: Option<PathBuf>,
 }
 
-/// One housekeeping pass. `backup_dir = None` skips the backup job (tests).
+/// One housekeeping pass. The three jobs are independent: one failing must not starve the others,
+/// so the first error is returned only after all of them were attempted. `backup_dir = None` skips
+/// the backup job (tests).
 pub async fn tick(
     conn: &DatabaseConnection,
     env: &dyn TradeEnv,
@@ -41,10 +43,24 @@ pub async fn tick(
     gates: &mut Gates,
     backup_dir: Option<&Path>,
 ) -> Result<TickReport, Error> {
-    let mut report = TickReport { alerts: trades::sweep_alerts(conn, env, now).await?, ..Default::default() };
+    let mut report = TickReport::default();
+    let mut first_error: Option<Error> = None;
+    match trades::sweep_alerts(conn, env, now).await {
+        Ok(alerts) => report.alerts = alerts,
+        Err(e) => {
+            first_error.get_or_insert(e);
+        }
+    }
     if gates.last_hourly.is_none_or(|t| now - t >= hourly()) {
-        report.deleted_events = Some(events::apply_retention(conn, now).await?);
-        gates.last_hourly = Some(now);
+        match events::apply_retention(conn, now).await {
+            Ok(deleted) => {
+                report.deleted_events = Some(deleted);
+                gates.last_hourly = Some(now);
+            }
+            Err(e) => {
+                first_error.get_or_insert(e);
+            }
+        }
     }
     if let Some(dir) = backup_dir {
         let today = now.date_naive();
@@ -58,7 +74,10 @@ pub async fn tick(
             }
         }
     }
-    Ok(report)
+    match first_error {
+        Some(e) => Err(e),
+        None => Ok(report),
+    }
 }
 
 /// Critical log, red toast and `on_alert` with `<KIND> = backup_failed` (H6). No retry until the next UTC day.
@@ -115,7 +134,7 @@ pub fn start(conn: DatabaseConnection, backup_dir: PathBuf) {
 mod tests {
     use super::*;
     use crate::helper_link::trades::events::tests::{at, event};
-    use crate::helper_link::trades::events::{insert, list, NEEDS_REVIEW};
+    use crate::helper_link::trades::events::{get, insert, list, NEEDS_REVIEW};
     use crate::trader::store::tests::db;
 
     #[tokio::test]
@@ -139,5 +158,31 @@ mod tests {
 
         let third = tick(&conn, &env, at("2026-09-16T13:01:00Z"), &mut gates, None).await.unwrap();
         assert_eq!(third.deleted_events, Some(0), "an hour later the hourly job runs again");
+    }
+
+    #[tokio::test]
+    async fn a_broken_event_row_does_not_stop_retention() {
+        let (_dir, conn) = db().await;
+        let env = crate::helper_link::trades::tests::fake(true);
+        let mut old = event("old", "2026-06-01T00:00:00Z", NEEDS_REVIEW);
+        old.reason = Some("unresolved: x".into());
+        insert(&conn, &old).await.unwrap();
+        let mut failed = event("failed", "2026-09-16T12:00:00Z", NEEDS_REVIEW);
+        failed.reason = Some("apply_failed: HandleItem".into());
+        insert(&conn, &failed).await.unwrap();
+        crate::collector::store::exec(
+            &conn,
+            "Test",
+            "UPDATE helper_events SET payload = 'not json' WHERE event_id = ?",
+            vec!["failed".into()],
+        )
+        .await
+        .unwrap();
+
+        let mut gates = Gates::default();
+        let result = tick(&conn, &env, at("2026-09-16T12:01:00Z"), &mut gates, None).await;
+
+        assert!(result.is_err(), "the sweep error is still reported");
+        assert!(get(&conn, "old").await.unwrap().is_none(), "retention ran despite the failing sweep");
     }
 }
