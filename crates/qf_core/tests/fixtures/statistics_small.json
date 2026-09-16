@@ -1,0 +1,16 @@
+{
+  "payload": {
+    "statistics_closed": {
+      "48hours": [
+        {"datetime": "2026-09-16T16:00:00.000+00:00", "volume": 3, "min_price": 69.0, "max_price": 69.0, "median": 69.0, "mod_rank": 0}
+      ],
+      "90days": [
+        {"datetime": "2026-09-14T00:00:00.000+00:00", "volume": 39, "min_price": 47.0, "max_price": 50.4, "median": 50.0, "mod_rank": 10},
+        {"datetime": "2026-09-15T00:00:00.000+00:00", "volume": 12, "min_price": 20.0, "max_price": 25.0, "median": 22.0, "mod_rank": 0},
+        {"datetime": "2026-09-15T00:00:00.000+00:00", "volume": 15, "min_price": 10.0, "max_price": 12.0, "median": 11.0, "subtype": "intact"},
+        {"datetime": "2026-09-15T00:00:00.000+00:00", "volume": 43, "min_price": 66.0, "max_price": 70.0, "median": 69.0}
+      ]
+    },
+    "statistics_live": {"48hours": [], "90days": []}
+  }
+}
