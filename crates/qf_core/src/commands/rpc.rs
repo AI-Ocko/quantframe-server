@@ -61,6 +61,9 @@ rpc_table! {
     cache_get_theme_presets => cache::cache_get_theme_presets {},
     collector_health => collector::collector_health {},
     market_item_history => collector::market_item_history { wfm_url: String, sub_type: Option<String>, days: i64 },
+    market_overview => market::market_overview {},
+    market_movers => market::market_movers { min_volume: f64 },
+    market_warmup => market::market_warmup {},
     analytics_items => analytics::analytics_items { from: String, to: String },
     analytics_stock => analytics::analytics_stock {},
     analytics_partners => analytics::analytics_partners { from: String, to: String },
@@ -165,6 +168,14 @@ mod tests {
         assert!(COMMANDS.contains(&"market_item_history"));
         let bad = dispatch("market_item_history", json!({"wfmUrl": "x"})).await.unwrap();
         assert!(bad.is_err(), "days is required");
+    }
+
+    #[tokio::test]
+    async fn market_commands_are_routable_and_validate_args() {
+        for name in ["market_overview", "market_movers", "market_warmup"] {
+            assert!(COMMANDS.contains(&name), "{name}");
+        }
+        assert!(dispatch("market_movers", json!({"minVolume": "three"})).await.unwrap().is_err(), "min_volume must be a number");
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@ use serde::Serialize;
 use utils::{get_location, Error};
 
 use crate::collector::health::{CollectorHealth, HealthTracker};
-use crate::collector::history::{load_history, DailyPoint, HourlyPoint};
+use crate::collector::history::{load_history, BookSnapshot, DailyPoint, HourlyPoint, TradePoint};
 use crate::collector::stats::ItemStats;
 use crate::collector::{runner, store};
 use crate::market::limiter;
@@ -25,6 +25,8 @@ pub struct MarketItemHistory {
     pub stats: Option<ItemStats>,
     pub hourly: Vec<HourlyPoint>,
     pub daily: Vec<DailyPoint>,
+    pub trades: Vec<TradePoint>,
+    pub book: Option<BookSnapshot>,
     pub last_swept_at: Option<String>,
 }
 
@@ -63,6 +65,8 @@ pub async fn market_item_history(wfm_url: String, sub_type: Option<String>, days
         stats: history.stats,
         hourly: history.hourly,
         daily: history.daily,
+        trades: history.trades,
+        book: history.book,
         last_swept_at: history.last_swept_at,
     })
 }

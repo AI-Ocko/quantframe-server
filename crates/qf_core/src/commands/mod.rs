@@ -8,6 +8,7 @@ pub mod debug;
 pub mod handlers;
 pub mod helper_link;
 pub mod logs;
+pub mod market;
 pub mod order;
 pub mod sound;
 pub mod stock_item;
