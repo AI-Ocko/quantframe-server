@@ -21,7 +21,7 @@ pub async fn items(conn: &DatabaseConnection, from: &str, to: &str) -> Result<Ve
                 SUM(CASE WHEN t.transaction_type = 'sale' THEN t.price ELSE 0 END) AS revenue,
                 SUM(CASE WHEN t.transaction_type = 'sale' THEN COALESCE(t.profit, 0) ELSE 0 END) AS profit,
                 AVG(CASE WHEN t.transaction_type = 'sale' THEN
-                    (SELECT julianday(t.created_at) - julianday(MAX(p.created_at)) FROM \"transaction\" p
+                    (SELECT julianday(t.created_at) - MAX(julianday(p.created_at)) FROM \"transaction\" p
                       WHERE p.wfm_url = t.wfm_url AND COALESCE(p.sub_type, '') = COALESCE(t.sub_type, '')
                         AND p.transaction_type = 'purchase' AND julianday(p.created_at) <= julianday(t.created_at))
                     END) AS avg_days_held
@@ -69,7 +69,7 @@ pub async fn partners(conn: &DatabaseConnection, from: &str, to: &str) -> Result
                 SUM(transaction_type = 'sale') AS sold_count,
                 SUM(CASE WHEN transaction_type = 'sale' THEN price ELSE 0 END) AS sold_plat,
                 SUM(CASE WHEN transaction_type = 'sale' THEN COALESCE(profit, 0) ELSE 0 END) AS profit,
-                MAX(created_at) AS last_trade_at
+                datetime(MAX(julianday(created_at))) AS last_trade_at
          FROM \"transaction\"
          WHERE user_name <> '' AND {RANGE}
          GROUP BY user_name
@@ -186,6 +186,8 @@ mod tests {
         // Bought 2 at 50 each on the 1st (price is the row total), 1 at 36 on the 5th, sold 1 for 60 on the 8th (profit 24 written at sale time).
         tx(&conn, "purchase", "galvanized_shot", Some("{\"rank\":0}"), 2, 100, None, "alice", "2026-09-01T10:00:00.000000000+00:00").await;
         tx(&conn, "purchase", "galvanized_shot", Some("{\"rank\":0}"), 1, 36, None, "bob", "2026-09-05T10:00:00.000000000+00:00").await;
+        // The sea-orm shape sorts below the T-shaped row above as text, but it is the later instant.
+        tx(&conn, "purchase", "galvanized_shot", Some("{\"rank\":0}"), 1, 44, None, "bob", "2026-09-05 22:00:00.000000 +00:00").await;
         tx(&conn, "sale", "galvanized_shot", Some("{\"rank\":0}"), 1, 60, Some(24), "carol", "2026-09-08T10:00:00.000000000+00:00").await;
         // A different variant of the same item is its own row.
         tx(&conn, "sale", "galvanized_shot", Some("{\"rank\":5}"), 1, 90, Some(40), "dave", "2026-09-08T11:00:00.000000000+00:00").await;
@@ -196,11 +198,11 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].sub_type, "{\"rank\":5}", "sorted by profit desc");
         let shot = &rows[1];
-        assert_eq!((shot.purchases, shot.bought_qty, shot.spend), (2, 3, 136));
+        assert_eq!((shot.purchases, shot.bought_qty, shot.spend), (3, 4, 180));
         assert_eq!((shot.sales, shot.sold_qty, shot.revenue, shot.profit), (1, 1, 60, 24));
-        assert!((shot.avg_buy.unwrap() - 136.0 / 3.0).abs() < 1e-9);
+        assert!((shot.avg_buy.unwrap() - 180.0 / 4.0).abs() < 1e-9);
         assert_eq!(shot.avg_sell, Some(60.0));
-        assert!((shot.avg_days_held.unwrap() - 3.0).abs() < 1e-6, "sale on the 8th, latest prior purchase on the 5th");
+        assert!((shot.avg_days_held.unwrap() - 2.5).abs() < 1e-6, "sale on the 8th at 10:00, latest prior purchase on the 5th at 22:00");
         assert_eq!(rows[0].avg_days_held, None, "no purchase for rank 5");
     }
 
@@ -208,12 +210,13 @@ mod tests {
     async fn partners_split_directions_and_skip_empty_names() {
         let (_dir, conn) = db().await;
         tx(&conn, "purchase", "a", None, 1, 10, None, "alice", "2026-09-01T10:00:00.000000000+00:00").await;
-        tx(&conn, "sale", "b", None, 2, 50, Some(20), "alice", "2026-09-03T10:00:00.000000000+00:00").await;
+        // The sea-orm shape sorts below the purchase above as text, so only julianday makes it the last trade.
+        tx(&conn, "sale", "b", None, 2, 50, Some(20), "alice", "2026-09-03 10:00:00.000000 +00:00").await;
         tx(&conn, "sale", "c", None, 1, 5, Some(1), "", "2026-09-03T10:00:00.000000000+00:00").await;
         let rows = partners(&conn, "2026-09-01", "2026-09-10").await.unwrap();
         assert_eq!(
             rows,
-            vec![PartnerRow { user_name: "alice".into(), trades: 2, bought_count: 1, bought_plat: 10, sold_count: 1, sold_plat: 50, profit: 20, last_trade_at: "2026-09-03T10:00:00.000000000+00:00".into() }]
+            vec![PartnerRow { user_name: "alice".into(), trades: 2, bought_count: 1, bought_plat: 10, sold_count: 1, sold_plat: 50, profit: 20, last_trade_at: "2026-09-03 10:00:00".into() }]
         );
     }
 
