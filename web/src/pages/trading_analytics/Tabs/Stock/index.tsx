@@ -14,7 +14,6 @@ export function StockPanel({ isActive }: { isActive?: boolean }) {
     queryKey: ["analytics_stock"],
     queryFn: () => api.analytics.stock(),
     enabled: !!isActive,
-    refetchInterval: 60_000,
   });
   const rows = useMemo(() => sortRows(data ?? [], sort), [data, sort]);
   const signed = (v?: number | null) => (v == null ? <Text c="dimmed">—</Text> : <Text c={v < 0 ? "red" : "green"}>{v.toFixed(0)}</Text>);

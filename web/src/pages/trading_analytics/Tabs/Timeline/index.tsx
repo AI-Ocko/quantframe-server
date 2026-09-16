@@ -1,6 +1,6 @@
 import api from "@api/index";
 import { useTranslatePages } from "@hooks/useTranslate.hook";
-import { Box, Group, Paper, SegmentedControl, SimpleGrid, Text, useMantineTheme } from "@mantine/core";
+import { Box, Group, Loader, Paper, SegmentedControl, SimpleGrid, Text, useMantineTheme } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
@@ -15,7 +15,7 @@ export function TimelinePanel({ isActive }: { isActive?: boolean }) {
   const theme = useMantineTheme();
   const { range, setRange, from, to } = useAnalyticsRange();
   const [bucket, setBucket] = useState<TauriTypes.AnalyticsBucket>("day");
-  const { data } = useQuery({
+  const { data, isPending } = useQuery({
     queryKey: ["analytics_timeline", from, to, bucket],
     queryFn: () => api.analytics.timeline(from, to, bucket),
     enabled: !!isActive,
@@ -26,7 +26,7 @@ export function TimelinePanel({ isActive }: { isActive?: boolean }) {
   return (
     <>
       <Group mt="md" align="end">
-        <DatePickerInput type="range" clearable label={t("range")} valueFormat="YYYY MMM DD" w={260} value={range} onChange={setRange} />
+        <DatePickerInput type="range" label={t("range")} valueFormat="YYYY MMM DD" w={260} value={range} onChange={setRange} />
         <SegmentedControl
           value={bucket}
           onChange={(v) => setBucket(v as TauriTypes.AnalyticsBucket)}
@@ -47,7 +47,9 @@ export function TimelinePanel({ isActive }: { isActive?: boolean }) {
         ))}
       </SimpleGrid>
       <Paper withBorder p="sm" mt="md">
-        {rows.length === 0 ? (
+        {isPending ? (
+          <Loader size="sm" />
+        ) : rows.length === 0 ? (
           <Text c="dimmed">{t("empty")}</Text>
         ) : (
           <Box h={360}>

@@ -24,7 +24,7 @@ export function PartnersPanel({ isActive }: { isActive?: boolean }) {
   return (
     <>
       <Group mt="md" align="end">
-        <DatePickerInput type="range" clearable label={t("range")} valueFormat="YYYY MMM DD" w={260} value={range} onChange={setRange} />
+        <DatePickerInput type="range" label={t("range")} valueFormat="YYYY MMM DD" w={260} value={range} onChange={setRange} />
       </Group>
       <DataTable
         mt="md"
