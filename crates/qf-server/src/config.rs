@@ -8,6 +8,7 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub web_dir: PathBuf,
     pub resources_dir: PathBuf,
+    pub backup_dir: Option<PathBuf>,
     pub public_origin: String,
     pub secret_key_file: PathBuf,
     pub web_password_file: PathBuf,
@@ -33,6 +34,7 @@ impl Config {
             data_dir: or("QF_DATA_DIR", "/data").into(),
             web_dir: or("QF_WEB_DIR", "/app/web").into(),
             resources_dir: or("QF_RESOURCES_DIR", "/app/resources").into(),
+            backup_dir: get("QF_BACKUP_DIR").map(PathBuf::from),
             public_origin: public_origin.trim_end_matches('/').to_string(),
             secret_key_file: or("QF_SECRET_KEY_FILE", "/run/secrets/qf_secret_key").into(),
             web_password_file: or("QF_WEB_PASSWORD_FILE", "/run/secrets/qf_web_password").into(),
@@ -44,6 +46,7 @@ impl Config {
         CoreConfig {
             data_dir: self.data_dir.clone(),
             resources_dir: self.resources_dir.clone(),
+            backup_dir: self.backup_dir.clone(),
             secret_key_hex: std::fs::read_to_string(&self.secret_key_file).ok(),
             web_password_file: self.web_password_file.clone(),
             collector_enabled: self.collector_enabled,
@@ -61,6 +64,18 @@ mod tests {
         let cfg = Config::from_lookup(|k| (k == "QF_PUBLIC_ORIGIN").then(|| "http://h:8080/".to_string())).unwrap();
         assert_eq!(cfg.public_origin, "http://h:8080");
         assert_eq!(cfg.bind, "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn backup_dir_is_optional_and_read_from_the_environment() {
+        let base = |k: &str| (k == "QF_PUBLIC_ORIGIN").then(|| "http://h:8080".to_string());
+        assert_eq!(Config::from_lookup(base).unwrap().backup_dir, None);
+        let set = |k: &str| match k {
+            "QF_PUBLIC_ORIGIN" => Some("http://h:8080".to_string()),
+            "QF_BACKUP_DIR" => Some("/backups".to_string()),
+            _ => None,
+        };
+        assert_eq!(Config::from_lookup(set).unwrap().backup_dir, Some(PathBuf::from("/backups")));
     }
 
     #[test]

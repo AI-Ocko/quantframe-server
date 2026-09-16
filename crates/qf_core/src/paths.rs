@@ -6,12 +6,17 @@ use utils::{get_location, Error};
 pub struct Paths {
     pub data_dir: PathBuf,
     pub resources_dir: PathBuf,
+    pub backup_dir: PathBuf,
 }
 
 static PATHS: OnceLock<Paths> = OnceLock::new();
 
 impl Paths {
-    pub fn new(data_dir: impl Into<PathBuf>, resources_dir: impl Into<PathBuf>) -> Result<Self, Error> {
+    pub fn new(
+        data_dir: impl Into<PathBuf>,
+        resources_dir: impl Into<PathBuf>,
+        backup_dir: Option<PathBuf>,
+    ) -> Result<Self, Error> {
         let data_dir = data_dir.into();
         fs::create_dir_all(&data_dir).map_err(|e| {
             Error::new(
@@ -20,7 +25,8 @@ impl Paths {
                 get_location!(),
             )
         })?;
-        Ok(Self { data_dir, resources_dir: resources_dir.into() })
+        let backup_dir = backup_dir.unwrap_or_else(|| data_dir.join("backups"));
+        Ok(Self { data_dir, resources_dir: resources_dir.into(), backup_dir })
     }
 
     fn subdir(&self, name: &str) -> PathBuf {
@@ -41,8 +47,10 @@ impl Paths {
         self.subdir("logs")
     }
 
+    /// `QF_BACKUP_DIR`, default `<data_dir>/backups`; created on demand (spec §19 H6).
     pub fn backups_dir(&self) -> PathBuf {
-        self.subdir("backups")
+        let _ = fs::create_dir_all(&self.backup_dir);
+        self.backup_dir.clone()
     }
 
     /// Stable per-installation id, generated once and stored in `<data_dir>/device_id`.
@@ -77,11 +85,16 @@ mod tests {
     #[test]
     fn device_id_is_created_once_and_reused() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::new(dir.path(), dir.path().join("res")).unwrap();
+        let paths = Paths::new(dir.path(), dir.path().join("res"), None).unwrap();
         let first = paths.device_id().unwrap();
         let second = paths.device_id().unwrap();
         assert_eq!(first, second);
         assert_eq!(first.len(), 36);
         assert!(paths.sounds_dir().is_dir());
+        assert_eq!(paths.backups_dir(), dir.path().join("backups"));
+
+        let elsewhere = Paths::new(dir.path(), dir.path().join("res"), Some(dir.path().join("elsewhere"))).unwrap();
+        assert_eq!(elsewhere.backups_dir(), dir.path().join("elsewhere"));
+        assert!(elsewhere.backups_dir().is_dir());
     }
 }

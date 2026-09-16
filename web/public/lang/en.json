@@ -63,6 +63,12 @@
           "message": "{{reason}}. Some items may already be applied; check Live Scraper → Trades before re-applying."
         }
       },
+      "on_backup": {
+        "failed": {
+          "title": "Database backup failed",
+          "message": "{{reason}}. No retry until tomorrow (UTC); check the server log."
+        }
+      },
       "warframe_gdpr_data_loaded": {
         "success": {
           "title": "Warframe GDPR Data Loaded",

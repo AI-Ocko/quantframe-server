@@ -13,6 +13,7 @@ use crate::{db, game_data, web_auth, DATABASE, HAS_STARTED};
 pub struct CoreConfig {
     pub data_dir: PathBuf,
     pub resources_dir: PathBuf,
+    pub backup_dir: Option<PathBuf>,
     pub secret_key_hex: Option<String>,
     pub web_password_file: PathBuf,
     pub collector_enabled: bool,
@@ -23,7 +24,7 @@ pub struct CoreHandles {
 }
 
 pub async fn start(cfg: CoreConfig) -> Result<CoreHandles, Error> {
-    paths::init(Paths::new(&cfg.data_dir, &cfg.resources_dir)?);
+    paths::init(Paths::new(&cfg.data_dir, &cfg.resources_dir, cfg.backup_dir.clone())?);
     init_logger();
     set_base_path(paths::get().logs_dir().to_string_lossy().to_string());
 
