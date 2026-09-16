@@ -36,6 +36,7 @@ Only the warframe.market token is kept, encrypted with `qf_secret_key`. Your war
   docker compose up -d
   ```
   Then confirm `Database ready` in the log and that the Trades tab and transaction counts match the backup's date. (The volume name is `<stack folder>_qf-data`; on ockohome the stack folder is `quantframe-server`.)
+- **Going live:** follow `docs/GO-LIVE-RUNBOOK.md` once the dry-run review passes. Nothing turns dry-run off automatically.
 
 ## qf-helper (gaming PC)
 
