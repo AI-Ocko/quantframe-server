@@ -50,7 +50,9 @@ impl Queue {
             .append(true)
             .open(&self.path)
             .map_err(|e| format!("cannot open {}: {e}", self.path.display()))?;
-        writeln!(file, "{line}").map_err(|e| format!("cannot write {}: {e}", self.path.display()))
+        writeln!(file, "{line}").map_err(|e| format!("cannot write {}: {e}", self.path.display()))?;
+        // A detected trade must be on disk before the tail moves on (spec §19 H4).
+        file.sync_all().map_err(|e| format!("cannot sync {}: {e}", self.path.display()))
     }
 
     /// The oldest event. A corrupt line is dropped with a message so the queue can't wedge.

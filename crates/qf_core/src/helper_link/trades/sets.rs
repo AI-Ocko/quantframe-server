@@ -131,7 +131,11 @@ impl SetCache {
         let snapshot = self.parts.lock().unwrap().clone();
         match serde_json::to_string(&snapshot) {
             Ok(text) => {
-                if let Err(e) = std::fs::write(&self.file, text) {
+                // Write beside the file and rename over it, like Queue::pop, so a crash never leaves a truncated sets.json.
+                let mut temp = self.file.clone().into_os_string();
+                temp.push(".tmp");
+                let temp = std::path::PathBuf::from(temp);
+                if let Err(e) = std::fs::write(&temp, text).and_then(|_| std::fs::rename(&temp, &self.file)) {
                     warning("HelperLink:Sets", format!("Could not save {}: {e}", self.file.display()), &LoggerOptions::default());
                 }
             }
@@ -279,6 +283,19 @@ mod tests {
         let on_disk: PartsMap = serde_json::from_str(&std::fs::read_to_string(dir.path().join(SETS_FILE)).unwrap()).unwrap();
         assert!(!on_disk.contains_key("wolf_sledge_set"), "the empty root never reaches sets.json");
         assert!(on_disk.contains_key("mesa_prime_set"));
+    }
+
+    #[test]
+    fn save_leaves_no_temp_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = SetCache::new(dir.path());
+        cache.parts.lock().unwrap().insert("wolf_sledge_set".into(), vec!["wolf_sledge_handle".into()]);
+        cache.save();
+        cache.save();
+        assert!(dir.path().join(SETS_FILE).is_file());
+        assert!(!dir.path().join(format!("{SETS_FILE}.tmp")).exists());
+        let reread = SetCache::new(dir.path());
+        assert_eq!(reread.parts.lock().unwrap().get("wolf_sledge_set").map(Vec::len), Some(1));
     }
 
     #[tokio::test]
