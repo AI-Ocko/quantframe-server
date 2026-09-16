@@ -210,6 +210,15 @@ pub async fn run(conn: &DatabaseConnection, source: &dyn StatisticsSource, limit
     update(|s| {
         *s = BackfillStatus { state: BackfillState::Running, started_at: Some(ts(Utc::now())), items_total: total, ..BackfillStatus::default() }
     });
+    if items.is_empty() {
+        const EMPTY: &str = "no tradable items in the cache";
+        warning(C, EMPTY, &LoggerOptions::default());
+        return update(|s| {
+            s.state = BackfillState::Failed;
+            s.finished_at = Some(ts(Utc::now()));
+            s.last_error = Some(EMPTY.into());
+        });
+    }
     info(C, format!("Started: {total} items"), &LoggerOptions::default());
     for (item_id, slug) in items {
         let outcome = match fetch_with_retries(source, limiter, &slug).await {
@@ -261,18 +270,24 @@ pub async fn run(conn: &DatabaseConnection, source: &dyn StatisticsSource, limit
 
 /// Starts a run in the background unless one is already running; returns the status either way (spec §24 K4).
 pub fn start(conn: DatabaseConnection, items: Vec<(String, String)>) -> BackfillStatus {
-    {
+    let fresh = {
         let mut status = status_cell().lock().unwrap();
         if status.state == BackfillState::Running {
             return status.clone();
         }
-        status.state = BackfillState::Running;
-    }
+        *status = BackfillStatus {
+            state: BackfillState::Running,
+            started_at: Some(ts(Utc::now())),
+            items_total: items.len() as i64,
+            ..BackfillStatus::default()
+        };
+        status.clone()
+    };
     tokio::spawn(watch(tokio::spawn(async move {
         let source = HttpStatisticsSource::new(reqwest::Client::new(), "https://api.warframe.market/v1");
         run(&conn, &source, crate::market::limiter::global(), items).await
     })));
-    status()
+    fresh
 }
 
 /// Produces the `failed` state (spec §24 K3): a panicked or cancelled run must not leave the status
@@ -383,6 +398,29 @@ mod tests {
         assert_eq!(status.state, BackfillState::Failed, "a later start must not be refused forever");
         assert!(status.finished_at.is_some());
         assert!(status.last_error.is_some_and(|error| !error.is_empty()));
+        update(|s| *s = BackfillStatus::default());
+    }
+
+    #[tokio::test]
+    async fn start_refuses_a_second_run_and_leaves_its_status_alone() {
+        let _guard = status_guard();
+        let (_dir, conn) = setup().await;
+        update(|s| *s = BackfillStatus { state: BackfillState::Running, items_total: 42, items_done: 7, ..BackfillStatus::default() });
+        let status = start(conn, vec![]);
+        assert_eq!(status.state, BackfillState::Running);
+        assert_eq!((status.items_total, status.items_done), (42, 7), "the running job's status is untouched");
+        update(|s| *s = BackfillStatus::default());
+    }
+
+    #[tokio::test]
+    async fn an_empty_item_list_fails_instead_of_reporting_a_done_run() {
+        let _guard = status_guard();
+        let (_dir, conn) = setup().await;
+        let scripted = Scripted(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let status = run(&conn, &scripted, &Limiter::new(1000), vec![]).await;
+        assert_eq!(status.state, BackfillState::Failed);
+        assert_eq!(status.last_error.as_deref(), Some("no tradable items in the cache"));
+        assert!(status.finished_at.is_some());
         update(|s| *s = BackfillStatus::default());
     }
 }
