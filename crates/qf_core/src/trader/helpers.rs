@@ -294,8 +294,14 @@ pub async fn progress_order(
             send_event!(UIEvent::RefreshWfmOrders, json!({"source": component}));
         }
     } else if trade_operations.has("Update") && trade_operations.has("Delete") {
-        orders.delete(&order_id, &meta).await.map_err(|e| e.with_location(get_location!()))?;
-        info(format!("{}DeleteSuccess", component), &format!("Deleted order for item {}: {}", name, order_id), log_options);
+        let route = orders.delete(&order_id, &meta).await.map_err(|e| e.with_location(get_location!()))?;
+        let message = match route {
+            Route::DryRun(forced_by) => {
+                format!("Simulated delete of order for item {}: {} ({})", name, order_id, forced_by.as_str())
+            }
+            Route::Live => format!("Deleted order for item {}: {}", name, order_id),
+        };
+        info(format!("{}DeleteSuccess", component), &message, log_options);
         send_event!(UIEvent::RefreshWfmOrders, json!({"source": component}));
     } else if !can_create_order {
         warning(format!("{}Skip", component), &format!("Item {} has reached the order limit. Skipping.", name), log_options);
