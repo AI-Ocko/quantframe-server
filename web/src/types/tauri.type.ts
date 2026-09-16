@@ -1260,6 +1260,18 @@ export namespace TauriTypes {
     history_days_histogram: MarketHistogramBucket[];
     trades_histogram: MarketHistogramBucket[];
   }
+  export type MarketBackfillState = "idle" | "running" | "done" | "failed";
+  export interface MarketBackfillStatus {
+    state: MarketBackfillState;
+    started_at?: string | null;
+    finished_at?: string | null;
+    items_total: number;
+    items_done: number;
+    days_inserted: number;
+    items_missing: number;
+    items_failed: number;
+    last_error?: string | null;
+  }
   export interface MarketTradePoint {
     vanished_at: string;
     side: "buy" | "sell";

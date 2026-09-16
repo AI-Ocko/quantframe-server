@@ -1,6 +1,7 @@
 import api from "@api/index";
 import { useTranslatePages } from "@hooks/useTranslate.hook";
-import { Alert, Badge, Group, Paper, SimpleGrid, Stack, Table, Text } from "@mantine/core";
+import { Alert, Badge, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from "@mantine/core";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 
 const when = (value?: string | null) => (value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "—");
@@ -15,6 +16,38 @@ function Stat({ label, value }: { label: string; value: string | number }) {
         {value}
       </Text>
     </Paper>
+  );
+}
+
+function BackfillControls({ t }: { t: (key: string, context?: { [key: string]: any }) => string }) {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["market_backfill_status"],
+    queryFn: () => api.market.backfillStatus(),
+    refetchInterval: (query) => (query.state.data?.state === "running" ? 5_000 : false),
+  });
+  const start = useMutation({
+    mutationFn: () => api.market.backfillStart(),
+    onSuccess: (status) => queryClient.setQueryData(["market_backfill_status"], status),
+  });
+  const running = data?.state === "running" || start.isPending;
+  const line =
+    !data || data.state === "idle"
+      ? t("backfill.idle")
+      : data.state === "running"
+        ? t("backfill.running", { done: data.items_done, total: data.items_total, days: data.days_inserted })
+        : data.state === "done"
+          ? t("backfill.done", { at: when(data.finished_at), items: data.items_done, days: data.days_inserted, missing: data.items_missing, failed: data.items_failed })
+          : t("backfill.failed", { error: data.last_error ?? "" });
+  return (
+    <Group>
+      <Button onClick={() => start.mutate()} disabled={running} loading={running}>
+        {t("backfill.button")}
+      </Button>
+      <Text size="sm" c={data?.state === "failed" ? "red" : "dimmed"}>
+        {line}
+      </Text>
+    </Group>
   );
 }
 
@@ -92,6 +125,12 @@ export function CollectorPanel({ isActive }: { isActive?: boolean }) {
       <Text size="sm" c="dimmed">
         {t("footer", { refresh: when(data.last_item_refresh_at), maintenance: when(data.last_maintenance_at) })}
       </Text>
+      <Paper withBorder p="sm">
+        <Title order={5} mb="xs">
+          {t("backfill.title")}
+        </Title>
+        <BackfillControls t={t} />
+      </Paper>
     </Stack>
   );
 }

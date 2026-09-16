@@ -13,4 +13,10 @@ export class MarketModule {
   warmup() {
     return this.client.sendInvoke<TauriTypes.MarketWarmup>("market_warmup");
   }
+  backfillStart() {
+    return this.client.sendInvoke<TauriTypes.MarketBackfillStatus>("market_backfill_start");
+  }
+  backfillStatus() {
+    return this.client.sendInvoke<TauriTypes.MarketBackfillStatus>("market_backfill_status");
+  }
 }
