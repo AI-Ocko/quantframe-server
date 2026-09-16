@@ -2054,6 +2054,7 @@
           "daily_title": "Probable trades per day",
           "trades": "Trades",
           "book_title": "Latest order book",
+          "book_swept_at": "Snapshot taken {{at}}",
           "trades_title": "Recent probable trades",
           "side": "Side",
           "platinum": "Platinum",

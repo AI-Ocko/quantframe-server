@@ -1,6 +1,7 @@
 import api from "@api/index";
 import { useTranslatePages } from "@hooks/useTranslate.hook";
-import { Group, NumberInput, SegmentedControl, SimpleGrid, Table, Text, Title } from "@mantine/core";
+import { Group, Loader, NumberInput, SegmentedControl, SimpleGrid, Table, Text, Title } from "@mantine/core";
+import { useDebouncedValue } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
 import { num } from "@utils/sortRows";
 import { useState } from "react";
@@ -61,9 +62,10 @@ export function MoversPanel({ isActive, onOpenItem }: { isActive?: boolean; onOp
   const t = (key: string, context?: { [key: string]: any }) => useTranslatePages(`market_data.tabs.movers.${key}`, context);
   const [period, setPeriod] = useState<"day" | "week">("day");
   const [minVolume, setMinVolume] = useState<number>(3);
-  const { data } = useQuery({
-    queryKey: ["market_movers", minVolume],
-    queryFn: () => api.market.movers(minVolume),
+  const [debouncedMinVolume] = useDebouncedValue(minVolume, 300);
+  const { data, isPending } = useQuery({
+    queryKey: ["market_movers", debouncedMinVolume],
+    queryFn: () => api.market.movers(debouncedMinVolume),
     enabled: !!isActive,
   });
   const list = data?.[period] ?? { up: [], down: [] };
@@ -71,6 +73,7 @@ export function MoversPanel({ isActive, onOpenItem }: { isActive?: boolean; onOp
     writeSelection({ slug: mover.slug, sub_type: mover.sub_type });
     onOpenItem();
   };
+  if (isPending) return <Loader size="sm" mt="md" />;
 
   return (
     <>

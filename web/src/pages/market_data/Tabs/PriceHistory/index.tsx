@@ -128,7 +128,7 @@ export function PriceHistoryPanel({ isActive }: { isActive?: boolean }) {
               ) : (
                 <>
                   <Text size="xs" c="dimmed">
-                    {t("last_swept", { at: dayjs(data.book.swept_at).format("YYYY-MM-DD HH:mm:ss") })}
+                    {t("book_swept_at", { at: dayjs(data.book.swept_at).format("YYYY-MM-DD HH:mm:ss") })}
                   </Text>
                   <SimpleGrid cols={2}>
                     {(["sells", "buys"] as const).map((side) => (
