@@ -69,7 +69,7 @@ pub async fn partners(conn: &DatabaseConnection, from: &str, to: &str) -> Result
                 SUM(transaction_type = 'sale') AS sold_count,
                 SUM(CASE WHEN transaction_type = 'sale' THEN price ELSE 0 END) AS sold_plat,
                 SUM(CASE WHEN transaction_type = 'sale' THEN COALESCE(profit, 0) ELSE 0 END) AS profit,
-                datetime(MAX(julianday(created_at))) AS last_trade_at
+                strftime('%Y-%m-%dT%H:%M:%SZ', MAX(julianday(created_at))) AS last_trade_at
          FROM \"transaction\"
          WHERE user_name <> '' AND {RANGE}
          GROUP BY user_name
@@ -216,7 +216,7 @@ mod tests {
         let rows = partners(&conn, "2026-09-01", "2026-09-10").await.unwrap();
         assert_eq!(
             rows,
-            vec![PartnerRow { user_name: "alice".into(), trades: 2, bought_count: 1, bought_plat: 10, sold_count: 1, sold_plat: 50, profit: 20, last_trade_at: "2026-09-03 10:00:00".into() }]
+            vec![PartnerRow { user_name: "alice".into(), trades: 2, bought_count: 1, bought_plat: 10, sold_count: 1, sold_plat: 50, profit: 20, last_trade_at: "2026-09-03T10:00:00Z".into() }]
         );
     }
 
