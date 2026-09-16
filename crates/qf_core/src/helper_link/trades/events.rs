@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use service::sea_orm::{ConnectionTrait, DatabaseConnection, QueryResult, Value};
-use utils::Error;
+use utils::{warning, Error, LoggerOptions};
 
 use super::{RawTrade, Resolution};
 use crate::collector::store::{count, exec};
@@ -148,20 +148,29 @@ pub async fn set_status(
 /// and rows still `applying` received at or before `stuck_before`.
 pub async fn needing_alert(conn: &DatabaseConnection, stuck_before: DateTime<Utc>) -> Result<Vec<HelperEvent>, Error> {
     const C: &str = "HelperEvents:NeedingAlert";
-    conn.query_all(stmt(
-        &format!(
-            "SELECT {COLUMNS} FROM helper_events \
-             WHERE status = 'needs_review' AND alerted_at IS NULL \
-               AND (reason LIKE 'apply_failed:%' OR (reason = 'applying' AND received_at <= ?)) \
-             ORDER BY received_at ASC, rowid ASC"
-        ),
-        vec![ts(stuck_before).into()],
-    ))
-    .await
-    .map_err(|e| db_err(C, e))?
-    .iter()
-    .map(|row| from_row(C, row))
-    .collect()
+    let rows = conn
+        .query_all(stmt(
+            &format!(
+                "SELECT {COLUMNS} FROM helper_events \
+                 WHERE status = 'needs_review' AND alerted_at IS NULL \
+                   AND (reason LIKE 'apply_failed:%' OR (reason = 'applying' AND received_at <= ?)) \
+                 ORDER BY received_at ASC, rowid ASC"
+            ),
+            vec![ts(stuck_before).into()],
+        ))
+        .await
+        .map_err(|e| db_err(C, e))?;
+    // One unreadable row must not switch alerting off for the whole batch (H3/H5).
+    Ok(rows
+        .iter()
+        .filter_map(|row| match from_row(C, row) {
+            Ok(event) => Some(event),
+            Err(e) => {
+                warning(C, format!("skipping unparsable event row: {}", e.message), &LoggerOptions::default());
+                None
+            }
+        })
+        .collect())
 }
 
 /// Returns false when no row has that id.
@@ -321,6 +330,22 @@ pub(crate) mod tests {
         let stale = get(&conn, "stale").await.unwrap().unwrap();
         assert_eq!((stale.reason.as_deref(), stale.alerted_at.as_deref()), (Some("apply_interrupted"), Some("2026-09-16T12:05:00Z")));
         assert!(!mark_alerted(&conn, "missing", at("2026-09-16T12:05:00Z")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn an_unparsable_row_is_skipped_instead_of_failing_the_batch() {
+        let (_dir, conn) = db().await;
+        for id in ["broken", "intact"] {
+            let mut e = event(id, "2026-09-16T12:00:00Z", NEEDS_REVIEW);
+            e.reason = Some("apply_failed: HandleItem".into());
+            insert(&conn, &e).await.unwrap();
+        }
+        crate::collector::store::exec(&conn, "Test", "UPDATE helper_events SET payload = 'not json' WHERE event_id = ?", vec!["broken".into()])
+            .await
+            .unwrap();
+
+        let ids: Vec<String> = needing_alert(&conn, at("2026-09-16T12:02:00Z")).await.unwrap().into_iter().map(|e| e.event_id).collect();
+        assert_eq!(ids, vec!["intact".to_string()], "the corrupt row is skipped; the rest still alert");
     }
 
     #[tokio::test]

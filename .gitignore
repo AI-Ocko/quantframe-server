@@ -4,3 +4,4 @@ web/dist
 secrets/
 .env
 crates/*/logs/
+backups/

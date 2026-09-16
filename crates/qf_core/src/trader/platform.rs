@@ -50,6 +50,8 @@ impl Platform for LivePlatform {
             .is_some_and(|items| !items.is_empty())
     }
 
+    /// Fails open (`false` → `auto_delete_off: true`) when app state is missing; safe only because
+    /// `game_data_loaded` reads the same state and fails closed, so `ready()` is already false.
     fn auto_delete(&self) -> bool {
         states::try_app_state().is_some_and(|app| app.settings.live_scraper.general.auto_delete)
     }

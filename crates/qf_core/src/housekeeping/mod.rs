@@ -167,9 +167,11 @@ mod tests {
         let mut old = event("old", "2026-06-01T00:00:00Z", NEEDS_REVIEW);
         old.reason = Some("unresolved: x".into());
         insert(&conn, &old).await.unwrap();
-        let mut failed = event("failed", "2026-09-16T12:00:00Z", NEEDS_REVIEW);
-        failed.reason = Some("apply_failed: HandleItem".into());
-        insert(&conn, &failed).await.unwrap();
+        for id in ["failed", "intact"] {
+            let mut failed = event(id, "2026-09-16T12:00:00Z", NEEDS_REVIEW);
+            failed.reason = Some("apply_failed: HandleItem".into());
+            insert(&conn, &failed).await.unwrap();
+        }
         crate::collector::store::exec(
             &conn,
             "Test",
@@ -180,9 +182,32 @@ mod tests {
         .unwrap();
 
         let mut gates = Gates::default();
-        let result = tick(&conn, &env, at("2026-09-16T12:01:00Z"), &mut gates, None).await;
+        let report = tick(&conn, &env, at("2026-09-16T12:01:00Z"), &mut gates, None).await.unwrap();
 
-        assert!(result.is_err(), "the sweep error is still reported");
-        assert!(get(&conn, "old").await.unwrap().is_none(), "retention ran despite the failing sweep");
+        assert_eq!(report.alerts, 1, "the intact row still alerts; only the corrupt one is skipped");
+        assert!(get(&conn, "old").await.unwrap().is_none(), "retention ran alongside the tolerant sweep");
+    }
+
+    #[tokio::test]
+    async fn a_failed_backup_alerts_once_per_day() {
+        let (dir, conn) = db().await;
+        let env = crate::helper_link::trades::tests::fake(true);
+        // A file where the backup directory should be: create_dir_all fails, so the backup cannot run.
+        let not_a_dir = dir.path().join("notadir");
+        std::fs::write(&not_a_dir, b"x").unwrap();
+        let day = at("2026-09-16T12:00:00Z").date_naive();
+
+        let mut gates = Gates::default();
+        for minute in ["00", "01", "02"] {
+            let now = at(&format!("2026-09-16T12:{minute}:00Z"));
+            let report = tick(&conn, &env, now, &mut gates, Some(&not_a_dir)).await.unwrap();
+            assert_eq!(report.backup, None, "a failed backup writes nothing");
+            assert_eq!(gates.backup_failed_on, Some(day), "the gate stays set, so ticks 2 and 3 never call run() again");
+        }
+
+        let next_day = at("2026-09-17T00:01:00Z");
+        let report = tick(&conn, &env, next_day, &mut gates, Some(&not_a_dir)).await.unwrap();
+        assert_eq!(report.backup, None);
+        assert_eq!(gates.backup_failed_on, Some(next_day.date_naive()), "the next UTC day tries again");
     }
 }

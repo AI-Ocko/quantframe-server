@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 
 use chrono::{Datelike, NaiveDate, Weekday};
 use service::sea_orm::{ConnectionTrait, Database, DatabaseConnection};
-use utils::{get_location, info, Error, LoggerOptions};
+use utils::{get_location, info, warning, Error, LoggerOptions};
 
 use crate::collector::stmt;
 
 const PREFIX: &str = "quantframe-";
 const SUFFIX: &str = ".sqlite";
+const TMP: &str = ".tmp";
 pub const KEEP_DAILY: usize = 7;
 pub const KEEP_WEEKLY: usize = 4;
 
@@ -44,11 +45,16 @@ pub fn to_delete(dates: &[NaiveDate]) -> Vec<NaiveDate> {
         .collect()
 }
 
-/// `VACUUM INTO` a fresh file. SQLite refuses to overwrite, so the caller checks first.
+/// `VACUUM INTO` a fresh `.tmp` file beside the final name, so an unverified copy never wears it.
+/// SQLite refuses to overwrite, so a stale temp left by a crashed run is deleted first.
 pub async fn write(conn: &DatabaseConnection, dir: &Path, date: NaiveDate) -> Result<PathBuf, Error> {
     std::fs::create_dir_all(dir)
         .map_err(|e| Error::new("Housekeeping:Backup", format!("cannot create {}: {e}", dir.display()), get_location!()))?;
-    let path = dir.join(file_name(date));
+    let path = dir.join(format!("{}{TMP}", file_name(date)));
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|e| Error::new("Housekeeping:Backup", format!("cannot remove stale {}: {e}", path.display()), get_location!()))?;
+    }
     let target = path.to_string_lossy();
     if target.contains('\'') {
         return Err(Error::new("Housekeeping:Backup", format!("backup path must not contain a quote: {target}"), get_location!()));
@@ -97,19 +103,35 @@ pub fn prune(dir: &Path) -> Result<Vec<PathBuf>, Error> {
     Ok(removed)
 }
 
-/// The daily job: skip if today's file exists; else write, verify (deleting a bad copy), prune.
-pub async fn run(conn: &DatabaseConnection, dir: &Path, today: NaiveDate) -> Result<Option<PathBuf>, Error> {
-    if dir.join(file_name(today)).exists() {
-        return Ok(None);
-    }
-    let path = write(conn, dir, today).await?;
-    if let Err(e) = verify(&path).await {
-        let _ = std::fs::remove_file(&path);
+/// Verifies a fresh copy and only then gives it the final name: a bad copy is removed, never renamed,
+/// so a dated backup file is always one that passed `integrity_check`.
+async fn promote(temp: &Path, final_path: &Path) -> Result<(), Error> {
+    if let Err(e) = verify(temp).await {
+        if let Err(rm) = std::fs::remove_file(temp) {
+            warning("Housekeeping:Backup", format!("cannot remove bad copy {}: {rm}", temp.display()), &LoggerOptions::default());
+        }
         return Err(e);
     }
+    std::fs::rename(temp, final_path).map_err(|e| {
+        Error::new("Housekeeping:Backup", format!("cannot rename {} to {}: {e}", temp.display(), final_path.display()), get_location!())
+    })
+}
+
+/// The daily job: skip if today's file exists; else write a temp copy, verify and rename it, prune.
+pub async fn run(conn: &DatabaseConnection, dir: &Path, today: NaiveDate) -> Result<Option<PathBuf>, Error> {
+    let final_path = dir.join(file_name(today));
+    if final_path.exists() {
+        return Ok(None);
+    }
+    let temp = write(conn, dir, today).await?;
+    promote(&temp, &final_path).await?;
     let removed = prune(dir)?;
-    info("Housekeeping:Backup", format!("Wrote {} and pruned {} old backup(s)", path.display(), removed.len()), &LoggerOptions::default());
-    Ok(Some(path))
+    info(
+        "Housekeeping:Backup",
+        format!("Wrote {} and pruned {} old backup(s)", final_path.display(), removed.len()),
+        &LoggerOptions::default(),
+    );
+    Ok(Some(final_path))
 }
 
 #[cfg(test)]
@@ -173,6 +195,34 @@ mod tests {
         let dated = names.iter().filter(|n| parse_date(n).is_some()).count();
         assert_eq!(dated, 11, "7 dailies + 4 Sundays");
         assert!(names.contains(&"unrelated.txt".to_string()), "only dated backup files are touched");
+    }
+
+    #[tokio::test]
+    async fn a_bad_copy_is_removed_and_not_renamed() {
+        let (dir, conn) = db().await;
+        let backups = dir.path().join("backups");
+        let today = d("2026-09-16");
+        std::fs::create_dir_all(&backups).unwrap();
+        let temp = backups.join("quantframe-2026-09-16.sqlite.tmp");
+        let final_path = backups.join(file_name(today));
+
+        // A copy that fails verification is deleted and never gets the dated name.
+        std::fs::write(&temp, b"not a database").unwrap();
+        assert!(promote(&temp, &final_path).await.is_err());
+        assert!(!temp.exists(), "the bad copy is removed");
+        assert!(!final_path.exists(), "and is never renamed into place");
+
+        // A write that cannot happen (a directory sits on the temp path) leaves no final file either.
+        std::fs::create_dir(&temp).unwrap();
+        assert!(run(&conn, &backups, today).await.is_err());
+        assert!(!final_path.exists(), "a failed run writes no dated backup");
+
+        // A stale temp from a crashed run is replaced, and a good copy is promoted.
+        std::fs::remove_dir(&temp).unwrap();
+        std::fs::write(&temp, b"stale garbage").unwrap();
+        assert_eq!(run(&conn, &backups, today).await.unwrap(), Some(final_path.clone()));
+        assert!(final_path.is_file());
+        assert!(!temp.exists(), "no .tmp is left behind");
     }
 
     #[tokio::test]

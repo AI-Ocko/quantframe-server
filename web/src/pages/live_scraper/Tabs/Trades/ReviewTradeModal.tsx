@@ -2,7 +2,7 @@ import api from "@api/index";
 import { TauriTypes } from "$types";
 import { SelectSubType } from "@components/Forms/SelectSubType";
 import { SelectTradableItem } from "@components/Forms/SelectTradableItem";
-import { useTranslatePages } from "@hooks/useTranslate.hook";
+import { useTranslateCommon, useTranslatePages } from "@hooks/useTranslate.hook";
 import { Alert, Button, Code, Group, Modal, NumberInput, Stack, Table, Text } from "@mantine/core";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -52,6 +52,9 @@ export type ReviewTradeModalProps = {
 export function ReviewTradeModal({ event, onClose, onApplied }: ReviewTradeModalProps) {
   const t = (key: string, context?: { [key: string]: any }) => useTranslatePages(`live_scraper.trades.review_modal.${key}`, context);
   const tDirection = (direction: string) => useTranslatePages(`live_scraper.trades.direction.${direction}`);
+  // An interrupted apply may have written some items already: warn before the user re-applies.
+  const interrupted = event.reason === "apply_interrupted";
+  const interruptedMessage = useTranslateCommon("notifications.on_trade_event.alert.message", { reason: event.reason });
   const [rows, setRows] = useState<Row[]>(() => initialRows(event));
   const [nextKey, setNextKey] = useState(1000);
   const { data: items } = useQuery({ queryKey: ["cache_items"], queryFn: () => api.cache.getTradableItems() });
@@ -82,6 +85,7 @@ export function ReviewTradeModal({ event, onClose, onApplied }: ReviewTradeModal
   return (
     <Modal opened onClose={onClose} size="xl" title={t("title", { player: event.payload.player_name })}>
       <Stack>
+        {interrupted && <Alert color="red">{interruptedMessage}</Alert>}
         <Text size="sm">{t("summary", { direction: tDirection(event.resolution?.direction ?? "purchase"), platinum })}</Text>
         <Text size="sm" c="dimmed">
           {t("game_sent")}

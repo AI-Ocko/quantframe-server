@@ -237,6 +237,10 @@ impl TraderController {
         }
         store::save_flags(&self.conn, next.dry_run, next.delete_buy_orders_on_stop).await?;
         inner.options = next.clone();
+        // While idle the badge follows the mode, so flip it here instead of waiting for the next tick.
+        if inner.running.is_none() {
+            inner.state = self.idle_state(next.dry_run, Utc::now());
+        }
         self.platform.broadcast(&self.status_of(&inner, Utc::now()));
         Ok(next)
     }
@@ -383,8 +387,9 @@ mod tests {
         assert_eq!(started.state, LifecycleState::Trading);
         controller.stop(StopReason::UserStop, now()).await.unwrap();
 
-        // Live: the badge goes Offline and start() refuses.
+        // Live: the badge goes Offline at once, without waiting for a tick, and start() refuses.
         controller.set_options(Some(false), None).await.unwrap();
+        assert_eq!(controller.status(now()).await.state, LifecycleState::Offline, "set_options flips the badge itself");
         assert_eq!(controller.tick(now()).await.unwrap(), None);
         assert_eq!(controller.status(now()).await.state, LifecycleState::Offline);
         let err = controller.start(now()).await.unwrap_err();
