@@ -2034,7 +2034,7 @@
           "backfill": {
             "title": "Historical data",
             "button": "Import 90-day history from warframe.market",
-            "idle": "Not imported yet. This fetches every item's closed-trade history once and fills only days the collector has not produced. About twenty minutes.",
+            "idle": "Not imported yet. This fetches every item's closed-trade history once and fills only days the collector has not produced. Takes twenty to forty minutes.",
             "running": "Importing… {{done}}/{{total}} items, {{days}} days added",
             "done": "Finished at {{at}}: {{items}} items, {{days}} days added, {{missing}} missing, {{failed}} failed",
             "failed": "Failed: {{error}}"

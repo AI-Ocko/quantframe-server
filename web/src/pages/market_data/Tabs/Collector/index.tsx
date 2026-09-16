@@ -31,8 +31,9 @@ function BackfillControls({ t }: { t: (key: string, context?: { [key: string]: a
     onSuccess: (status) => queryClient.setQueryData(["market_backfill_status"], status),
   });
   const running = data?.state === "running" || start.isPending;
-  const line =
-    !data || data.state === "idle"
+  const line = start.isError
+    ? t("backfill.failed", { error: String((start.error as any)?.message ?? start.error) })
+    : !data || data.state === "idle"
       ? t("backfill.idle")
       : data.state === "running"
         ? t("backfill.running", { done: data.items_done, total: data.items_total, days: data.days_inserted })
@@ -44,7 +45,7 @@ function BackfillControls({ t }: { t: (key: string, context?: { [key: string]: a
       <Button onClick={() => start.mutate()} disabled={running} loading={running}>
         {t("backfill.button")}
       </Button>
-      <Text size="sm" c={data?.state === "failed" ? "red" : "dimmed"}>
+      <Text size="sm" c={start.isError || data?.state === "failed" ? "red" : "dimmed"}>
         {line}
       </Text>
     </Group>
