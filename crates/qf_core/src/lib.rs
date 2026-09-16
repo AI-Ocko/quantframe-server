@@ -6,6 +6,7 @@ use std::sync::{Mutex, OnceLock};
 use service::sea_orm::DatabaseConnection;
 use ::utils::Error;
 
+pub mod analytics;
 pub mod app;
 pub mod cache;
 pub mod collector;
