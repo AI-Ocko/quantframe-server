@@ -99,7 +99,7 @@ export function LogPanel({ isActive }: { isActive?: boolean }) {
         >
           {visible.length === 0 ? (
             <Text size="sm" c="dimmed">
-              {t("empty")}
+              {lines.length === 0 ? t("empty") : t("no_match")}
             </Text>
           ) : (
             visible.map((l, index) => (

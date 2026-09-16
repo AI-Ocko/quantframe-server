@@ -2249,7 +2249,8 @@
         "levels": "Levels",
         "clear": "Clear",
         "jump": "Jump to latest",
-        "empty": "No log lines yet."
+        "empty": "No log lines yet.",
+        "no_match": "No lines match the selected levels."
       },
       "trader": {
         "states": { "offline": "Offline", "ready": "Ready", "trading": "Trading", "stopping": "Stopping" },
