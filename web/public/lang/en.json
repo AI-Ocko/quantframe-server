@@ -2245,7 +2245,8 @@
           "ws_connected": "warframe.market websocket connected",
           "game_data_loaded": "Item list loaded",
           "helper_connected": "qf-helper connected (heartbeat in the last 30 s)",
-          "warframe_running": "Warframe running on the gaming PC"
+          "warframe_running": "Warframe running on the gaming PC",
+          "auto_delete_off": "auto_delete is off (on, it deletes every non-blacklisted order on a live start)"
         },
         "options": {
           "dry_run": "Dry-run",

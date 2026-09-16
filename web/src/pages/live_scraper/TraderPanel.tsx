@@ -31,12 +31,14 @@ export function TraderPanel() {
   if (!status) return null;
 
   const active = status.state === "trading" || status.state === "stopping";
-  const checks: Array<[string, boolean]> = [
-    ["token_valid", status.checklist.token_valid],
-    ["ws_connected", status.checklist.ws_connected],
-    ["game_data_loaded", status.checklist.game_data_loaded],
-    ["helper_connected", status.checklist.helper_connected],
-    ["warframe_running", status.checklist.warframe_running],
+  // [key, ok, blocking]: auto_delete only blocks a live start (spec §19 H1).
+  const checks: Array<[string, boolean, boolean]> = [
+    ["token_valid", status.checklist.token_valid, true],
+    ["ws_connected", status.checklist.ws_connected, true],
+    ["game_data_loaded", status.checklist.game_data_loaded, true],
+    ["helper_connected", status.checklist.helper_connected, true],
+    ["warframe_running", status.checklist.warframe_running, true],
+    ["auto_delete_off", status.checklist.auto_delete_off, !status.options.dry_run],
   ];
   const failure = start.error ?? stop.error ?? options.error;
 
@@ -68,11 +70,11 @@ export function TraderPanel() {
           )}
         </Group>
         <List spacing={4} size="sm">
-          {checks.map(([key, ok]) => (
+          {checks.map(([key, ok, blocking]) => (
             <List.Item
               key={key}
               icon={
-                <ThemeIcon color={ok ? "green" : "red"} size={16} radius="xl">
+                <ThemeIcon color={ok ? "green" : blocking ? "red" : "gray"} size={16} radius="xl">
                   {ok ? "✓" : "✕"}
                 </ThemeIcon>
               }
