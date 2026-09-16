@@ -22,7 +22,6 @@ export function OverviewPanel({ isActive, onOpenItem }: { isActive?: boolean; on
     queryKey: ["market_overview"],
     queryFn: () => api.market.overview(),
     enabled: !!isActive,
-    refetchInterval: 60_000,
   });
   const rows = useMemo(() => {
     const filtered = (data ?? []).filter(

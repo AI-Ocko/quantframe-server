@@ -1,6 +1,6 @@
 import api from "@api/index";
 import { useTranslatePages } from "@hooks/useTranslate.hook";
-import { Box, Paper, SimpleGrid, Stack, Text, useMantineTheme } from "@mantine/core";
+import { Box, Loader, Paper, SimpleGrid, Stack, Text, useMantineTheme } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { Bar } from "react-chartjs-2";
 import { TauriTypes } from "$types";
@@ -24,7 +24,8 @@ function Histogram({ title, label, buckets, color }: { title: string; label: str
 export function WarmupPanel({ isActive }: { isActive?: boolean }) {
   const t = (key: string, context?: { [key: string]: any }) => useTranslatePages(`market_data.tabs.warmup.${key}`, context);
   const theme = useMantineTheme();
-  const { data } = useQuery({ queryKey: ["market_warmup"], queryFn: () => api.market.warmup(), enabled: !!isActive, refetchInterval: 60_000 });
+  const { data, isPending } = useQuery({ queryKey: ["market_warmup"], queryFn: () => api.market.warmup(), enabled: !!isActive });
+  if (isPending) return <Loader size="sm" mt="md" />;
   if (!data) return null;
   return (
     <Stack mt="md">

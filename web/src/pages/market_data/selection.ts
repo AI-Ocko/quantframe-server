@@ -5,9 +5,11 @@ export interface PriceHistorySelection {
   sub_type: string;
 }
 
-export function readSelection(): PriceHistorySelection | null {
+/** One-shot hand-off: reading the selection also consumes it, so it cannot clobber a later manual pick. */
+export function takeSelection(): PriceHistorySelection | null {
   try {
     const raw = localStorage.getItem(KEY);
+    localStorage.removeItem(KEY);
     return raw ? (JSON.parse(raw) as PriceHistorySelection) : null;
   } catch {
     return null;

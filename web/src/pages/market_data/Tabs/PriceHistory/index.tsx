@@ -6,7 +6,7 @@ import dayjs from "dayjs";
 import { useEffect, useState } from "react";
 import { Bar, Line } from "react-chartjs-2";
 import classes from "../../MarketData.module.css";
-import { readSelection } from "../../selection";
+import { takeSelection } from "../../selection";
 
 const num = (value?: number | null, digits = 1) => (value == null ? "—" : value.toFixed(digits));
 
@@ -18,8 +18,8 @@ export function PriceHistoryPanel({ isActive }: { isActive?: boolean }) {
   const [days, setDays] = useState<string>("7");
   useEffect(() => {
     if (!isActive) return;
-    const selection = readSelection();
-    if (selection && selection.slug !== wfmUrl) {
+    const selection = takeSelection();
+    if (selection) {
       setWfmUrl(selection.slug);
       setSubType(selection.sub_type || undefined);
     }
