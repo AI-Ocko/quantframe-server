@@ -2285,7 +2285,23 @@
           "price": "Price",
           "quantity": "Qty",
           "forced_by": "Forced by",
-          "reason": "Reason"
+          "reason": "Reason",
+          "summary": {
+            "title": "Summary",
+            "days": "Last {{days}} days",
+            "since": "Since {{since}}",
+            "by_action": "By action",
+            "by_item": "Busiest items",
+            "action": "Action",
+            "side": "Side",
+            "forced_by": "Forced by",
+            "count": "Count",
+            "item": "Item",
+            "sub_type": "Rank / variant",
+            "min_price": "Min price",
+            "max_price": "Max price",
+            "empty": "No simulated writes in this window."
+          }
         }
       },
       "helper_devices": {

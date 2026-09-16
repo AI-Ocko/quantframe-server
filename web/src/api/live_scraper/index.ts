@@ -19,6 +19,9 @@ export class LiveScraperModule {
   dryRunLog(page: number, limit: number) {
     return this.client.sendInvoke<TauriTypes.DryRunPage>("trader_dry_run_log", { page, limit });
   }
+  dryRunSummary(days: number) {
+    return this.client.sendInvoke<TauriTypes.DryRunSummary>("trader_dry_run_summary", { days });
+  }
 
   async toggle(): Promise<TauriTypes.TraderStatus> {
     const status = await this.status();

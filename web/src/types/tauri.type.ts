@@ -1135,6 +1135,25 @@ export namespace TauriTypes {
     limit: number;
     results: DryRunEntry[];
   }
+  export interface DryRunSummaryByAction {
+    action: "create" | "update" | "delete";
+    side: "buy" | "sell";
+    forced_by: "global" | "not_warm";
+    count: number;
+  }
+  export interface DryRunSummaryByItem {
+    item_id: string;
+    sub_type: string;
+    action: "create" | "update" | "delete";
+    count: number;
+    min_price?: number | null;
+    max_price?: number | null;
+  }
+  export interface DryRunSummary {
+    since: string;
+    by_action: DryRunSummaryByAction[];
+    by_item: DryRunSummaryByItem[];
+  }
   export interface HelperRawItem {
     name: string;
     quantity: number;
