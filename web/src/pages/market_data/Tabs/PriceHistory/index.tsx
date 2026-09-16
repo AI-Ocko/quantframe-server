@@ -1,14 +1,13 @@
 import api from "@api/index";
 import { SelectTradableItem } from "@components/Forms/SelectTradableItem";
 import { useTranslatePages } from "@hooks/useTranslate.hook";
-import { Alert, Badge, Box, Group, Paper, SegmentedControl, Select, SimpleGrid, Stack, Text, useMantineTheme } from "@mantine/core";
+import { Alert, Badge, Box, Group, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, useMantineTheme } from "@mantine/core";
+import { num } from "@utils/sortRows";
 import dayjs from "dayjs";
 import { useEffect, useState } from "react";
 import { Bar, Line } from "react-chartjs-2";
 import classes from "../../MarketData.module.css";
 import { takeSelection } from "../../selection";
-
-const num = (value?: number | null, digits = 1) => (value == null ? "—" : value.toFixed(digits));
 
 export function PriceHistoryPanel({ isActive }: { isActive?: boolean }) {
   const t = (key: string, context?: { [key: string]: any }) => useTranslatePages(`market_data.tabs.price_history.${key}`, context);
@@ -119,6 +118,63 @@ export function PriceHistoryPanel({ isActive }: { isActive?: boolean }) {
               />
             </Box>
           </Paper>
+          <SimpleGrid cols={{ base: 1, md: 2 }}>
+            <Paper withBorder p="sm">
+              <Text fw={600} mb="xs">
+                {t("book_title")}
+              </Text>
+              {!data.book ? (
+                <Text c="dimmed">{t("no_book")}</Text>
+              ) : (
+                <>
+                  <Text size="xs" c="dimmed">
+                    {t("last_swept", { at: dayjs(data.book.swept_at).format("YYYY-MM-DD HH:mm:ss") })}
+                  </Text>
+                  <SimpleGrid cols={2}>
+                    {(["sells", "buys"] as const).map((side) => (
+                      <div key={side}>
+                        <Text fw={500}>{t(side)}</Text>
+                        {(side === "sells" ? data.book!.top_sells : data.book!.top_buys).map(([platinum, quantity], i) => (
+                          <Text key={i} size="sm">
+                            {platinum} p × {quantity}
+                          </Text>
+                        ))}
+                      </div>
+                    ))}
+                  </SimpleGrid>
+                </>
+              )}
+            </Paper>
+            <Paper withBorder p="sm">
+              <Text fw={600} mb="xs">
+                {t("trades_title")}
+              </Text>
+              {data.trades.length === 0 ? (
+                <Text c="dimmed">{t("no_trades")}</Text>
+              ) : (
+                <Table striped withTableBorder>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>{t("vanished_at")}</Table.Th>
+                      <Table.Th>{t("side")}</Table.Th>
+                      <Table.Th>{t("platinum")}</Table.Th>
+                      <Table.Th>{t("quantity")}</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {data.trades.map((trade, i) => (
+                      <Table.Tr key={i}>
+                        <Table.Td>{dayjs(trade.vanished_at).format("MM-DD HH:mm")}</Table.Td>
+                        <Table.Td>{trade.side}</Table.Td>
+                        <Table.Td>{trade.platinum}</Table.Td>
+                        <Table.Td>{trade.quantity}</Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              )}
+            </Paper>
+          </SimpleGrid>
         </>
       )}
     </Stack>
