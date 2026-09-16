@@ -148,46 +148,27 @@ impl ItemEntry {
         serde_json::to_value(self).unwrap_or_default()
     }
 
-    pub async fn get_stock_item(&self, conn: &DatabaseConnection) -> Result<StockItemModel, Error> {
+    /// `Ok(None)` when the row no longer exists: a trade or the "sold" button removed it mid-cycle (amendment H2).
+    pub async fn get_stock_item(&self, conn: &DatabaseConnection) -> Result<Option<StockItemModel>, Error> {
         let stock_id = self
             .stock_id
             .ok_or_else(|| Error::new("ItemEntry:GetStockItem", "Stock ID is None", get_location!()))?;
-        let item = StockItemQuery::find_by_id(conn, stock_id)
-            .await
-            .map_err(|e| e.with_location(get_location!()))?;
-        item.ok_or_else(|| {
-            Error::new("ItemEntry:GetStockItem", format!("Stock item not found for ID: {}", stock_id), get_location!())
-                .set_log_level(utils::LogLevel::Warning)
-        })
+        StockItemQuery::find_by_id(conn, stock_id).await.map_err(|e| e.with_location(get_location!()))
     }
 
-    pub async fn get_wish_list_item(&self, conn: &DatabaseConnection) -> Result<WishListModel, Error> {
+    pub async fn get_wish_list_item(&self, conn: &DatabaseConnection) -> Result<Option<WishListModel>, Error> {
         let wish_list_id = self
             .wish_list_id
             .ok_or_else(|| Error::new("ItemEntry:GetWishListItem", "Wish List ID is None", get_location!()))?;
-        let item = WishListQuery::get_by_id(conn, wish_list_id)
-            .await
-            .map_err(|e| e.with_location(get_location!()))?;
-        item.ok_or_else(|| {
-            Error::new(
-                "ItemEntry:GetWishListItem",
-                format!("Wish List item not found for ID: {}", wish_list_id),
-                get_location!(),
-            )
-            .set_log_level(utils::LogLevel::Warning)
-        })
+        WishListQuery::get_by_id(conn, wish_list_id).await.map_err(|e| e.with_location(get_location!()))
     }
 
-    pub async fn get_stock_item_or_error(&self, conn: &DatabaseConnection) -> Result<StockItemModel, Error> {
-        self.get_stock_item(conn)
-            .await
-            .map_err(|e| e.with_location(get_location!()).with_context(self.to_json()))
+    pub async fn get_stock_item_or_error(&self, conn: &DatabaseConnection) -> Result<Option<StockItemModel>, Error> {
+        self.get_stock_item(conn).await.map_err(|e| e.with_location(get_location!()).with_context(self.to_json()))
     }
 
-    pub async fn get_wishlist_item_or_error(&self, conn: &DatabaseConnection) -> Result<WishListModel, Error> {
-        self.get_wish_list_item(conn)
-            .await
-            .map_err(|e| e.with_location(get_location!()).with_context(self.to_json()))
+    pub async fn get_wishlist_item_or_error(&self, conn: &DatabaseConnection) -> Result<Option<WishListModel>, Error> {
+        self.get_wish_list_item(conn).await.map_err(|e| e.with_location(get_location!()).with_context(self.to_json()))
     }
 
     pub async fn finalize_stock_item(
@@ -284,5 +265,24 @@ impl From<&WishListModel> for ItemEntry {
             "buy",
             Properties::default(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use utils::Properties;
+
+    fn entry(stock_id: Option<i64>, wish_list_id: Option<i64>) -> ItemEntry {
+        ItemEntry::new(stock_id, wish_list_id, "item1_slug", "item1", None, 0, 1, 1, vec!["Sell".into()], "closed", Properties::default())
+    }
+
+    #[tokio::test]
+    async fn a_missing_row_is_none_and_a_missing_id_is_an_error() {
+        let (_dir, conn) = crate::trader::store::tests::db().await;
+        assert!(entry(Some(999), None).get_stock_item(&conn).await.unwrap().is_none());
+        assert!(entry(None, Some(999)).get_wish_list_item(&conn).await.unwrap().is_none());
+        assert_eq!(entry(None, None).get_stock_item(&conn).await.unwrap_err().component, "ItemEntry:GetStockItem");
+        assert_eq!(entry(None, None).get_wish_list_item(&conn).await.unwrap_err().component, "ItemEntry:GetWishListItem");
     }
 }

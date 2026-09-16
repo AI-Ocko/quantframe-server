@@ -236,7 +236,10 @@ pub async fn progress_buying(
     }
 
     if !is_disabled(max_stock_quantity) && entry.stock_id.is_some() {
-        let stock_item = entry.get_stock_item_or_error(conn).await?;
+        let Some(stock_item) = entry.get_stock_item_or_error(conn).await? else {
+            log(&format!("Item {} stock row {:?} is gone (sold or removed mid-cycle). Skipping.", item_info.name, entry.stock_id));
+            return Ok(());
+        };
         if stock_item.owned >= max_stock_quantity {
             log(&format!(
                 "Item {} already has {} units in stock (max: {}). Deleting its WTB order.",
@@ -362,7 +365,10 @@ pub async fn progress_selling(
     }
     let per_trade = get_per_trade(item_info);
     let closed_avg = price.moving_avg.unwrap_or(0.0) as i64;
-    let mut stock_item = entry.get_stock_item_or_error(conn).await?;
+    let Some(mut stock_item) = entry.get_stock_item_or_error(conn).await? else {
+        log(&format!("Item {} stock row {:?} is gone (sold or removed mid-cycle). Skipping.", item_info.name, entry.stock_id));
+        return Ok(());
+    };
     let bought_price = stock_item.bought;
     let market_info = entry.sell_market_info.clone();
     let (_, current_order_price, mut properties, mut trade_operations) =
@@ -516,7 +522,10 @@ pub async fn progress_wish_list(
     }
     let market = entry.buy_market_info.clone();
     let per_trade = get_per_trade(item_info);
-    let mut wishlist_item = entry.get_wishlist_item_or_error(conn).await?;
+    let Some(mut wishlist_item) = entry.get_wishlist_item_or_error(conn).await? else {
+        log(&format!("Item {} wish-list row {:?} is gone (bought or removed mid-cycle). Skipping.", item_info.name, entry.wish_list_id));
+        return Ok(());
+    };
     let (_, _, mut properties, mut trade_operations) = get_order_info(entry, OrderType::Buy, &ctx.orders, route);
     let min_price = wishlist_item.properties.get_property_value("min_price", 0i64);
     let max_price = wishlist_item.properties.get_property_value("max_price", 0i64);
@@ -774,6 +783,26 @@ mod tests {
         progress_selling(&ctx, &item_info(), &mut e, &price(25.0, true), &live, route).await.unwrap();
         let last = ctx.orders.dry_log().last().unwrap().clone();
         assert_eq!((last.action.as_str(), last.price), ("update", Some(20)));
+    }
+
+    #[tokio::test]
+    async fn a_stock_row_deleted_mid_cycle_is_skipped_and_the_rest_still_runs() {
+        let (_dir, ctx) = ctx_with(true, |_| {}).await;
+        let route = route_for(true, true);
+        let gone_id = stock(&ctx, 10, 1).await;
+        let kept_id = stock(&ctx, 10, 1).await;
+        StockItemMutation::delete_by_id(&ctx.conn, gone_id).await.unwrap();
+        seed_order(&ctx, OrderType::Sell, 30, route).await;
+        let live = book(&[20, 21], &[5]);
+        let before = ctx.orders.dry_log().len();
+        let mut gone = entry("Sell", Some(gone_id), None);
+        gone.apply_market_info(&live);
+        progress_selling(&ctx, &item_info(), &mut gone, &price(25.0, true), &live, route).await.unwrap();
+        assert_eq!(ctx.orders.dry_log().len(), before, "a missing row writes nothing");
+        let mut kept = entry("Sell", Some(kept_id), None);
+        kept.apply_market_info(&live);
+        progress_selling(&ctx, &item_info(), &mut kept, &price(25.0, true), &live, route).await.unwrap();
+        assert!(ctx.orders.dry_log().len() > before, "the next entry is still processed");
     }
 
     #[tokio::test]
