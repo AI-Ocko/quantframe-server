@@ -1,0 +1,63 @@
+# Phase 5 acceptance — go-live prep accepted (deployed 2026-09-16 10:02 UTC; checks run after)
+
+This record covers the **prep** half of phase 5 only (spec §21 G1 to G4). The flip has **not** happened. It happens on or after 2026-09-22 and is appended to the last section of this file.
+
+- **Server:** `ockohome`, stack at `~/stacks/quantframe-server`, branch `phase-5-go-live` (`6006abd`, merge base with main `0a8b114`). Web UI origin `http://quantframe.cgcorp.internal`.
+- **Local gate (at `6006abd`):**
+  - Tests pass: `utils` 3, `qf_core` 191, `qf-server` 19 (4 unit, 15 integration). One `qf_core` run had `events::tests::emitted_frames_reach_subscribers` fail; it passes 3/3 alone and 191/191 on rerun. Pre-existing flake, phase 5 did not touch `events.rs`. Follow-up 1.
+  - `79 server commands, 79 used by web, 0 missing` (78 in 4d; `trader_dry_run_summary` is the new one).
+  - `pnpm build` (tsc and vite) is clean, built in 659 ms. Only pre-existing `unused import` warnings; nothing new.
+- **Deploy:**
+  - The agent's `rsync` was **denied twice by the Claude Code auto-mode classifier** ("Production Deploy", no prompt was shown). The user ran the `rsync` and `docker compose up -d --build` manually instead.
+  - The dry run beforehand listed 3 deletions: the stale in-tree runtime logs `crates/qf_core/logs/2026-09-15/trader_item.log`, `crates/qf_core/logs/2026-09-15/log.log` and the directory itself. All three happened.
+  - The agent verified afterwards: a re-run of the dry run had nothing to transfer and 0 deletions, so the host tree is byte-identical to `6006abd`. `backups/` (1777), `secrets/` (0700) and `.env` (md5 `84b5aac6560f8a761926f3deccc71f83`) are unchanged.
+  - **Healthy in 5.2 s:** `StartedAt` 2026-09-16T10:02:15.278Z, first health check passed 10:02:20.449Z.
+  - Boot log: `[Db:Connect] Database ready` (10:02:16.218Z), `Loaded 3840 tradable items` (10:02:16.864Z), `[Collector] Started: 3840 items, 24 hot` (10:02:18.682Z), `[Housekeeping] Started: tick 60 s, backups in /backups` (10:02:18.690Z), `[Startup] Core started` (10:02:18.746Z), `listening on 0.0.0.0:8080` (10:02:18.747Z). No panic, no `CRITICAL`, no `Trader started` at boot. The one line matching `Error` is `[Emit:SendEvent:App:Error] Event: message (0 receivers)` at 10:02:18.350Z, which is `clear_error!` at startup, the same line documented in `docs/PHASE-4D-ACCEPTANCE.md`. Not a failure.
+- The trader was in dry-run for the whole acceptance window. Nothing was started live and no real order was touched.
+
+| # | Check (spec §21 G7, "now") | Result | Notes |
+|---|---|---|---|
+| 1 | A dry-run Start logs simulated deletes instead of real ones | Pass | The Start logged `Simulated delete of order … (global) N/50` lines. No `Deleted order with ID` line appeared |
+| 2 | With nothing to process, `Checking items...` repeats about every 30 s | Pass | The idle cadence was about 30 s throughout the check |
+| 3 | Stop still takes effect within about a second | Pass | Stop was pressed about 10 s into an idle pause. The badge left Trading at once and `Trader stopped: Stop button` was logged within about 1 s |
+| 4 | The Dry-run log tab shows summary tables for 1, 7 and 30 days | Pass | The Summary block with the 1/7/30 selector renders and its counts match the paged rows below it |
+| 5 | The runbook exists and its pre-flight list matches the UI | Pass | Every label in `docs/GO-LIVE-RUNBOOK.md` matches what the UI shows |
+
+All five checks were confirmed by the user in the browser. The trader stayed in dry-run for all of them; nothing was run live.
+
+## Rulings made during execution
+
+- The `Deleted order for item` line at `helpers.rs:297` prints after a simulated delete too. That is the same defect as G1, so it was fixed in the same task with the same DryRun/Live wording split. G1 names only the auto-delete loop, but its intent covers every delete line.
+- `scripts/check-rpc-commands.py` counts a web call with no server command as "missing", not the reverse. The plan's expectation of "1 missing" after Task 3 was therefore wrong. A server-only command shows up as the "used by web" count lagging the server count instead. The plan text stands as written; no code changed.
+- The reviewer's Important on the Task 3 test stands. The plan's own filler count of 30 pushed the only NULL-price group past the `LIMIT 25`. The plan's test was wrong, not the implementer; the fix asserts the delete group directly and brings the NULL-price group inside the limit.
+- The runbook deviates from the plan draft wherever the draft named surfaces that do not exist. The tab is "Log", not "Server log". The ingame status set is not logged, because `user_set_status` is silent, so the profile is checked instead. Token expiry has no UI surface and the alert is called "On Sign-in Expiring". G4's intent, watching the Log tab and warframe.market, still holds. Accepted.
+- `events::tests::emitted_frames_reach_subscribers` is a pre-existing flake, not a blocker. It takes the first frame off the shared broadcast channel that the 4d log sink also feeds. It passes 3/3 alone and the full suite passes on rerun, and phase 5 did not touch `events.rs`. Recorded as follow-up 1.
+- The boot line `[Emit:SendEvent:App:Error] Event: message (0 receivers)` is `clear_error!` at startup, already documented in the 4d deploy notes. Pre-existing, not a failure.
+
+## Follow-ups
+
+1. **Flaky `events::tests::emitted_frames_reach_subscribers`.** It takes the first frame off the shared broadcast channel that the log sink also feeds, so a log line can win the race. Filter for `channel == "message"` the way its sibling test does.
+2. **Deferred minors from the task reviews.** The final review triaged all of them as "stays deferred", except the Task 5 one below that this record closes. Task 1: `helpers.rs` `progress_order` Update and Delete wording has no direct test, because that module has no `TradeContext` fixture. Task 2: the stop test clears the flag at 1.5 s, so a 2 s slice would still pass, and should stop early in the first slice, for example at 100 ms; the inline `Duration::from_secs(1)` slice could be a named const `STOP_SLICE`; there is no test for an `Err` immediately after an `Ok(0)` cycle; `item.rs` `check`'s doc comment says "processed" but the function returns the count handed in. Task 3: `by_action`'s `ORDER BY` across differing `side` and `forced_by` values is unexercised by tests; there is no empty-log test for `dry_run_summary`. Task 4: "Last 1 days" needs an i18next plural key; the two grow-equal summary tables may crowd on narrow viewports. Task 5: `en.json`'s `on_token_expiring_title` key renders "On Sign-in Expiring", a stale key name. (Task 5's other minor, that the runbook links a `docs/PHASE-5-ACCEPTANCE.md` that did not exist yet, is closed by this file.)
+3. **`crates/*/logs` rides along on every rsync.** Add `--exclude 'crates/*/logs'` to the deploy command so stale in-tree runtime logs stop showing up in the deletion list.
+4. **The Log tab's `useTranslate` helpers are named like hooks but are plain functions** (final review note).
+5. **Still open from `docs/PHASE-4D-ACCEPTANCE.md`**, carried forward by number. Follow-ups 1 and 2 there are closed: 1 by the user's re-test of the Log tab auto-scroll, 2 by phase 5's G1.
+   - 3. `RequestError.content` is logged unmasked, so it appears in full in the second line of a large error in the Log tab.
+   - 5. Deferred minors from the 4d reviews (nine items, none merge-blocking).
+   - 6. `auto_delete` is still on in the server settings; a live start is refused until it is off. See follow-up 6 below, which is now decided.
+   - 7. Idle cycle cost (phase 3 follow-up 4).
+   - 8. Buy, sell and wish-list decisions have not run on live data yet; re-check once items turn warm, from about 2026-09-22.
+   - 9. Phase 2 time-based checks 3 to 5, 7 and 8 are still open.
+   - 10. Known limitation: presence and trades assume one gaming PC.
+   - 11. Partly closed: a review re-apply after a partial apply can still double-apply the items already written.
+   - 12. Test-fidelity note from 4b: `wrapped_mod_name.log` and `split_end_marker.log` contain no actual split.
+   - 13. Unexercised by a real trade: a purchase matching a wish-list row, and closing or lowering a real WFM order on a trade.
+   - 14. Configure the `On Alert` Discord webhook (Settings, Notifications, On Alert); per-installation.
+   - 15. Backups live on ockohome only, with no off-site copy, and the folder is world-writable (1777).
+   - 16. Deferred minors from the 4c reviews (nine items).
+   - 17. Repo hygiene: add `rustfmt.toml` with `max_width = 150`.
+   - 18. From the same-day layout hotfix: the Live Scraper table header no longer sticks at page size 50 or 100, and the `calc(100vh - var(--offset))` pattern remains on three other pages.
+6. **`auto_delete` decision made.** It is turned **off** before the flip, so the first live start adopts the existing real orders instead of deleting them (spec §21). This decides 4d follow-up 6.
+
+## The flip (to be appended on or after 2026-09-22)
+
+Not done yet. Follow `docs/GO-LIVE-RUNBOOK.md` and record the outcome here.
