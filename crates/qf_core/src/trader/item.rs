@@ -65,7 +65,15 @@ impl ItemTrader {
                 break;
             }
             match ctx.orders.delete(id, &meta).await {
-                Ok(_) => {
+                Ok(Route::DryRun(forced_by)) => {
+                    info(
+                        comp("Delete"),
+                        &format!("Simulated delete of order {} ({}) {}/{}", id, forced_by.as_str(), current_index, total),
+                        &LoggerOptions::default(),
+                    );
+                    self.send_event("deleted", Some(json!({"current": current_index, "total": total, "id": id})));
+                }
+                Ok(Route::Live) => {
                     info(comp("Delete"), &format!("Deleted order with ID: {} {}/{}", id, current_index, total), &LoggerOptions::default());
                     self.send_event("deleted", Some(json!({"current": current_index, "total": total, "id": id})));
                 }

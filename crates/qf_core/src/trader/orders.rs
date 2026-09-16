@@ -267,7 +267,8 @@ impl TradeOrders {
         self.finish_live("Update", result).await
     }
 
-    pub async fn delete(&self, order_id: &str, meta: &WriteMeta) -> Result<(), Error> {
+    /// Deletes an order and reports whether it was a simulated or a real delete.
+    pub async fn delete(&self, order_id: &str, meta: &WriteMeta) -> Result<Route, Error> {
         if self.in_book(order_id) {
             let order = {
                 let mut book = self.book.lock().unwrap();
@@ -275,14 +276,15 @@ impl TradeOrders {
                 book.remove_by_id(order_id);
                 order
             };
+            let forced_by = self.book_forced_by();
             if let Some(order) = order {
-                self.record("delete", &order, None, None, meta, self.book_forced_by()).await;
+                self.record("delete", &order, None, None, meta, forced_by).await;
             }
-            return Ok(());
+            return Ok(Route::DryRun(forced_by));
         }
         let client = self.live_client()?;
         let result = client.order().delete(order_id).await;
-        self.finish_live("Delete", result).await.map(|_| ())
+        self.finish_live("Delete", result).await.map(|_| Route::Live)
     }
 
     pub async fn refresh(&self) {
@@ -354,6 +356,22 @@ mod tests {
         let log = orders.dry_log();
         assert_eq!(log.len(), 2);
         assert!(log.iter().all(|e| e.forced_by == "not_warm" && e.side == "sell"));
+    }
+
+    #[tokio::test]
+    async fn delete_reports_the_route_it_took() {
+        let global = TradeOrders::new(None, None, true);
+        let created = global.create(params("item1", OrderType::Buy, 17), route_for(true, true), &meta("Create")).await.unwrap();
+        assert_eq!(global.delete(&created.id, &meta("AutoDelete")).await.unwrap(), Route::DryRun(ForcedBy::Global));
+        // Under global dry-run an unknown id is still handled in the book (no live call), and reports Global.
+        assert_eq!(global.delete("5f1c2d3e4a5b6c7d8e9f0a1b", &meta("AutoDelete")).await.unwrap(), Route::DryRun(ForcedBy::Global));
+
+        let live_off = TradeOrders::new(None, None, false);
+        let created = live_off.create(params("item2", OrderType::Sell, 40), route_for(false, false), &meta("Create")).await.unwrap();
+        assert_eq!(live_off.delete(&created.id, &meta("Knapsack")).await.unwrap(), Route::DryRun(ForcedBy::NotWarm));
+        // Not in the book and no live client: the live path is taken and fails as before.
+        assert!(live_off.delete("5f1c2d3e4a5b6c7d8e9f0a1b", &meta("Knapsack")).await.is_err());
+        assert_eq!(live_off.consecutive_failures(), 1);
     }
 
     #[tokio::test]
