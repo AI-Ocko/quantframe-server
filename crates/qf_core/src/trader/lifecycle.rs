@@ -24,11 +24,19 @@ pub struct Checklist {
     pub helper_connected: bool,
     /// The latest heartbeat reported Warframe running.
     pub warframe_running: bool,
+    /// `live_scraper.general.auto_delete` is off. Only a live start needs it (amendment H1).
+    pub auto_delete_off: bool,
 }
 
 impl Checklist {
+    /// The five items every start needs. `auto_delete` is judged by `ready_for`.
     pub fn ready(&self) -> bool {
         self.token_valid && self.ws_connected && self.game_data_loaded && self.helper_connected && self.warframe_running
+    }
+
+    /// Ready for a start in the given mode: a live start also needs `auto_delete` off (amendment H1).
+    pub fn ready_for(&self, dry_run: bool) -> bool {
+        self.ready() && (dry_run || self.auto_delete_off)
     }
 }
 
@@ -103,19 +111,33 @@ mod tests {
         }
     }
 
+    fn all() -> Checklist {
+        Checklist { token_valid: true, ws_connected: true, game_data_loaded: true, helper_connected: true, warframe_running: true, auto_delete_off: true }
+    }
+
     #[test]
     fn ready_needs_every_checklist_item() {
-        let all = Checklist { token_valid: true, ws_connected: true, game_data_loaded: true, helper_connected: true, warframe_running: true };
-        assert!(all.ready());
+        assert!(all().ready());
         for broken in [
-            Checklist { token_valid: false, ..all.clone() },
-            Checklist { ws_connected: false, ..all.clone() },
-            Checklist { game_data_loaded: false, ..all.clone() },
-            Checklist { helper_connected: false, ..all.clone() },
-            Checklist { warframe_running: false, ..all.clone() },
+            Checklist { token_valid: false, ..all() },
+            Checklist { ws_connected: false, ..all() },
+            Checklist { game_data_loaded: false, ..all() },
+            Checklist { helper_connected: false, ..all() },
+            Checklist { warframe_running: false, ..all() },
         ] {
             assert!(!broken.ready());
+            assert!(!broken.ready_for(true));
+            assert!(!broken.ready_for(false));
         }
+    }
+
+    #[test]
+    fn auto_delete_only_blocks_a_live_start() {
+        let auto_delete_on = Checklist { auto_delete_off: false, ..all() };
+        assert!(auto_delete_on.ready(), "ready() ignores auto_delete (amendment H1)");
+        assert!(auto_delete_on.ready_for(true), "dry-run start is allowed");
+        assert!(!auto_delete_on.ready_for(false), "live start is refused");
+        assert!(all().ready_for(false));
     }
 
     #[test]

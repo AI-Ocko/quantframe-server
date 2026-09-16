@@ -30,6 +30,8 @@ pub trait Platform: Send + Sync {
     fn session(&self, now: DateTime<Utc>) -> SessionSnapshot;
     fn helper(&self, now: DateTime<Utc>) -> HelperSnapshot;
     fn game_data_loaded(&self) -> bool;
+    /// `live_scraper.general.auto_delete` (amendment H1).
+    fn auto_delete(&self) -> bool;
     fn spawn_engine(&self, dry_run: bool, running: Arc<AtomicBool>) -> JoinHandle<EngineExit>;
     fn set_status(&self, status: &'static str) -> BoxFuture<'_, Result<(), Error>>;
     fn delete_live_buy_orders(&self) -> BoxFuture<'_, Result<usize, Error>>;
@@ -87,6 +89,7 @@ impl TraderController {
             game_data_loaded: self.platform.game_data_loaded(),
             helper_connected: helper.connected,
             warframe_running: helper.warframe_running,
+            auto_delete_off: !self.platform.auto_delete(),
         }
     }
 
@@ -104,10 +107,10 @@ impl TraderController {
         }
     }
 
-    fn idle_state(&self, now: DateTime<Utc>) -> LifecycleState {
+    fn idle_state(&self, dry_run: bool, now: DateTime<Utc>) -> LifecycleState {
         let session = self.platform.session(now);
         let helper = self.platform.helper(now);
-        if self.checklist(&session, &helper).ready() { LifecycleState::Ready } else { LifecycleState::Offline }
+        if self.checklist(&session, &helper).ready_for(dry_run) { LifecycleState::Ready } else { LifecycleState::Offline }
     }
 
     pub async fn status(&self, now: DateTime<Utc>) -> TraderStatus {
@@ -123,10 +126,10 @@ impl TraderController {
         }
         let session = self.platform.session(now);
         let helper = self.platform.helper(now);
-        if !self.checklist(&session, &helper).ready() {
+        let dry_run = inner.options.dry_run;
+        if !self.checklist(&session, &helper).ready_for(dry_run) {
             return Err(Error::new("Trader:Start", "The trader is not ready; see the start checklist", get_location!()));
         }
-        let dry_run = inner.options.dry_run;
         if !dry_run {
             self.platform.set_status("ingame").await?;
         }
@@ -171,7 +174,7 @@ impl TraderController {
         inner.options.last_stop_reason = Some(description.clone());
         inner.options.last_stop_at = Some(ts(now));
         self.platform.notify_stopped(&reason, running.dry_run, now);
-        inner.state = self.idle_state(now);
+        inner.state = self.idle_state(inner.options.dry_run, now);
         info("Trader:Stop", format!("Trader stopped: {}", description), &LoggerOptions::default());
         self.platform.broadcast(&self.status_of(inner, now));
         Ok(Some(reason))
@@ -193,7 +196,7 @@ impl TraderController {
         let helper = self.platform.helper(now);
         let checklist = self.checklist(&session, &helper);
         let Some(running) = inner.running.as_ref() else {
-            let next = if checklist.ready() { LifecycleState::Ready } else { LifecycleState::Offline };
+            let next = if checklist.ready_for(inner.options.dry_run) { LifecycleState::Ready } else { LifecycleState::Offline };
             if next != inner.state {
                 inner.state = next;
                 self.platform.broadcast(&self.status_of(&inner, now));
@@ -268,6 +271,7 @@ mod tests {
         session: StdMutex<SessionSnapshot>,
         helper: StdMutex<HelperSnapshot>,
         loaded: AtomicBool,
+        auto_delete: AtomicBool,
         exit: StdMutex<Option<EngineExit>>,
         statuses: StdMutex<Vec<&'static str>>,
         deletes: AtomicUsize,
@@ -286,6 +290,9 @@ mod tests {
         }
         fn game_data_loaded(&self) -> bool {
             self.loaded.load(Ordering::SeqCst)
+        }
+        fn auto_delete(&self) -> bool {
+            self.auto_delete.load(Ordering::SeqCst)
         }
         fn spawn_engine(&self, _dry_run: bool, running: Arc<AtomicBool>) -> JoinHandle<EngineExit> {
             let exit = self.exit.lock().unwrap().clone();
@@ -362,6 +369,33 @@ mod tests {
         assert_eq!(status.state, LifecycleState::Offline);
         assert!(!status.checklist.helper_connected && !status.checklist.warframe_running);
         assert!(controller.start(now()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_live_start_is_refused_while_auto_delete_is_on_but_a_dry_run_start_is_not() {
+        let (_dir, fake, controller) = ready_controller().await;
+        fake.auto_delete.store(true, Ordering::SeqCst);
+        // Dry-run (the default from ready_controller): the item is informational.
+        assert_eq!(controller.tick(now()).await.unwrap(), None);
+        assert_eq!(controller.status(now()).await.state, LifecycleState::Ready);
+        assert!(!controller.status(now()).await.checklist.auto_delete_off);
+        let started = controller.start(now()).await.unwrap();
+        assert_eq!(started.state, LifecycleState::Trading);
+        controller.stop(StopReason::UserStop, now()).await.unwrap();
+
+        // Live: the badge goes Offline and start() refuses.
+        controller.set_options(Some(false), None).await.unwrap();
+        assert_eq!(controller.tick(now()).await.unwrap(), None);
+        assert_eq!(controller.status(now()).await.state, LifecycleState::Offline);
+        let err = controller.start(now()).await.unwrap_err();
+        assert_eq!(err.component, "Trader:Start");
+
+        // Turning auto_delete off makes the same live start possible.
+        fake.auto_delete.store(false, Ordering::SeqCst);
+        assert_eq!(controller.tick(now()).await.unwrap(), None);
+        assert_eq!(controller.status(now()).await.state, LifecycleState::Ready);
+        assert_eq!(controller.start(now()).await.unwrap().state, LifecycleState::Trading);
+        controller.stop(StopReason::UserStop, now()).await.unwrap();
     }
 
     #[tokio::test]

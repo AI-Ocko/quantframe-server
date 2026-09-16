@@ -50,6 +50,10 @@ impl Platform for LivePlatform {
             .is_some_and(|items| !items.is_empty())
     }
 
+    fn auto_delete(&self) -> bool {
+        states::try_app_state().is_some_and(|app| app.settings.live_scraper.general.auto_delete)
+    }
+
     fn spawn_engine(&self, dry_run: bool, running: Arc<AtomicBool>) -> JoinHandle<EngineExit> {
         let conn = self.conn.clone();
         tokio::spawn(async move {
