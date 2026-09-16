@@ -38,6 +38,32 @@ pub struct DryRunPage {
     pub results: Vec<DryRunEntry>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SummaryByAction {
+    pub action: String,
+    pub side: String,
+    pub forced_by: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SummaryByItem {
+    pub item_id: String,
+    pub sub_type: String,
+    pub action: String,
+    pub count: i64,
+    pub min_price: Option<i64>,
+    pub max_price: Option<i64>,
+}
+
+/// Counts over `dry_run_log` rows at or after `since` (spec §21 G3).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DryRunSummary {
+    pub since: String,
+    pub by_action: Vec<SummaryByAction>,
+    pub by_item: Vec<SummaryByItem>,
+}
+
 pub async fn load_options(conn: &DatabaseConnection) -> Result<TraderOptions, Error> {
     const C: &str = "Trader:LoadOptions";
     let row = conn
@@ -134,6 +160,52 @@ pub async fn dry_run_page(conn: &DatabaseConnection, page: i64, limit: i64) -> R
     Ok(DryRunPage { total, page, limit, results })
 }
 
+/// Two GROUP BYs over rows at or after `since`; `by_item` keeps the 25 busiest (item, sub_type, action) rows.
+pub async fn dry_run_summary(conn: &DatabaseConnection, since: DateTime<Utc>) -> Result<DryRunSummary, Error> {
+    const C: &str = "Trader:DryRunSummary";
+    let since = ts(since);
+    let by_action = conn
+        .query_all(stmt(
+            "SELECT action, side, forced_by, COUNT(*) AS count FROM dry_run_log
+             WHERE at >= ? GROUP BY action, side, forced_by ORDER BY action, side, forced_by",
+            vec![since.clone().into()],
+        ))
+        .await
+        .map_err(|e| db_err(C, e))?
+        .iter()
+        .map(|r| {
+            Ok(SummaryByAction {
+                action: r.try_get("", "action").map_err(|e| db_err(C, e))?,
+                side: r.try_get("", "side").map_err(|e| db_err(C, e))?,
+                forced_by: r.try_get("", "forced_by").map_err(|e| db_err(C, e))?,
+                count: r.try_get("", "count").map_err(|e| db_err(C, e))?,
+            })
+        })
+        .collect::<Result<_, Error>>()?;
+    let by_item = conn
+        .query_all(stmt(
+            "SELECT item_id, sub_type, action, COUNT(*) AS count, MIN(price) AS min_price, MAX(price) AS max_price
+             FROM dry_run_log WHERE at >= ?
+             GROUP BY item_id, sub_type, action ORDER BY count DESC, item_id, sub_type, action LIMIT 25",
+            vec![since.clone().into()],
+        ))
+        .await
+        .map_err(|e| db_err(C, e))?
+        .iter()
+        .map(|r| {
+            Ok(SummaryByItem {
+                item_id: r.try_get("", "item_id").map_err(|e| db_err(C, e))?,
+                sub_type: r.try_get("", "sub_type").map_err(|e| db_err(C, e))?,
+                action: r.try_get("", "action").map_err(|e| db_err(C, e))?,
+                count: r.try_get("", "count").map_err(|e| db_err(C, e))?,
+                min_price: r.try_get("", "min_price").map_err(|e| db_err(C, e))?,
+                max_price: r.try_get("", "max_price").map_err(|e| db_err(C, e))?,
+            })
+        })
+        .collect::<Result<_, Error>>()?;
+    Ok(DryRunSummary { since, by_action, by_item })
+}
+
 pub async fn prune_dry_run(conn: &DatabaseConnection, now: DateTime<Utc>) -> Result<u64, Error> {
     exec(
         conn,
@@ -199,5 +271,42 @@ pub(crate) mod tests {
         let removed = prune_dry_run(&conn, parse_ts("2026-09-16T00:00:00Z").unwrap()).await.unwrap();
         assert_eq!(removed, 1);
         assert_eq!(dry_run_page(&conn, 1, 10).await.unwrap().total, 2);
+    }
+
+    #[tokio::test]
+    async fn dry_run_summary_groups_rows_since_a_cutoff_and_caps_items() {
+        let (_dir, conn) = db().await;
+        // Too old for the cutoff below.
+        insert_dry_run(&conn, &entry("2026-09-01T00:00:00Z", "create")).await.unwrap();
+        // Two creates and one delete for item1 (entry() uses item1/buy/global/price 17).
+        insert_dry_run(&conn, &entry("2026-09-15T00:00:00Z", "create")).await.unwrap();
+        let mut dearer = entry("2026-09-15T00:01:00Z", "create");
+        dearer.price = Some(25);
+        insert_dry_run(&conn, &dearer).await.unwrap();
+        let mut deleted = entry("2026-09-15T00:02:00Z", "delete");
+        deleted.price = None;
+        insert_dry_run(&conn, &deleted).await.unwrap();
+        // 30 more items with one create each, to push item1's create row past the cap only if ties sort badly.
+        for i in 0..30 {
+            let mut e = entry("2026-09-15T01:00:00Z", "create");
+            e.item_id = format!("filler{i:02}");
+            insert_dry_run(&conn, &e).await.unwrap();
+        }
+
+        let summary = dry_run_summary(&conn, parse_ts("2026-09-10T00:00:00Z").unwrap()).await.unwrap();
+        assert_eq!(summary.since, "2026-09-10T00:00:00Z");
+        assert_eq!(
+            summary.by_action,
+            vec![
+                SummaryByAction { action: "create".into(), side: "buy".into(), forced_by: "global".into(), count: 32 },
+                SummaryByAction { action: "delete".into(), side: "buy".into(), forced_by: "global".into(), count: 1 },
+            ]
+        );
+        assert_eq!(summary.by_item.len(), 25, "capped at 25 rows");
+        assert_eq!(
+            summary.by_item[0],
+            SummaryByItem { item_id: "item1".into(), sub_type: "rank=0".into(), action: "create".into(), count: 2, min_price: Some(17), max_price: Some(25) }
+        );
+        assert!(summary.by_item.iter().all(|row| row.count >= 1));
     }
 }

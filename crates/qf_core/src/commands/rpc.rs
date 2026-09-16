@@ -65,6 +65,7 @@ rpc_table! {
     trader_stop => trader::trader_stop {},
     trader_set_options => trader::trader_set_options { dry_run: Option<bool>, delete_buy_orders_on_stop: Option<bool> },
     trader_dry_run_log => trader::trader_dry_run_log { page: i64, limit: i64 },
+    trader_dry_run_summary => trader::trader_dry_run_summary { days: i64 },
     trader_interesting_items => trader::trader_interesting_items { settings: ItemSettings },
     helper_devices => helper_link::helper_devices {},
     helper_device_create => helper_link::helper_device_create { name: String },
@@ -163,10 +164,11 @@ mod tests {
 
     #[tokio::test]
     async fn trader_commands_are_routable_and_validate_args() {
-        for name in ["trader_status", "trader_start", "trader_stop", "trader_set_options", "trader_dry_run_log", "trader_interesting_items"] {
+        for name in ["trader_status", "trader_start", "trader_stop", "trader_set_options", "trader_dry_run_log", "trader_dry_run_summary", "trader_interesting_items"] {
             assert!(COMMANDS.contains(&name), "{name}");
         }
         assert!(dispatch("trader_dry_run_log", json!({"page": 1})).await.unwrap().is_err(), "limit is required");
+        assert!(dispatch("trader_dry_run_summary", json!({})).await.unwrap().is_err(), "days is required");
         assert!(dispatch("trader_set_options", json!({})).await.is_some(), "all options are optional");
     }
 

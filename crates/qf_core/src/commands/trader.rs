@@ -8,7 +8,7 @@ use crate::app::ItemSettings;
 use crate::trader::controller::{TraderController, TraderStatus};
 use crate::trader::lifecycle::StopReason;
 use crate::trader::price_source::{get_interesting_items, StatsPriceSource};
-use crate::trader::store::{self, DryRunPage, TraderOptions};
+use crate::trader::store::{self, DryRunPage, DryRunSummary, TraderOptions};
 use crate::utils::modules::states;
 use crate::DATABASE;
 
@@ -38,6 +38,13 @@ pub async fn trader_set_options(
 pub async fn trader_dry_run_log(page: i64, limit: i64) -> Result<DryRunPage, Error> {
     let conn = DATABASE.get().ok_or_else(|| Error::new("Trader:Rpc", "Database is not ready", get_location!()))?;
     store::dry_run_page(conn, page, limit).await
+}
+
+/// Counts over the dry-run log for the last `days` (clamped to 1..=30, the log's retention).
+pub async fn trader_dry_run_summary(days: i64) -> Result<DryRunSummary, Error> {
+    let conn = DATABASE.get().ok_or_else(|| Error::new("Trader:Rpc", "Database is not ready", get_location!()))?;
+    let since = Utc::now() - chrono::Duration::days(days.clamp(1, 30));
+    store::dry_run_summary(conn, since).await
 }
 
 pub async fn trader_interesting_items(settings: ItemSettings) -> Result<Vec<Value>, Error> {
