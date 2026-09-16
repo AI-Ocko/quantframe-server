@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { DataTable, DataTableSortStatus } from "mantine-datatable";
 import { useMemo, useState } from "react";
 import { TauriTypes } from "$types";
-import { num, sortRows } from "../Items";
+import { num, sortRows } from "@utils/sortRows";
 
 export function StockPanel({ isActive }: { isActive?: boolean }) {
   const t = (key: string, context?: { [key: string]: any }) => useTranslatePages(`trading_analytics.tabs.stock.${key}`, context);

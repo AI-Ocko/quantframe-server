@@ -1059,6 +1059,8 @@ export namespace TauriTypes {
     stats?: MarketItemStats | null;
     hourly: MarketHourlyPoint[];
     daily: MarketDailyPoint[];
+    trades: MarketTradePoint[];
+    book?: MarketBookSnapshot | null;
     last_swept_at?: string | null;
   }
   export type LifecycleState = "offline" | "ready" | "trading" | "stopping";
@@ -1208,6 +1210,66 @@ export namespace TauriTypes {
     expenses: number;
     profit: number;
     cumulative_profit: number;
+  }
+  export interface MarketOverviewRow {
+    item_id: string;
+    name: string;
+    slug: string;
+    sub_type: string;
+    volume: number;
+    avg_price?: number | null;
+    moving_avg?: number | null;
+    median?: number | null;
+    profit?: number | null;
+    min_price?: number | null;
+    max_price?: number | null;
+    history_days: number;
+    warm: boolean;
+    updated_at: string;
+  }
+  export interface MarketMover {
+    item_id: string;
+    name: string;
+    slug: string;
+    sub_type: string;
+    median_now: number;
+    median_then: number;
+    change_pct: number;
+    volume: number;
+  }
+  export interface MarketMoverList {
+    up: MarketMover[];
+    down: MarketMover[];
+  }
+  export interface MarketMovers {
+    day: MarketMoverList;
+    week: MarketMoverList;
+  }
+  export interface MarketProjection {
+    date: string;
+    warm_count: number;
+  }
+  export interface MarketHistogramBucket {
+    bucket: string;
+    count: number;
+  }
+  export interface MarketWarmup {
+    tracked: number;
+    warm: number;
+    projected: MarketProjection[];
+    history_days_histogram: MarketHistogramBucket[];
+    trades_histogram: MarketHistogramBucket[];
+  }
+  export interface MarketTradePoint {
+    vanished_at: string;
+    side: "buy" | "sell";
+    platinum: number;
+    quantity: number;
+  }
+  export interface MarketBookSnapshot {
+    swept_at: string;
+    top_sells: [number, number][];
+    top_buys: [number, number][];
   }
   export interface HelperRawItem {
     name: string;

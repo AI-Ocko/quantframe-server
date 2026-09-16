@@ -3,9 +3,10 @@ import { SelectTradableItem } from "@components/Forms/SelectTradableItem";
 import { useTranslatePages } from "@hooks/useTranslate.hook";
 import { Alert, Badge, Box, Group, Paper, SegmentedControl, Select, SimpleGrid, Stack, Text, useMantineTheme } from "@mantine/core";
 import dayjs from "dayjs";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bar, Line } from "react-chartjs-2";
 import classes from "../../MarketData.module.css";
+import { readSelection } from "../../selection";
 
 const num = (value?: number | null, digits = 1) => (value == null ? "—" : value.toFixed(digits));
 
@@ -15,6 +16,14 @@ export function PriceHistoryPanel({ isActive }: { isActive?: boolean }) {
   const [wfmUrl, setWfmUrl] = useState<string>("");
   const [subType, setSubType] = useState<string | undefined>(undefined);
   const [days, setDays] = useState<string>("7");
+  useEffect(() => {
+    if (!isActive) return;
+    const selection = readSelection();
+    if (selection && selection.slug !== wfmUrl) {
+      setWfmUrl(selection.slug);
+      setSubType(selection.sub_type || undefined);
+    }
+  }, [isActive]);
   const { data, error } = api.collector.itemHistory(wfmUrl || undefined, subType, Number(days));
   if (!isActive) return null;
 

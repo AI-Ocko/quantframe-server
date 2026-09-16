@@ -7,7 +7,7 @@ import dayjs from "dayjs";
 import { DataTable, DataTableSortStatus } from "mantine-datatable";
 import { useMemo, useState } from "react";
 import { TauriTypes } from "$types";
-import { sortRows } from "../Items";
+import { sortRows } from "@utils/sortRows";
 import { useAnalyticsRange } from "../../range";
 
 export function PartnersPanel({ isActive }: { isActive?: boolean }) {

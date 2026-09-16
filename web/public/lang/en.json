@@ -2052,7 +2052,67 @@
           "min_sell": "Min sell",
           "max_buy": "Max buy",
           "daily_title": "Probable trades per day",
-          "trades": "Trades"
+          "trades": "Trades",
+          "book_title": "Latest order book",
+          "trades_title": "Recent probable trades",
+          "side": "Side",
+          "platinum": "Platinum",
+          "quantity": "Qty",
+          "vanished_at": "Traded at",
+          "sells": "Sells",
+          "buys": "Buys",
+          "no_book": "No sweep recorded yet.",
+          "no_trades": "No probable trades yet."
+        },
+        "overview": {
+          "title": "Overview",
+          "search": "Search items",
+          "warm_only": "Warm only",
+          "min_volume": "Min trades / day",
+          "columns": {
+            "item": "Item",
+            "sub_type": "Rank / variant",
+            "volume": "Trades / day",
+            "median": "Median (7 d)",
+            "moving_avg": "Moving avg",
+            "profit": "Spread",
+            "min_price": "Min",
+            "max_price": "Max",
+            "history_days": "History (d)",
+            "warm": "Warm",
+            "updated_at": "Updated"
+          },
+          "rows": "{{shown}} of {{total}} items",
+          "empty": "No items match."
+        },
+        "movers": {
+          "title": "Movers",
+          "period": {
+            "day": "24 h",
+            "week": "7 d"
+          },
+          "min_volume": "Min trades / day",
+          "up": "Rising",
+          "down": "Falling",
+          "columns": {
+            "item": "Item",
+            "sub_type": "Rank / variant",
+            "median_then": "Was",
+            "median_now": "Now",
+            "change_pct": "Change",
+            "volume": "Trades / day"
+          },
+          "empty": "Nothing moved."
+        },
+        "warmup": {
+          "title": "Warm-up",
+          "tracked": "Tracked items",
+          "warm": "Warm now",
+          "projected_title": "Projected warm items by date (trade counts held constant)",
+          "history_title": "Days of history",
+          "trades_title": "Trades in the last 7 days",
+          "warm_count": "Warm items",
+          "items": "Items"
         }
       }
     },

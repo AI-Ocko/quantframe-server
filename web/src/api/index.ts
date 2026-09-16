@@ -12,6 +12,7 @@ import { HandlesModule } from "./handles";
 import { HelperLinkModule } from "./helper_link";
 import { LiveScraperModule } from "./live_scraper";
 import { LogModule } from "./log";
+import { MarketModule } from "./market";
 import { OrderModule } from "./order";
 import { SoundModule } from "./sound";
 import { StockItemModule } from "./stack_item";
@@ -37,6 +38,7 @@ export class TauriClient {
     this.live_scraper = new LiveScraperModule(this);
     this.helper_link = new HelperLinkModule(this);
     this.log = new LogModule(this);
+    this.market = new MarketModule(this);
     this.stock_item = new StockItemModule(this);
     this.wish_list = new WishListModule(this);
     this.debug = new DebugModule(this);
@@ -172,6 +174,7 @@ export class TauriClient {
   collector: CollectorModule;
   auth: AuthModule;
   log: LogModule;
+  market: MarketModule;
   order: OrderModule;
   user: UserModule;
   live_scraper: LiveScraperModule;
