@@ -39,64 +39,65 @@ export function DryRunLogPanel({ isActive }: { isActive?: boolean }) {
           {t("summary.since", { since: summary.since })}
         </Text>
       )}
-      {summary && summary.by_action.length === 0 ? (
-        <Text size="sm" c="dimmed">
-          {t("summary.empty")}
-        </Text>
-      ) : (
-        <Group align="flex-start" grow>
-          <Table striped withTableBorder captionSide="top">
-            <Table.Caption>{t("summary.by_action")}</Table.Caption>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t("summary.action")}</Table.Th>
-                <Table.Th>{t("summary.side")}</Table.Th>
-                <Table.Th>{t("summary.forced_by")}</Table.Th>
-                <Table.Th>{t("summary.count")}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {(summary?.by_action ?? []).map((row) => (
-                <Table.Tr key={`${row.action}-${row.side}-${row.forced_by}`}>
-                  <Table.Td>
-                    <Badge color={actionColor(row.action)}>{row.action}</Badge>
-                  </Table.Td>
-                  <Table.Td>{row.side}</Table.Td>
-                  <Table.Td>{row.forced_by}</Table.Td>
-                  <Table.Td>{row.count}</Table.Td>
+      {summary &&
+        (summary.by_action.length === 0 ? (
+          <Text size="sm" c="dimmed">
+            {t("summary.empty")}
+          </Text>
+        ) : (
+          <Group align="flex-start" grow>
+            <Table striped withTableBorder captionSide="top">
+              <Table.Caption>{t("summary.by_action")}</Table.Caption>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{t("summary.action")}</Table.Th>
+                  <Table.Th>{t("summary.side")}</Table.Th>
+                  <Table.Th>{t("summary.forced_by")}</Table.Th>
+                  <Table.Th>{t("summary.count")}</Table.Th>
                 </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-          <Table striped withTableBorder captionSide="top">
-            <Table.Caption>{t("summary.by_item")}</Table.Caption>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t("summary.item")}</Table.Th>
-                <Table.Th>{t("summary.sub_type")}</Table.Th>
-                <Table.Th>{t("summary.action")}</Table.Th>
-                <Table.Th>{t("summary.count")}</Table.Th>
-                <Table.Th>{t("summary.min_price")}</Table.Th>
-                <Table.Th>{t("summary.max_price")}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {(summary?.by_item ?? []).map((row) => (
-                <Table.Tr key={`${row.item_id}-${row.sub_type}-${row.action}`}>
-                  <Table.Td>{names.get(row.item_id) ?? row.item_id}</Table.Td>
-                  <Table.Td>{row.sub_type || "—"}</Table.Td>
-                  <Table.Td>
-                    <Badge color={actionColor(row.action)}>{row.action}</Badge>
-                  </Table.Td>
-                  <Table.Td>{row.count}</Table.Td>
-                  <Table.Td>{row.min_price ?? "—"}</Table.Td>
-                  <Table.Td>{row.max_price ?? "—"}</Table.Td>
+              </Table.Thead>
+              <Table.Tbody>
+                {(summary?.by_action ?? []).map((row) => (
+                  <Table.Tr key={`${row.action}-${row.side}-${row.forced_by}`}>
+                    <Table.Td>
+                      <Badge color={actionColor(row.action)}>{row.action}</Badge>
+                    </Table.Td>
+                    <Table.Td>{row.side}</Table.Td>
+                    <Table.Td>{row.forced_by}</Table.Td>
+                    <Table.Td>{row.count}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            <Table striped withTableBorder captionSide="top">
+              <Table.Caption>{t("summary.by_item")}</Table.Caption>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{t("summary.item")}</Table.Th>
+                  <Table.Th>{t("summary.sub_type")}</Table.Th>
+                  <Table.Th>{t("summary.action")}</Table.Th>
+                  <Table.Th>{t("summary.count")}</Table.Th>
+                  <Table.Th>{t("summary.min_price")}</Table.Th>
+                  <Table.Th>{t("summary.max_price")}</Table.Th>
                 </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Group>
-      )}
+              </Table.Thead>
+              <Table.Tbody>
+                {(summary?.by_item ?? []).map((row) => (
+                  <Table.Tr key={`${row.item_id}-${row.sub_type}-${row.action}`}>
+                    <Table.Td>{names.get(row.item_id) ?? row.item_id}</Table.Td>
+                    <Table.Td>{row.sub_type || "—"}</Table.Td>
+                    <Table.Td>
+                      <Badge color={actionColor(row.action)}>{row.action}</Badge>
+                    </Table.Td>
+                    <Table.Td>{row.count}</Table.Td>
+                    <Table.Td>{row.min_price ?? "—"}</Table.Td>
+                    <Table.Td>{row.max_price ?? "—"}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Group>
+        ))}
       <Text size="sm" c="dimmed">
         {t("total", { total: data?.total ?? 0 })}
       </Text>
