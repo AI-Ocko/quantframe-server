@@ -88,7 +88,8 @@ impl ItemTrader {
         Ok(())
     }
 
-    pub async fn check(&self, ctx: &TradeContext) -> Result<(), Error> {
+    /// One trader cycle. Returns how many interesting items were processed (0 = idle cycle).
+    pub async fn check(&self, ctx: &TradeContext) -> Result<usize, Error> {
         info(comp("Check"), "Checking items...", &LoggerOptions::default());
         let my_orders = ctx.orders.cache_orders();
         self.delete_unwanted_orders(ctx, &my_orders).await?;
@@ -96,7 +97,7 @@ impl ItemTrader {
         self.process_items(interesting_items, ctx).await
     }
 
-    async fn process_items(&self, mut interesting_items: Vec<ItemEntry>, ctx: &TradeContext) -> Result<(), Error> {
+    async fn process_items(&self, mut interesting_items: Vec<ItemEntry>, ctx: &TradeContext) -> Result<usize, Error> {
         let use_fake = ctx.settings.debugging.live_scraper.fake_orders;
         let mut current_index = 1;
         let existing_buy_order_ids: HashSet<String> =
@@ -204,7 +205,7 @@ impl ItemTrader {
                 }
             }
         }
-        Ok(())
+        Ok(total)
     }
 }
 

@@ -73,7 +73,7 @@ impl Platform for LivePlatform {
                     }
                 }
             };
-            engine::run_loop(running, just_started, orders, check, engine::CYCLE_PAUSE).await
+            engine::run_loop(running, just_started, orders, check, engine::CYCLE_PAUSE, engine::IDLE_PAUSE).await
         })
     }
 
