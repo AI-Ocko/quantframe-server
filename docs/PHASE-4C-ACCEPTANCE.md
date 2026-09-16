@@ -1,4 +1,4 @@
-# Phase 4c acceptance — hardening before go-live (deployed 2026-09-16 04:07 UTC; checks run 04:07–05:55 UTC)
+# Phase 4c acceptance — hardening accepted (deployed 2026-09-16 04:07 UTC; checks run 04:07–06:10 UTC)
 
 - **Server:** `ockohome`, stack at `~/stacks/quantframe-server`, branch `phase-4c-hardening` (`11c1351`). Web UI origin `http://quantframe.cgcorp.internal`.
 - **Gaming PC:** this desktop. `qf-helper` unchanged since phase 4b apart from the queue fsync (Task 6); the running binary is the 4b build, which is fine for these checks (the fsync is not observable at runtime).
@@ -17,24 +17,24 @@
 
 | # | Check | Result | Notes |
 |---|---|---|---|
-| 1 | Start gate, dry-run: `auto_delete` on shows `checklist.auto_delete_off = false`, state stays available | Pass (partial) | `trader_status`: `dry_run=true`, `auto_delete_off=false`. The state read `offline` throughout because Warframe was not running (helper heartbeat says not running), so the informational-in-dry-run half is proven by the unit tests (`auto_delete_only_blocks_a_live_start`, `a_live_start_is_refused_while_auto_delete_is_on_but_a_dry_run_start_is_not`) and the field plumbing live |
+| 1 | Start gate, dry-run: `auto_delete` on shows `checklist.auto_delete_off = false`, state stays available | Pass | Re-run with Warframe running (06:10 UTC): `state=ready`, `dry_run=true`, `auto_delete_off=false`, `warframe_running=true`; switching dry-run off flipped the state to `offline` immediately and `trader_start` was refused (`Trader:Start`); restoring dry-run returned `ready`. The earlier run had read `offline` only because Warframe was off |
 | 2 | Start gate, live: dry-run off → Start refused; `auto_delete` off → Ready; restore | Pass | `trader_set_options {dryRun:false}` → `auto_delete_off=false`; `trader_start` → `Trader:Start "The trader is not ready; see the start checklist"`; `app_update_settings` with `auto_delete=false` → `auto_delete_off=true`; restored `auto_delete=true` (confirmed on `/data/settings.json`) and `dry_run=true`. Nothing was started |
 | 3 | Planted `apply_failed:` row alerts once | Pass | Row `7bcd7311…` inserted with the container stopped; first tick after start: two `OnNotify` events and `Housekeeping alerts 2` (this row plus check 4's first attempt); `alerted_at 2026-09-16T05:46:09Z`; the next sweep logged nothing; row ignored afterwards |
 | 4 | Planted stale `applying` row is relabelled `apply_interrupted` and alerts once | Pass | First attempt used a January date and retention deleted it in the same tick (correct behaviour, useless evidence). Re-planted `579ca3ff…` ten minutes old: first tick `Housekeeping alerts 1`, reason `apply_interrupted`, `alerted_at 2026-09-16T05:49:33Z`, one `OnNotify`; next sweep quiet; ignored → `ignored/reviewed` |
 | 5 | Housekeeping runs with the collector off | Pass | Image run with no volume and `QF_COLLECTOR=off`, a scratch data dir and a 20-character scratch password: `QF_COLLECTOR=off; market data collection is disabled` then `Housekeeping Started` and a first backup in the scratch dir; stopped by `timeout 75` |
 | 6 | Restore rehearsal | Pass | Helper stopped. Backup counts (read-only): helper_events 7, transaction 280, stock_item 16. Live before: 9 / 280 / 16 (the two extra events were the planted rows created after the backup). `docker compose stop`; README busybox command (copy, remove `-wal`/`-shm`, `chown 10001`); healthy in 6 s, `Database ready`, `Housekeeping Started`; live after: 7 / 280 / 16 = backup. Helper restarted, heartbeat accepted |
 | 7 | Trader tolerates rows removed mid-cycle | Covered by tests | No real trade happened during acceptance; watch the first real sale with the trader running: the log must not show `ItemEntry:GetStockItem` |
-| 8 | Web: Notifications tab lists On Alert; Trades tab shows `apply_interrupted`; `alerted_at` not displayed; settings save | Pass (RPC side), browser pending | `on_alert` present in the settings payload; the Trades tab reason for `579ca3ff…` was `apply_interrupted` via the RPC; `alerted_at` is type-only. **User to confirm in the browser:** Settings → Notifications shows On Alert, saving works, the Trades tab renders |
+| 8 | Web: Notifications tab lists On Alert; Trades tab shows `apply_interrupted`; `alerted_at` not displayed; settings save | Pass | `on_alert` present in the settings payload; the Trades tab reason for `579ca3ff…` was `apply_interrupted` via the RPC; `alerted_at` is type-only. Confirmed by the user in the browser ("everything looks good") |
 
 Event table after the checks (post-restore): `applied` 5, `ignored` 2. The three acceptance rows planted after the backup were removed by the restore, as expected.
 
-## Open item found during acceptance
+## Note found during acceptance
 
-**Transactions 5–8 are missing.** The four real trades from the phase 4b acceptance (ids 5–8: `ammo_case` ×3 and `aero_periphery`, 2026-09-16 01:13–01:29 UTC) and their two stock rows (ids 4, 5) are absent from the live database and from today's backup; the imported desktop rows are ids 9–288 (280 rows). The pre-import backup `backups/quantframe.sqlite.pre-import-20260916T014018Z` still contains all four. The import agent verified them unchanged at about 01:45 UTC; the backup at 04:07 UTC no longer had them, and the live count read 280 before the restore rehearsal, so the restore did not cause it. No phase 4c code deletes transactions or stock rows. If the user did not delete them by hand, this is unexplained data loss that predates 4c's deploy; the rows can be re-inserted from the pre-import backup.
+Transactions 5–8 (the four real trades from the phase 4b acceptance) and their two stock rows were absent from the live database and from today's backup while the pre-import backup still held them. The user confirmed they deleted those test trades by hand between the import and the 4c deploy. No data loss; the pre-import backup `backups/quantframe.sqlite.pre-import-20260916T014018Z` keeps them if ever wanted.
 
 ## Follow-ups
 
-1. **Resolve the missing transactions 5–8** (above): confirm whether they were deleted on purpose; if not, restore them from the pre-import backup and find the cause.
+1. ~~Missing transactions 5–8~~ — closed: deleted by the user on purpose (see the note above).
 2. **Import the user's existing desktop trading data** — done 2026-09-16 (280 transactions, 16 stock items; script `scripts/import-desktop-data.py`). Desktop rows 283/284 look like the same Galvanized Shot purchase logged twice (50p and 300p); the user may want to delete one.
 3. **`auto_delete` is still on** in the server settings; a live start is now refused until it is turned off (H1). Decide before go-live whether the first live start should be a clean slate.
 4. **Idle cycle cost** (phase 3 follow-up 4) still stands.
