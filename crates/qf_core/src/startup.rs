@@ -23,9 +23,16 @@ pub struct CoreHandles {
     pub web_password_hash: String,
 }
 
+/// Tee every log line to the browser as a raw `log` frame (spec §20 L2).
+/// Calls `events::emit` directly: `send_event!` logs on emit and would recurse.
+pub fn log_sink(level: &utils::LogLevel, line: &str) {
+    let _ = crate::events::emit("log", serde_json::json!({"level": level.prefix(), "line": line}));
+}
+
 pub async fn start(cfg: CoreConfig) -> Result<CoreHandles, Error> {
     paths::init(Paths::new(&cfg.data_dir, &cfg.resources_dir, cfg.backup_dir.clone())?);
     init_logger();
+    utils::set_sink(log_sink);
     set_base_path(paths::get().logs_dir().to_string_lossy().to_string());
 
     let conn = db::connect(&paths::get().data_dir).await?;

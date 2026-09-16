@@ -73,6 +73,7 @@ rpc_table! {
     helper_trade_apply => helper_link::helper_trade_apply { event_id: String, items: Vec<ReviewItem> },
     helper_trade_ignore => helper_link::helper_trade_ignore { event_id: String },
     log => logs::log { cause: String, component: String, location: String, log_level: String, message: String, context: Option<Value> },
+    log_tail => logs::log_tail { limit: i64 },
     get_stock_item_pagination => stock_item::get_stock_item_pagination { query: StockItemPaginationQueryDto },
     get_stock_item_financial_report => stock_item::get_stock_item_financial_report { query: StockItemPaginationQueryDto },
     get_stock_item_status_counts => stock_item::get_stock_item_status_counts { query: StockItemPaginationQueryDto },
@@ -167,6 +168,15 @@ mod tests {
         }
         assert!(dispatch("trader_dry_run_log", json!({"page": 1})).await.unwrap().is_err(), "limit is required");
         assert!(dispatch("trader_set_options", json!({})).await.is_some(), "all options are optional");
+    }
+
+    #[tokio::test]
+    async fn log_tail_is_routable_and_validates_args() {
+        assert!(COMMANDS.contains(&"log_tail"));
+        let bad = dispatch("log_tail", json!({"limit": "many"})).await.unwrap();
+        assert!(bad.is_err(), "a non-numeric limit is rejected");
+        let ok = dispatch("log_tail", json!({"limit": 5})).await.unwrap().unwrap();
+        assert!(ok.as_array().unwrap().len() <= 5);
     }
 
     #[tokio::test]

@@ -35,4 +35,16 @@ mod tests {
         assert_eq!(frame["channel"], "message");
         assert_eq!(frame["payload"]["event"], "User:Update");
     }
+
+    #[test]
+    fn a_log_frame_carries_level_and_line() {
+        let mut rx = subscribe();
+        crate::startup::log_sink(&utils::LogLevel::Warning, "[2026-09-16 05:49:33] [3.3] [WARNING] [Test] hello");
+        // Every test in this binary shares the broadcast channel, so skip frames from other channels.
+        let frame = std::iter::from_fn(|| rx.try_recv().ok())
+            .find(|frame| frame["channel"] == "log")
+            .expect("one log frame");
+        assert_eq!(frame["payload"]["level"], "WARNING");
+        assert!(frame["payload"]["line"].as_str().unwrap().ends_with("hello"));
+    }
 }
