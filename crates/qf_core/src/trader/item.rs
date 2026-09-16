@@ -236,19 +236,22 @@ pub async fn progress_buying(
     }
 
     if !is_disabled(max_stock_quantity) && entry.stock_id.is_some() {
-        let Some(stock_item) = entry.get_stock_item_or_error(conn).await? else {
-            log(&format!("Item {} stock row {:?} is gone (sold or removed mid-cycle). Skipping.", item_info.name, entry.stock_id));
-            return Ok(());
-        };
-        if stock_item.owned >= max_stock_quantity {
-            log(&format!(
-                "Item {} already has {} units in stock (max: {}). Deleting its WTB order.",
-                item_info.name, stock_item.owned, max_stock_quantity
-            ));
-            delete_order(&component, entry, OrderType::Buy, &ctx.orders, route)
-                .await
-                .map_err(|e| e.with_location(get_location!()).with_context(entry.to_json()))?;
-            return Ok(());
+        match entry.get_stock_item_or_error(conn).await? {
+            Some(stock_item) if stock_item.owned >= max_stock_quantity => {
+                log(&format!(
+                    "Item {} already has {} units in stock (max: {}). Deleting its WTB order.",
+                    item_info.name, stock_item.owned, max_stock_quantity
+                ));
+                delete_order(&component, entry, OrderType::Buy, &ctx.orders, route)
+                    .await
+                    .map_err(|e| e.with_location(get_location!()).with_context(entry.to_json()))?;
+                return Ok(());
+            }
+            Some(_) => {}
+            None => log(&format!(
+                "Item {} stock row {:?} is gone (sold or removed mid-cycle); buy cap not applied.",
+                item_info.name, entry.stock_id
+            )),
         }
     }
 
@@ -754,6 +757,22 @@ mod tests {
         progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route).await.unwrap();
         assert_eq!(ctx.orders.dry_log().last().unwrap().action, "delete");
         assert!(ctx.orders.cache_orders().buy_orders.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_gone_stock_row_skips_only_the_buy_cap() {
+        let (_dir, ctx) = ctx_with(true, |s| s.live_scraper.items.wtb.max_stock_quantity = 3).await;
+        let route = route_for(true, true);
+        let stock_id = stock(&ctx, 10, 5).await;
+        StockItemMutation::delete_by_id(&ctx.conn, stock_id).await.unwrap();
+        let live = book(&[20, 25], &[15, 17]);
+        let mut e = entry("Buy", Some(stock_id), None);
+        e.apply_market_info(&live);
+        let before = ctx.orders.dry_log().len();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route).await.unwrap();
+        let log = ctx.orders.dry_log();
+        assert!(log.len() > before, "buying still proceeded");
+        assert!(matches!(log.last().unwrap().action.as_str(), "create" | "update"));
     }
 
     #[tokio::test]
