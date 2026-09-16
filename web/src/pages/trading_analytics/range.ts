@@ -8,6 +8,7 @@ export function useAnalyticsRange() {
   const [range, setRange] = useLocalStorage<Range>({
     key: "trading_analytics_range",
     defaultValue: [dayjs().subtract(30, "day").format("YYYY-MM-DD"), dayjs().format("YYYY-MM-DD")],
+    getInitialValueInEffect: false,
   });
   const from = range[0] ?? dayjs().subtract(30, "day").format("YYYY-MM-DD");
   const to = dayjs(range[1] ?? dayjs().format("YYYY-MM-DD"))

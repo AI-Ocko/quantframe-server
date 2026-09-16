@@ -9,7 +9,7 @@ import { useMemo, useState } from "react";
 import { TauriTypes } from "$types";
 import { useAnalyticsRange } from "../../range";
 
-const num = (value?: number | null, digits = 1) => (value == null ? "—" : value.toFixed(digits));
+export const num = (value?: number | null, digits = 1) => (value == null ? "—" : value.toFixed(digits));
 
 /** Client-side sort on one column; strings compare with localeCompare, numbers numerically, nulls last. */
 export function sortRows<T>(rows: T[], status: DataTableSortStatus<T>): T[] {
