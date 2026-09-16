@@ -53,11 +53,9 @@ export function TraderPanel() {
             <Badge color={status.options.dry_run ? "yellow" : "red"} variant="outline">
               {status.options.dry_run ? t("dry_run") : t("live")}
             </Badge>
-            {status.running_since && (
-              <Text size="sm" c="dimmed">
-                {t("running_since", { at: status.running_since })}
-              </Text>
-            )}
+            <Text size="sm" c="dimmed" h={22}>
+              {status.running_since ? t("running_since", { at: status.running_since }) : ""}
+            </Text>
           </Group>
           {active ? (
             <Button color="red" loading={stop.isPending || status.state === "stopping"} onClick={() => stop.mutate()}>
@@ -105,11 +103,11 @@ export function TraderPanel() {
             onChange={(e) => options.mutate({ deleteBuyOrdersOnStop: e.currentTarget.checked })}
           />
         </Group>
-        {status.options.last_stop_reason && (
-          <Text size="sm" c="dimmed">
-            {t("last_stop", { reason: status.options.last_stop_reason, at: status.options.last_stop_at ?? "" })}
-          </Text>
-        )}
+        <Text size="sm" c="dimmed" h={22}>
+          {status.options.last_stop_reason
+            ? t("last_stop", { reason: status.options.last_stop_reason, at: status.options.last_stop_at ?? "" })
+            : ""}
+        </Text>
         {failure && <Alert color="red">{String((failure as any)?.message ?? failure)}</Alert>}
       </Stack>
     </Paper>

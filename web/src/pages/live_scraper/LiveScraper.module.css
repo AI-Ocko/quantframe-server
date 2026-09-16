@@ -5,23 +5,3 @@
     margin-top: 50px;
   }
 }
-
-.databaseStockItems,
-.databaseStockRivens,
-.databaseSyndicateItems,
-.databaseStockWishlist {
-  --offset: 400px;
-  height: calc(100vh - var(--offset)) !important;
-
-  &.alert {
-    --offset: 419px;
-  }
-
-  &.running {
-    --offset: 425px;
-  }
-
-  &.alert.running {
-    --offset: 445px;
-  }
-}

@@ -6,7 +6,6 @@ import { SearchField } from "@components/Forms/SearchField";
 import { ActionWithTooltip } from "@components/Shared/ActionWithTooltip";
 import { ColorInfo } from "@components/Shared/ColorInfo";
 import { StatsWithSegments } from "@components/Shared/StatsWithSegments";
-import { useLiveScraperContext } from "@contexts/liveScraper.context";
 import { faDownload, faEdit, faMessage, faTrashCan } from "@fortawesome/free-solid-svg-icons";
 import { useTauriEvent } from "@hooks/useTauriEvent.hook";
 import { useTranslateCommon, useTranslateEnums, useTranslatePages } from "@hooks/useTranslate.hook";
@@ -18,7 +17,6 @@ import { DataTable } from "mantine-datatable";
 import { useEffect, useState } from "react";
 import { ColumnActions } from "../../Columns/ColumnActions";
 import { ColumnMinMaxPrice } from "../../Columns/ColumnMinMaxPrice";
-import classes from "../../LiveScraper.module.css";
 import { useStockModals } from "./modals";
 import { useWishListMutations } from "./mutations";
 import { useWishListQueries } from "./queries";
@@ -28,8 +26,6 @@ interface WishListPanelProps {
 }
 
 export const WishListPanel = ({ isActive }: WishListPanelProps = {}) => {
-  // Contexts
-  const { is_running } = useLiveScraperContext();
   // States For DataGrid
   const [queryData, setQueryData] = useLocalStorage<TauriTypes.WishListControllerGetListParams>({
     key: "wish_list_query_key",
@@ -166,7 +162,6 @@ export const WishListPanel = ({ isActive }: WishListPanelProps = {}) => {
         }
       />
       <DataTable
-        className={`${classes.databaseStockItems} ${false ? classes.alert : ""} ${is_running ? classes.running : ""}`}
         customRowAttributes={(record) => {
           return {
             "data-color-mode": "box-shadow",
