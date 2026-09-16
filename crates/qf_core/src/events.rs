@@ -7,7 +7,10 @@ use tokio::sync::broadcast;
 static SENDER: OnceLock<broadcast::Sender<Value>> = OnceLock::new();
 
 fn sender() -> &'static broadcast::Sender<Value> {
-    SENDER.get_or_init(|| broadcast::channel(1024).0)
+    // Log frames share this channel with the UI events (spec §20 L2), so the buffer is sized
+    // so a browser stalled for a while loses log lines before it loses trader/stock frames;
+    // `/ws` drops on lag.
+    SENDER.get_or_init(|| broadcast::channel(8192).0)
 }
 
 pub fn subscribe() -> broadcast::Receiver<Value> {
