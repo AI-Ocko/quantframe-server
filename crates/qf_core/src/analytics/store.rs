@@ -143,7 +143,7 @@ pub async fn stock(conn: &DatabaseConnection, prices: &dyn PriceSource, now: Dat
     let mut rows = conn
         .query_all(stmt(
             "SELECT id, wfm_id, wfm_url, item_name, COALESCE(sub_type, '') AS sub_type, owned, bought, list_price, status, created_at,
-                    julianday(?) - julianday(created_at) AS days_in_stock
+                    COALESCE(julianday(?) - julianday(created_at), 0) AS days_in_stock
              FROM stock_item WHERE owned > 0",
             vec![crate::collector::ts(now).into()],
         ))
@@ -159,7 +159,8 @@ pub async fn stock(conn: &DatabaseConnection, prices: &dyn PriceSource, now: Dat
             // The stored sub_type is the entity's JSON; the price source keys on the same entity type the trader uses.
             let parsed: Option<utils::SubType> = if sub_type.is_empty() { None } else { serde_json::from_str(&sub_type).ok() };
             let info = prices.find_by(&wfm_id, &parsed);
-            let median = info.as_ref().map(|i| i.median);
+            // ItemPriceInfo flattens a missing median to 0.0; treat that as "no market data", not a total loss.
+            let median = info.as_ref().map(|i| i.median).filter(|m| *m > 0.0);
             Ok(StockRow {
                 id: r.try_get("", "id").map_err(|e| db_err(C, e))?,
                 wfm_id,
@@ -303,7 +304,9 @@ mod tests {
         use crate::collector::stats::ItemStats;
         use crate::trader::price_source::StatsPriceSource;
         let (_dir, conn) = db().await;
-        for (name, sub_type, owned, bought, list) in [("a", Some("{\"rank\":0}"), 2, 40, Some(55)), ("b", None, 1, 100, None), ("gone", None, 0, 1, None)] {
+        for (name, sub_type, owned, bought, list) in
+            [("a", Some("{\"rank\":0}"), 2, 40, Some(55)), ("b", None, 1, 100, None), ("c", None, 3, 20, Some(30)), ("gone", None, 0, 1, None)]
+        {
             exec(
                 &conn,
                 "Test:Stock",
@@ -314,15 +317,22 @@ mod tests {
             .await
             .unwrap();
         }
-        let stats = vec![ItemStats {
-            item_id: "id-a".into(), sub_type: "rank=0".into(), volume: 2.5, avg_price: Some(50.0), moving_avg: Some(48.0), profit: Some(5.0),
-            min_price: Some(40), max_price: Some(60), median: Some(50.0), history_days: 8, warm: true, updated_at: "2026-09-10T00:00:00Z".into(),
-        }];
+        let stats = vec![
+            ItemStats {
+                item_id: "id-a".into(), sub_type: "rank=0".into(), volume: 2.5, avg_price: Some(50.0), moving_avg: Some(48.0), profit: Some(5.0),
+                min_price: Some(40), max_price: Some(60), median: Some(50.0), history_days: 8, warm: true, updated_at: "2026-09-10T00:00:00Z".into(),
+            },
+            // A tracked item with no trades in the window: a stats row, but no median.
+            ItemStats {
+                item_id: "id-c".into(), sub_type: String::new(), volume: 0.0, avg_price: None, moving_avg: None, profit: None,
+                min_price: None, max_price: None, median: None, history_days: 0, warm: false, updated_at: "2026-09-10T00:00:00Z".into(),
+            },
+        ];
         let prices = StatsPriceSource::from_stats(stats, |id| Some(id.trim_start_matches("id-").to_string()));
         let now = crate::collector::parse_ts("2026-09-11T00:00:00Z").unwrap();
 
         let rows = stock(&conn, &prices, now).await.unwrap();
-        assert_eq!(rows.iter().map(|r| r.wfm_url.as_str()).collect::<Vec<_>>(), vec!["a", "b"], "owned = 0 rows are skipped; known stats first");
+        assert_eq!(rows.iter().map(|r| r.wfm_url.as_str()).collect::<Vec<_>>(), vec!["a", "b", "c"], "owned = 0 rows are skipped; known stats first");
         let a = &rows[0];
         assert_eq!((a.owned, a.bought, a.list_price, a.warm), (2, 40, Some(55), true));
         assert_eq!((a.median, a.moving_avg, a.volume), (Some(50.0), Some(48.0), Some(2.5)));
@@ -331,5 +341,8 @@ mod tests {
         assert!((a.days_in_stock - 10.0).abs() < 1e-6);
         let b = &rows[1];
         assert_eq!((b.median, b.unrealised, b.list_vs_median, b.warm), (None, None, None, false));
+        let c = &rows[2];
+        assert_eq!((c.median, c.unrealised, c.list_vs_median), (None, None, None), "a stats row without a median is no market data, not a 100% loss");
+        assert_eq!(c.volume, Some(0.0), "the stats row itself is still found");
     }
 }
