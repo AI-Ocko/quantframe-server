@@ -5,7 +5,7 @@ use chrono::{Duration, Local};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 const MAX_CACHED_LOGS: usize = 10_000;
 
@@ -16,6 +16,26 @@ struct CachedLogEntry {
 }
 
 static CACHED_LOGS: LazyLock<Mutex<Vec<CachedLogEntry>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// Optional tee for every line that reaches the cache (spec §20 L1). Installed once by qf_core.
+static SINK: OnceLock<fn(&LogLevel, &str)> = OnceLock::new();
+
+/// Install the log sink. The first call wins; later calls are ignored.
+pub fn set_sink(sink: fn(&LogLevel, &str)) {
+    let _ = SINK.set(sink);
+}
+
+/// The newest `limit` cached lines, oldest first (spec §20 L3).
+pub fn tail(limit: usize) -> Vec<(LogLevel, String)> {
+    let Ok(cache) = CACHED_LOGS.lock() else {
+        return Vec::new();
+    };
+    let start = cache.len().saturating_sub(limit);
+    cache[start..]
+        .iter()
+        .map(|entry| (entry.level.clone(), entry.message.clone()))
+        .collect()
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LogLevel {
@@ -202,6 +222,10 @@ pub fn dolog(
 
     let clean_message = remove_ansi_codes(message.clone());
     cache_log_entry(level.clone(), clean_message.clone());
+
+    if let Some(sink) = SINK.get() {
+        sink(&level, &clean_message);
+    }
 
     if options.console {
         println!("{}", message.trim());
@@ -502,4 +526,54 @@ pub fn delete_log(file: impl AsRef<Path>) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    static SEEN: StdMutex<Vec<(String, String)>> = StdMutex::new(Vec::new());
+
+    fn test_sink(level: &LogLevel, line: &str) {
+        SEEN.lock()
+            .unwrap()
+            .push((level.prefix().to_string(), line.to_string()));
+    }
+
+    #[test]
+    fn tail_returns_the_newest_lines_oldest_first_and_the_sink_sees_clean_lines() {
+        set_sink(test_sink);
+        let marker = format!("marker-{}", std::process::id());
+        info(
+            "SinkTest",
+            format!("\x1b[1;32m{marker}-one\x1b[0m"),
+            &LoggerOptions::default(),
+        );
+        warning(
+            "SinkTest",
+            format!("{marker}-two"),
+            &LoggerOptions::default(),
+        );
+
+        let mine: Vec<(LogLevel, String)> = tail(10_000)
+            .into_iter()
+            .filter(|(_, l)| l.contains(&marker))
+            .collect();
+        assert_eq!(mine.len(), 2);
+        assert!(mine[0].1.contains(&format!("{marker}-one")), "oldest first");
+        assert!(!mine[0].1.contains("\x1b["), "ANSI codes are stripped");
+        assert!(matches!(mine[1].0, LogLevel::Warning));
+        assert!(tail(0).is_empty());
+        assert!(tail(1).len() <= 1);
+
+        let seen = SEEN.lock().unwrap();
+        assert!(seen.iter().any(|(lvl, l)| lvl == "INFO"
+            && l.contains(&format!("{marker}-one"))
+            && !l.contains("\x1b[")));
+        assert!(
+            seen.iter()
+                .any(|(lvl, l)| lvl == "WARNING" && l.contains(&format!("{marker}-two")))
+        );
+    }
 }
