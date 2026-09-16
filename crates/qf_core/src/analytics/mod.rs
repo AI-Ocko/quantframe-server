@@ -51,3 +51,24 @@ pub struct TimelineRow {
     pub profit: i64,
     pub cumulative_profit: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StockRow {
+    pub id: i64,
+    pub wfm_id: String,
+    pub wfm_url: String,
+    pub item_name: String,
+    pub sub_type: String,
+    pub owned: i64,
+    pub bought: i64,
+    pub list_price: Option<i64>,
+    pub status: String,
+    pub created_at: String,
+    pub days_in_stock: f64,
+    pub median: Option<f64>,
+    pub moving_avg: Option<f64>,
+    pub volume: Option<f64>,
+    pub warm: bool,
+    pub unrealised: Option<f64>,
+    pub list_vs_median: Option<f64>,
+}
