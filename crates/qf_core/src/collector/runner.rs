@@ -260,8 +260,8 @@ async fn maintenance_loop(collector: Arc<Collector>) {
                 Ok(report) => info(
                     "Collector:Maintenance",
                     format!(
-                        "Hourly rows {}, daily rows {}, deleted summaries {}, deleted vanished {}, deleted events {}",
-                        report.hourly_rows, report.daily_rows, report.deleted_summaries, report.deleted_vanished, report.deleted_events
+                        "Hourly rows {}, daily rows {}, deleted summaries {}, deleted vanished {}",
+                        report.hourly_rows, report.daily_rows, report.deleted_summaries, report.deleted_vanished
                     ),
                     &LoggerOptions::default(),
                 ),

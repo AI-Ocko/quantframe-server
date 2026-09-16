@@ -41,6 +41,10 @@ impl Paths {
         self.subdir("logs")
     }
 
+    pub fn backups_dir(&self) -> PathBuf {
+        self.subdir("backups")
+    }
+
     /// Stable per-installation id, generated once and stored in `<data_dir>/device_id`.
     pub fn device_id(&self) -> Result<String, Error> {
         let file = self.data_dir.join("device_id");

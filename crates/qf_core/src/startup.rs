@@ -83,6 +83,8 @@ pub async fn start(cfg: CoreConfig) -> Result<CoreHandles, Error> {
     })
     .await?;
 
+    crate::housekeeping::start(conn.clone(), paths::get().backups_dir());
+
     crate::trader::start(conn.clone()).await?;
 
     let _ = HAS_STARTED.set(true);
