@@ -286,10 +286,11 @@ pub(crate) mod tests {
         let mut deleted = entry("2026-09-15T00:02:00Z", "delete");
         deleted.price = None;
         insert_dry_run(&conn, &deleted).await.unwrap();
-        // 30 more items with one create each, to push item1's create row past the cap only if ties sort badly.
+        // 30 more items with one create each: 32 groups in all, so the 25-row cap really truncates.
+        // They sort after "item1" so the cap cannot swallow either item1 row when the counts tie.
         for i in 0..30 {
             let mut e = entry("2026-09-15T01:00:00Z", "create");
-            e.item_id = format!("filler{i:02}");
+            e.item_id = format!("zfiller{i:02}");
             insert_dry_run(&conn, &e).await.unwrap();
         }
 
@@ -307,6 +308,11 @@ pub(crate) mod tests {
             summary.by_item[0],
             SummaryByItem { item_id: "item1".into(), sub_type: "rank=0".into(), action: "create".into(), count: 2, min_price: Some(17), max_price: Some(25) }
         );
-        assert!(summary.by_item.iter().all(|row| row.count >= 1));
+        // The delete rows carry no price: MIN/MAX over an all-NULL group must decode as None.
+        assert_eq!(
+            summary.by_item[1],
+            SummaryByItem { item_id: "item1".into(), sub_type: "rank=0".into(), action: "delete".into(), count: 1, min_price: None, max_price: None }
+        );
+        assert!(summary.by_item[2..].iter().all(|row| row.item_id.starts_with("zfiller") && row.count == 1));
     }
 }
