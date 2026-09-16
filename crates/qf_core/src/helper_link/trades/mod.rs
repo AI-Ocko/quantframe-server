@@ -241,6 +241,7 @@ pub async fn handle_incoming(
         payload: incoming.trade,
         resolution: Some(resolution.clone()),
         reviewed_at: None,
+        alerted_at: None,
     };
     if let Err(error) = events::insert(conn, &event).await {
         // A concurrent request with the same event_id won the insert.

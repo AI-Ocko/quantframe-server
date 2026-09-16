@@ -12,7 +12,7 @@ pub const APPLIED: &str = "applied";
 pub const NEEDS_REVIEW: &str = "needs_review";
 pub const IGNORED: &str = "ignored";
 
-const COLUMNS: &str = "event_id, device_name, received_at, detected_at, status, reason, payload, resolution, reviewed_at";
+const COLUMNS: &str = "event_id, device_name, received_at, detected_at, status, reason, payload, resolution, reviewed_at, alerted_at";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HelperEvent {
@@ -25,6 +25,7 @@ pub struct HelperEvent {
     pub payload: RawTrade,
     pub resolution: Option<Resolution>,
     pub reviewed_at: Option<String>,
+    pub alerted_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -48,6 +49,7 @@ fn from_row(c: &str, row: &QueryResult) -> Result<HelperEvent, Error> {
         payload: serde_json::from_str(&payload).map_err(|e| db_err(c, e))?,
         resolution: resolution.as_deref().map(serde_json::from_str).transpose().map_err(|e| db_err(c, e))?,
         reviewed_at: row.try_get("", "reviewed_at").map_err(|e| db_err(c, e))?,
+        alerted_at: row.try_get("", "alerted_at").map_err(|e| db_err(c, e))?,
     })
 }
 
@@ -62,7 +64,7 @@ pub async fn insert(conn: &DatabaseConnection, event: &HelperEvent) -> Result<()
     exec(
         conn,
         C,
-        &format!("INSERT INTO helper_events ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+        &format!("INSERT INTO helper_events ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
         vec![
             event.event_id.clone().into(),
             event.device_name.clone().into(),
@@ -73,6 +75,7 @@ pub async fn insert(conn: &DatabaseConnection, event: &HelperEvent) -> Result<()
             payload.into(),
             resolution.into(),
             event.reviewed_at.clone().into(),
+            event.alerted_at.clone().into(),
         ],
     )
     .await?;
@@ -141,6 +144,50 @@ pub async fn set_status(
     Ok(changed > 0)
 }
 
+/// Rows the housekeeping sweep must alert on, oldest first (amendment H3): `apply_failed:` rows,
+/// and rows still `applying` received at or before `stuck_before`.
+pub async fn needing_alert(conn: &DatabaseConnection, stuck_before: DateTime<Utc>) -> Result<Vec<HelperEvent>, Error> {
+    const C: &str = "HelperEvents:NeedingAlert";
+    conn.query_all(stmt(
+        &format!(
+            "SELECT {COLUMNS} FROM helper_events \
+             WHERE status = 'needs_review' AND alerted_at IS NULL \
+               AND (reason LIKE 'apply_failed:%' OR (reason = 'applying' AND received_at <= ?)) \
+             ORDER BY received_at ASC, rowid ASC"
+        ),
+        vec![ts(stuck_before).into()],
+    ))
+    .await
+    .map_err(|e| db_err(C, e))?
+    .iter()
+    .map(|row| from_row(C, row))
+    .collect()
+}
+
+/// Returns false when no row has that id.
+pub async fn mark_alerted(conn: &DatabaseConnection, event_id: &str, at: DateTime<Utc>) -> Result<bool, Error> {
+    let changed = exec(
+        conn,
+        "HelperEvents:MarkAlerted",
+        "UPDATE helper_events SET alerted_at = ? WHERE event_id = ?",
+        vec![ts(at).into(), event_id.into()],
+    )
+    .await?;
+    Ok(changed > 0)
+}
+
+/// Rewrites only the reason (used for `applying` -> `apply_interrupted`). Returns false when no row has that id.
+pub async fn set_reason(conn: &DatabaseConnection, event_id: &str, reason: &str) -> Result<bool, Error> {
+    let changed = exec(
+        conn,
+        "HelperEvents:SetReason",
+        "UPDATE helper_events SET reason = ? WHERE event_id = ?",
+        vec![reason.into(), event_id.into()],
+    )
+    .await?;
+    Ok(changed > 0)
+}
+
 /// Deletes events received more than 90 days ago (amendment E5).
 pub async fn apply_retention(conn: &DatabaseConnection, now: DateTime<Utc>) -> Result<u64, Error> {
     exec(
@@ -183,6 +230,7 @@ pub(crate) mod tests {
             payload: sale_trade(),
             resolution: None,
             reviewed_at: None,
+            alerted_at: None,
         }
     }
 
@@ -245,6 +293,34 @@ pub(crate) mod tests {
         assert!(set_status(&conn, "e1", IGNORED, Some("reviewed"), None, None).await.unwrap());
         assert_eq!(get(&conn, "e1").await.unwrap().unwrap().reason.as_deref(), Some("reviewed"));
         assert!(!set_status(&conn, "nope", IGNORED, None, None, None).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn needing_alert_returns_failed_rows_and_stale_applying_rows_once() {
+        let (_dir, conn) = db().await;
+        let mut failed = event("failed", "2026-09-16T12:00:00Z", NEEDS_REVIEW);
+        failed.reason = Some("apply_failed: HandleItem".into());
+        let mut young = event("young", "2026-09-16T12:04:30Z", NEEDS_REVIEW);
+        young.reason = Some("applying".into());
+        let mut stale = event("stale", "2026-09-16T12:00:00Z", NEEDS_REVIEW);
+        stale.reason = Some("applying".into());
+        let mut ordinary = event("ordinary", "2026-09-16T11:00:00Z", NEEDS_REVIEW);
+        ordinary.reason = Some("unresolved: Paryy".into());
+        for e in [&failed, &young, &stale, &ordinary] {
+            insert(&conn, e).await.unwrap();
+        }
+        // now = 12:05:00, stuck cutoff = now - 180 s = 12:02:00
+        let cutoff = at("2026-09-16T12:02:00Z");
+        let ids: Vec<String> = needing_alert(&conn, cutoff).await.unwrap().into_iter().map(|e| e.event_id).collect();
+        assert_eq!(ids, vec!["failed".to_string(), "stale".to_string()], "oldest first; young and ordinary rows are left alone");
+
+        assert!(mark_alerted(&conn, "failed", at("2026-09-16T12:05:00Z")).await.unwrap());
+        assert!(set_reason(&conn, "stale", "apply_interrupted").await.unwrap());
+        assert!(mark_alerted(&conn, "stale", at("2026-09-16T12:05:00Z")).await.unwrap());
+        assert!(needing_alert(&conn, cutoff).await.unwrap().is_empty());
+        let stale = get(&conn, "stale").await.unwrap().unwrap();
+        assert_eq!((stale.reason.as_deref(), stale.alerted_at.as_deref()), (Some("apply_interrupted"), Some("2026-09-16T12:05:00Z")));
+        assert!(!mark_alerted(&conn, "missing", at("2026-09-16T12:05:00Z")).await.unwrap());
     }
 
     #[tokio::test]
