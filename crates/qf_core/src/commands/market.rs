@@ -3,6 +3,7 @@
 use chrono::Utc;
 use utils::{get_location, Error};
 
+use crate::collector::backfill::{self, BackfillStatus};
 use crate::collector::market::{self, Movers, OverviewRow, Warmup};
 use crate::trader::price_source::all_item_stats;
 use crate::utils::modules::states;
@@ -30,4 +31,20 @@ pub async fn market_movers(min_volume: f64) -> Result<Movers, Error> {
 pub async fn market_warmup() -> Result<Warmup, Error> {
     let stats = all_item_stats(database()?).await?;
     Ok(market::warmup(&stats, Utc::now().date_naive()))
+}
+
+/// Starts the 90-day statistics import unless it is already running (spec §24 K4).
+pub async fn market_backfill_start() -> Result<BackfillStatus, Error> {
+    let conn = database()?.clone();
+    let items = states::cache_client()?
+        .tradable_item()
+        .get_items()?
+        .into_iter()
+        .map(|item| (item.wfm_id, item.wfm_url))
+        .collect();
+    Ok(backfill::start(conn, items))
+}
+
+pub async fn market_backfill_status() -> Result<BackfillStatus, Error> {
+    Ok(backfill::status())
 }
