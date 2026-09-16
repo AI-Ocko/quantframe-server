@@ -2244,6 +2244,13 @@
       }
     },
     "live_scraper": {
+      "log": {
+        "title": "Server log",
+        "levels": "Levels",
+        "clear": "Clear",
+        "jump": "Jump to latest",
+        "empty": "No log lines yet."
+      },
       "trader": {
         "states": { "offline": "Offline", "ready": "Ready", "trading": "Trading", "stopping": "Stopping" },
         "dry_run": "Dry-run",
@@ -2382,6 +2389,9 @@
         },
         "wish_list": {
           "title": "Wishlist"
+        },
+        "log": {
+          "title": "Log"
         },
         "syndicate": {
           "title": "Syndicate 👑 (WIP)",

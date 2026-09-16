@@ -1113,6 +1113,10 @@ export namespace TauriTypes {
     running_since?: string | null;
     running_dry_run?: boolean | null;
   }
+  export interface LogLine {
+    level: string;
+    line: string;
+  }
   export interface DryRunEntry {
     id: number;
     at: string;
