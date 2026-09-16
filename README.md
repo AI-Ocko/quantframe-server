@@ -28,7 +28,14 @@ Only the warframe.market token is kept, encrypted with `qf_secret_key`. Your war
 
 - **Changing the web password:** edit `secrets/qf_web_password` and restart the container.
 - **Losing `qf_secret_key`:** the stored token can't be decrypted, so sign in to warframe.market again.
-- **Backups:** the `qf-data` volume holds `quantframe.sqlite`, and a `quantframe.sqlite_backup` copy is made on every start.
+- **Backups:** every UTC day the server writes `backups/quantframe-<YYYY-MM-DD>.sqlite` (a `VACUUM INTO` copy, integrity-checked) into the host folder mounted at `/backups`, keeping the last 7 days and the last 4 Sundays. Create the folder once, owned by the container's uid: `mkdir -p backups && sudo chown 10001 backups` (or `chmod 1777 backups` without sudo). A failed backup logs a Critical line, shows a red toast and sends the `On Alert` notification; it is retried the next day. The start-time `quantframe.sqlite_backup` copy in the volume is only a migration safety net.
+- **Restore:** `docker compose stop`, then copy the chosen file over the live database and drop the stale WAL:
+  ```bash
+  docker run --rm -v quantframe-server_qf-data:/data -v "$PWD/backups:/b:ro" busybox sh -c \
+    'cp /b/quantframe-<date>.sqlite /data/quantframe.sqlite && rm -f /data/quantframe.sqlite-wal /data/quantframe.sqlite-shm && chown 10001 /data/quantframe.sqlite'
+  docker compose up -d
+  ```
+  Then confirm `Database ready` in the log and that the Trades tab and transaction counts match the backup's date. (The volume name is `<stack folder>_qf-data`; on ockohome the stack folder is `quantframe-server`.)
 
 ## qf-helper (gaming PC)
 

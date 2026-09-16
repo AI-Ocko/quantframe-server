@@ -8,8 +8,10 @@ services:
     environment:
       QF_PUBLIC_ORIGIN: ${QF_PUBLIC_ORIGIN:?set QF_PUBLIC_ORIGIN in .env}
       QF_COLLECTOR: "on"
+      QF_BACKUP_DIR: /backups
     volumes:
       - qf-data:/data
+      - ./backups:/backups
     secrets:
       - qf_secret_key
       - qf_web_password
