@@ -34,8 +34,10 @@ mod tests {
         let mut rx = subscribe();
         let receivers = emit("message", serde_json::json!({"event": "User:Update", "data": 1}));
         assert!(receivers >= 1);
-        let frame = rx.recv().await.unwrap();
-        assert_eq!(frame["channel"], "message");
+        // Every test in this binary shares the broadcast channel, so skip frames from other channels.
+        let frame = std::iter::from_fn(|| rx.try_recv().ok())
+            .find(|frame| frame["channel"] == "message")
+            .expect("one message frame");
         assert_eq!(frame["payload"]["event"], "User:Update");
     }
 
