@@ -8,6 +8,7 @@ use std::time::Duration;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use service::sea_orm::{ConnectionTrait, DatabaseConnection, TransactionTrait};
+use tokio::task::JoinHandle;
 use utils::{get_location, info, warning, Error, LoggerOptions};
 
 use super::fetch::{FetchError, MAX_RETRIES};
@@ -267,11 +268,24 @@ pub fn start(conn: DatabaseConnection, items: Vec<(String, String)>) -> Backfill
         }
         status.state = BackfillState::Running;
     }
-    tokio::spawn(async move {
+    tokio::spawn(watch(tokio::spawn(async move {
         let source = HttpStatisticsSource::new(reqwest::Client::new(), "https://api.warframe.market/v1");
-        run(&conn, &source, crate::market::limiter::global(), items).await;
-    });
+        run(&conn, &source, crate::market::limiter::global(), items).await
+    })));
     status()
+}
+
+/// Produces the `failed` state (spec §24 K3): a panicked or cancelled run must not leave the status
+/// `Running`, which would refuse every later start until the process restarts.
+async fn watch(handle: JoinHandle<BackfillStatus>) {
+    if let Err(join_error) = handle.await {
+        warning("Backfill", format!("Run did not finish: {join_error}"), &LoggerOptions::default());
+        update(|s| {
+            s.state = BackfillState::Failed;
+            s.finished_at = Some(ts(Utc::now()));
+            s.last_error = Some(join_error.to_string());
+        });
+    }
 }
 
 #[cfg(test)]
@@ -280,6 +294,12 @@ mod tests {
     use crate::collector::store::{exec, tests::setup};
 
     const SMALL: &str = include_str!("../../tests/fixtures/statistics_small.json");
+
+    /// The status is process-wide, so the tests that write it run one at a time.
+    fn status_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn parses_the_90_day_series_with_the_collector_sub_type_keys() {
@@ -328,6 +348,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_counts_inserted_missing_and_failed_items_and_reports_progress() {
+        let _guard = status_guard();
         let (_dir, conn) = setup().await;
 
         let scripted = Scripted(std::sync::Mutex::new(std::collections::HashMap::from([
@@ -351,5 +372,17 @@ mod tests {
         assert!(final_status.last_error.is_some(), "the dead item's last transient error is kept");
         assert!(final_status.started_at.is_some() && final_status.finished_at.is_some());
         assert_eq!(status(), final_status, "the process-wide status holds the final snapshot");
+    }
+
+    #[tokio::test]
+    async fn a_panicked_run_leaves_the_status_failed_instead_of_running() {
+        let _guard = status_guard();
+        update(|s| *s = BackfillStatus { state: BackfillState::Running, ..BackfillStatus::default() });
+        watch(tokio::spawn(async move { panic!("boom") })).await;
+        let status = status();
+        assert_eq!(status.state, BackfillState::Failed, "a later start must not be refused forever");
+        assert!(status.finished_at.is_some());
+        assert!(status.last_error.is_some_and(|error| !error.is_empty()));
+        update(|s| *s = BackfillStatus::default());
     }
 }
