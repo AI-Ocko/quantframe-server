@@ -2,7 +2,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -155,17 +155,19 @@ pub struct BackfillStatus {
 
 static STATUS: OnceLock<Mutex<BackfillStatus>> = OnceLock::new();
 
-fn status_cell() -> &'static Mutex<BackfillStatus> {
-    STATUS.get_or_init(|| Mutex::new(BackfillStatus::default()))
+/// Locks the status, taking the value back out of a poisoned lock: a panicked run must not wedge
+/// every later read and write.
+fn status_lock() -> MutexGuard<'static, BackfillStatus> {
+    STATUS.get_or_init(|| Mutex::new(BackfillStatus::default())).lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// The process-wide status of the one backfill run (spec §24 K3).
 pub fn status() -> BackfillStatus {
-    status_cell().lock().unwrap().clone()
+    status_lock().clone()
 }
 
 fn update(f: impl FnOnce(&mut BackfillStatus)) -> BackfillStatus {
-    let mut status = status_cell().lock().unwrap();
+    let mut status = status_lock();
     f(&mut status);
     status.clone()
 }
@@ -271,7 +273,7 @@ pub async fn run(conn: &DatabaseConnection, source: &dyn StatisticsSource, limit
 /// Starts a run in the background unless one is already running; returns the status either way (spec §24 K4).
 pub fn start(conn: DatabaseConnection, items: Vec<(String, String)>) -> BackfillStatus {
     let fresh = {
-        let mut status = status_cell().lock().unwrap();
+        let mut status = status_lock();
         if status.state == BackfillState::Running {
             return status.clone();
         }
@@ -284,7 +286,8 @@ pub fn start(conn: DatabaseConnection, items: Vec<(String, String)>) -> Backfill
         status.clone()
     };
     tokio::spawn(watch(tokio::spawn(async move {
-        let source = HttpStatisticsSource::new(reqwest::Client::new(), "https://api.warframe.market/v1");
+        let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().unwrap_or_default();
+        let source = HttpStatisticsSource::new(http, "https://api.warframe.market/v1");
         run(&conn, &source, crate::market::limiter::global(), items).await
     })));
     fresh
