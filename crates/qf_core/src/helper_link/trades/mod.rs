@@ -28,6 +28,10 @@ use split::{medians, price_items, weights_for};
 pub const DUPLICATE: &str = "duplicate";
 /// Reason while an event is being applied; left behind only if the server stops mid-way.
 pub const APPLYING: &str = "applying";
+/// Reason written by the sweep over a row still `applying` after `STUCK_AFTER_S` (amendment H3).
+pub const APPLY_INTERRUPTED: &str = "apply_interrupted";
+/// Longer than the helper's 120 s request timeout, so a row this old is stranded, not slow.
+pub const STUCK_AFTER_S: i64 = 180;
 pub const AUTO_TRADE_OFF: &str = "auto_trade_off";
 pub const NO_GOODS: &str = "no_goods";
 pub const NO_PLATINUM_SIDE: &str = "no_platinum_side";
@@ -117,6 +121,8 @@ pub trait TradeEnv: Send + Sync {
     fn applier(&self) -> &dyn ItemApplier;
     /// Called once for each stored outcome: applied, needs_review or apply_failed.
     fn notify(&self, event: &HelperEvent);
+    /// One failure alert per row (amendment H3): a red toast and `notifications.on_alert`.
+    fn alert(&self, event: &HelperEvent);
 }
 
 /// One row of the Review modal (amendment E9).
@@ -323,8 +329,25 @@ pub async fn ignore(conn: &DatabaseConnection, event_id: &str, now: DateTime<Utc
     Ok(event)
 }
 
+/// Housekeeping sweep (amendment H3): alerts once on `apply_failed:` rows and on rows still
+/// `applying` after `STUCK_AFTER_S`, relabelling the latter `apply_interrupted`. Returns how many rows were alerted.
+pub async fn sweep_alerts(conn: &DatabaseConnection, env: &dyn TradeEnv, now: DateTime<Utc>) -> Result<usize, Error> {
+    let stuck_before = now - chrono::Duration::seconds(STUCK_AFTER_S);
+    let mut alerted = 0;
+    for mut event in events::needing_alert(conn, stuck_before).await? {
+        if event.reason.as_deref() == Some(APPLYING) {
+            events::set_reason(conn, &event.event_id, APPLY_INTERRUPTED).await?;
+            event.reason = Some(APPLY_INTERRUPTED.into());
+        }
+        env.alert(&event);
+        events::mark_alerted(conn, &event.event_id, now).await?;
+        alerted += 1;
+    }
+    Ok(alerted)
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Mutex;
 
@@ -337,16 +360,17 @@ mod tests {
     use crate::trader::store::tests::db;
 
     #[derive(Default)]
-    struct Fake {
+    pub(crate) struct Fake {
         auto_trade: bool,
         parts: PartsMap,
         fail_on: Option<String>,
         /// (direction, slug, quantity, price, player, detected_at)
         applied: Mutex<Vec<(Direction, String, i64, i64, String, String)>>,
         notified: Mutex<Vec<(String, Option<String>)>>,
+        alerted: Mutex<Vec<(String, Option<String>)>>,
     }
 
-    fn fake(auto_trade: bool) -> Fake {
+    pub(crate) fn fake(auto_trade: bool) -> Fake {
         Fake {
             auto_trade,
             parts: PartsMap::from([(
@@ -389,6 +413,9 @@ mod tests {
         }
         fn notify(&self, event: &HelperEvent) {
             self.notified.lock().unwrap().push((event.status.clone(), event.reason.clone()));
+        }
+        fn alert(&self, event: &HelperEvent) {
+            self.alerted.lock().unwrap().push((event.event_id.clone(), event.reason.clone()));
         }
     }
 
@@ -579,5 +606,42 @@ mod tests {
         let ignored = ignore(&conn, &swap_id, now()).await.unwrap();
         assert_eq!((ignored.status.as_str(), ignored.reason.as_deref()), (events::IGNORED, Some(REVIEWED)));
         assert_eq!(events::get(&conn, &swap_id).await.unwrap().unwrap(), ignored);
+    }
+
+    #[tokio::test]
+    async fn a_failed_apply_is_alerted_exactly_once() {
+        let (_dir, conn) = db().await;
+        let mut env = fake(true);
+        env.fail_on = Some("arcane_nullifier".into());
+        let sale = trade(vec![raw("Arcane Nullifier", 1, Some(5))], vec![raw("Platinum", 70, None)]);
+        let outcome = handle_incoming(&conn, &env, "gaming-pc", incoming('f', sale), now()).await.unwrap();
+        assert_eq!(outcome.status, events::NEEDS_REVIEW);
+        assert!(outcome.reason.as_deref().unwrap().starts_with("apply_failed:"));
+
+        assert_eq!(sweep_alerts(&conn, &env, now()).await.unwrap(), 1);
+        assert_eq!(sweep_alerts(&conn, &env, now()).await.unwrap(), 0, "alerted_at stops a second alert");
+        let alerted = env.alerted.lock().unwrap().clone();
+        assert_eq!(alerted.len(), 1);
+        assert!(alerted[0].1.as_deref().unwrap().starts_with("apply_failed:"));
+    }
+
+    #[tokio::test]
+    async fn a_stranded_applying_row_is_relabelled_and_alerted_after_180_s() {
+        let (_dir, conn) = db().await;
+        let env = fake(true);
+        let mut event = events::tests::event("stuck", "2026-09-16T12:00:00Z", events::NEEDS_REVIEW);
+        event.reason = Some(APPLYING.into());
+        events::insert(&conn, &event).await.unwrap();
+
+        let young = events::tests::at("2026-09-16T12:02:59Z");
+        assert_eq!(sweep_alerts(&conn, &env, young).await.unwrap(), 0, "179 s: could still be a slow apply");
+        let old = events::tests::at("2026-09-16T12:03:00Z");
+        assert_eq!(sweep_alerts(&conn, &env, old).await.unwrap(), 1);
+        let stored = events::get(&conn, "stuck").await.unwrap().unwrap();
+        assert_eq!(stored.reason.as_deref(), Some(APPLY_INTERRUPTED));
+        assert_eq!(stored.status, events::NEEDS_REVIEW);
+        assert!(stored.alerted_at.is_some());
+        assert_eq!(env.alerted.lock().unwrap()[0], ("stuck".to_string(), Some(APPLY_INTERRUPTED.to_string())));
+        assert_eq!(sweep_alerts(&conn, &env, old).await.unwrap(), 0);
     }
 }

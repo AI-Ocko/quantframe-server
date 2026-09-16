@@ -204,6 +204,7 @@ impl TradeEnv for FakeTrades {
         self
     }
     fn notify(&self, _event: &HelperEvent) {}
+    fn alert(&self, _event: &HelperEvent) {}
 }
 
 fn heartbeat(key: Option<&str>, body: &str) -> Request<Body> {

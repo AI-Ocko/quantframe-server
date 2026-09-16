@@ -57,6 +57,10 @@
         "needs_review": {
           "title": "Trade with {{player_name}} needs review",
           "message": "{{reason}}. Open Live Scraper → Trades to finish it."
+        },
+        "alert": {
+          "title": "Trade with {{player_name}} needs attention",
+          "message": "{{reason}}. Some items may already be applied; check Live Scraper → Trades before re-applying."
         }
       },
       "warframe_gdpr_data_loaded": {
@@ -1614,6 +1618,7 @@
             "on_new_trade_title": "On New Trade",
             "on_trader_stopped_title": "On Trader Stopped",
             "on_token_expiring_title": "On Sign-in Expiring",
+            "on_alert_title": "On Alert (failed applies, backups)",
             "on_wfm_chat_message_title": "On WFM Chat Message"
           },
           "advanced": {

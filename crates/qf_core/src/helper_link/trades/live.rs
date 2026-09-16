@@ -70,6 +70,16 @@ impl TradeEnv for LiveEnv {
             notify_gui!("on_trade_event", "yellow", "needs_review", values, json!({"autoClose": false}));
         }
     }
+
+    fn alert(&self, event: &HelperEvent) {
+        notify_gui!("on_trade_event", "red", "alert", toast_values(event), json!({"autoClose": false}));
+        if let Some(app) = states::try_app_state() {
+            app.settings.notifications.on_alert.send(
+                &alert_variables(event),
+                Some(json!({"event": "trade_alert", "event_id": event.event_id, "reason": event.reason})),
+            );
+        }
+    }
 }
 
 fn item_lines(items: &[RawItem]) -> Vec<String> {
@@ -103,6 +113,17 @@ pub fn trade_variables(event: &HelperEvent) -> HashMap<String, String> {
         ("<OF_ITEMS>".to_string(), offered.join("\n")),
         ("<RE_ITEMS>".to_string(), received.join("\n")),
     ])
+}
+
+/// `on_alert` variables for a trade row: the `on_new_trade` set plus `<KIND>`, `<REASON>` and `<EVENT_ID>`.
+pub fn alert_variables(event: &HelperEvent) -> HashMap<String, String> {
+    let mut variables = trade_variables(event);
+    let reason = event.reason.clone().unwrap_or_default();
+    let kind = if reason.starts_with("apply_failed:") { "apply_failed" } else { "apply_interrupted" };
+    variables.insert("<KIND>".into(), kind.into());
+    variables.insert("<REASON>".into(), reason);
+    variables.insert("<EVENT_ID>".into(), event.event_id.clone());
+    variables
 }
 
 /// Values for the `on_trade_event.applied` and `on_trade_event.needs_review` toasts.
@@ -162,5 +183,17 @@ mod tests {
         parked.reason = Some("no_platinum_side".into());
         let values = toast_values(&parked);
         assert_eq!((values["direction"].as_str(), values["reason"].as_str()), (Some("trade"), Some("no_platinum_side")));
+    }
+
+    #[test]
+    fn alert_variables_name_the_kind_reason_and_event() {
+        let mut event = applied_sale();
+        event.reason = Some("apply_failed: HandleItem".into());
+        let vars = alert_variables(&event);
+        assert_eq!(vars["<KIND>"], "apply_failed");
+        assert_eq!(vars["<REASON>"], "apply_failed: HandleItem");
+        assert_eq!(vars["<EVENT_ID>"], event.event_id);
+        event.reason = Some(super::super::APPLY_INTERRUPTED.into());
+        assert_eq!(alert_variables(&event)["<KIND>"], "apply_interrupted");
     }
 }

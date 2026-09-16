@@ -216,6 +216,7 @@ export namespace TauriTypes {
     on_new_trade: NotificationSetting;
     on_trader_stopped: NotificationSetting;
     on_token_expiring: NotificationSetting;
+    on_alert: NotificationSetting;
   }
   export interface NotificationSetting {
     system_notify: SystemNotify;
@@ -1169,6 +1170,7 @@ export namespace TauriTypes {
     payload: HelperRawTrade;
     resolution?: HelperResolution | null;
     reviewed_at?: string | null;
+    alerted_at?: string | null;
   }
   export interface HelperEventPage {
     total: number;
