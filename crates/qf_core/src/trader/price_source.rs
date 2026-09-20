@@ -46,6 +46,8 @@ pub struct ItemPriceInfo {
     pub history_days: i64,
     #[serde(default)]
     pub guarded: bool,
+    #[serde(default)]
+    pub max_rank: Option<i64>,
 }
 
 pub fn is_disabled(value: i64) -> bool {
@@ -132,6 +134,7 @@ impl StatsPriceSource {
                     warm: s.warm,
                     history_days: s.history_days,
                     guarded: e.guarded,
+                    max_rank: None,
                 };
                 Some(((s.item_id, s.sub_type), info))
             })
@@ -147,12 +150,21 @@ impl StatsPriceSource {
         self
     }
 
+    /// Fills `max_rank` from the tradable cache (spec §25 P13); items without ranks keep `None`.
+    pub fn with_max_rank(mut self, max_rank_of: impl Fn(&str) -> Option<i64>) -> Self {
+        for info in self.items.values_mut() {
+            info.max_rank = max_rank_of(&info.wfm_id);
+        }
+        self
+    }
+
     pub async fn load(conn: &DatabaseConnection, cache: &CacheState) -> Result<Self, Error> {
         let (mode, guard_pct) = source_settings();
         let rows = effective_stats(conn, mode, guard_pct, Utc::now()).await?;
         let tradable = cache.tradable_item();
         Ok(Self::from_effective(rows, |id| tradable.get_by(id).ok().map(|item| item.wfm_url))
-            .with_trade_tax(|id| tradable.get_by(id).ok().map(|item| item.trade_tax)))
+            .with_trade_tax(|id| tradable.get_by(id).ok().map(|item| item.trade_tax))
+            .with_max_rank(|id| tradable.get_by(id).ok().and_then(|item| item.sub_type.and_then(|s| s.max_rank))))
     }
 }
 
@@ -229,6 +241,11 @@ pub fn get_interesting_items(settings: &ItemSettings, prices: &dyn PriceSource) 
         // A shift threshold is meaningfully negative ("drop no more than 5 % a week"), so only the exact -1 sentinel disables it.
         .filter(|i| wtb.price_shift_threshold == -1 || !prices.has_shift(&i.wfm_id, &key_of(&i.sub_type)) || i.week_price_shift >= wtb.price_shift_threshold as f64)
         .filter(|i| is_disabled(wtb.trading_tax_cap) || i.trading_tax <= wtb.trading_tax_cap)
+        // Upstream lists mods and arcanes only at their maximum rank (spec §25 P13).
+        .filter(|i| match (i.sub_type.as_ref().and_then(|s| s.rank), i.max_rank) {
+            (Some(rank), Some(max)) => rank >= max,
+            _ => true,
+        })
         .collect();
     items.sort_by(|a, b| {
         b.volume
@@ -346,6 +363,21 @@ mod tests {
         assert_eq!(get_interesting_items(&settings, &prices).len(), 2, "the cap is disabled by default");
         settings.wtb.trading_tax_cap = 500_000;
         assert_eq!(get_interesting_items(&settings, &prices).into_iter().map(|i| i.wfm_id).collect::<Vec<_>>(), vec!["cheap"]);
+    }
+
+    #[test]
+    fn only_the_maximum_rank_of_a_ranked_item_is_a_buy_candidate() {
+        let prices = source(vec![
+            stats("mod", "rank=0", 90.0, 50.0, 20.0),
+            stats("mod", "rank=10", 40.0, 50.0, 80.0),
+            stats("set", "", 30.0, 50.0, 100.0),
+            stats("relic", "subtype=intact", 25.0, 50.0, 10.0),
+            stats("unknown_max", "rank=0", 20.0, 50.0, 10.0),
+        ])
+        .with_max_rank(|id| (id == "mod").then_some(10));
+        let ids: Vec<String> = get_interesting_items(&ItemSettings::default(), &prices).into_iter().map(|i| i.uuid).collect();
+        assert_eq!(ids, vec!["mod:rank=10", "set:", "relic:subtype=intact", "unknown_max:rank=0"], "rank 0 of a rank-10 mod is dropped; unranked items and items with no known max rank stay");
+        assert_eq!(prices.find_by("mod", &sub_type_from_key("rank=0")).unwrap().max_rank, Some(10), "find_by still serves the rank-0 key for stock and wish-list items");
     }
 
     #[test]

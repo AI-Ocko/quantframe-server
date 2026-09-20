@@ -79,7 +79,14 @@ pub async fn market_price_sources() -> Result<PriceSources, Error> {
         &settings,
         guard_pct,
         now,
-        |id| tradable.get_by(id).ok().map(|item| ItemLookup { name: item.name, wfm_url: item.wfm_url, trade_tax: item.trade_tax }),
+        |id| {
+            tradable.get_by(id).ok().map(|item| ItemLookup {
+                max_rank: item.sub_type.as_ref().and_then(|s| s.max_rank),
+                name: item.name,
+                wfm_url: item.wfm_url,
+                trade_tax: item.trade_tax,
+            })
+        },
         &closed::fetch_times(conn).await?,
     );
     Ok(PriceSources { mode, guard_pct, refresh: closed::refresh_status(conn, now).await?, candidates, rows })

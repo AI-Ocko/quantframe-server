@@ -44,6 +44,7 @@ pub struct ItemLookup {
     pub name: String,
     pub wfm_url: String,
     pub trade_tax: i64,
+    pub max_rank: Option<i64>,
 }
 
 /// `get_interesting_items` caps at 150, so each count is at most the number the trader would actually work.
@@ -58,7 +59,8 @@ pub fn compare(
 ) -> (Vec<PriceSourceRow>, CandidateCounts) {
     let candidates = |mode: PriceSourceMode| -> HashSet<String> {
         let source = StatsPriceSource::from_effective(blend(inferred.clone(), closed.clone(), mode, guard_pct, now), |id| lookup(id).map(|l| l.wfm_url))
-            .with_trade_tax(|id| lookup(id).map(|l| l.trade_tax));
+            .with_trade_tax(|id| lookup(id).map(|l| l.trade_tax))
+            .with_max_rank(|id| lookup(id).and_then(|l| l.max_rank));
         get_interesting_items(settings, &source).into_iter().map(|i| i.uuid).collect()
     };
     let (as_inferred, as_closed) = (candidates(PriceSourceMode::Inferred), candidates(PriceSourceMode::Closed));
@@ -128,16 +130,18 @@ mod tests {
     fn rows_carry_both_bases_and_candidate_membership_under_each_mode() {
         let mut settings = ItemSettings::default(); // volume_threshold 15, profit_threshold 10, avg_price_cap 600
         settings.wtb.volume_threshold = 15;
+        let ranked_inferred = ItemStats { sub_type: "rank=0".into(), ..inferred("ranked", 50.0, 50.0) };
+        let ranked_closed = ClosedStats { sub_type: "rank=0".into(), ..closed("ranked", 50.0, 50.0) };
         let (rows, counts) = compare(
-            vec![inferred("undercounted", 9.0, 70.0), inferred("busy", 40.0, 50.0), inferred("untradable", 99.0, 5.0)],
-            vec![closed("undercounted", 30.0, 66.0), closed("busy", 60.0, 48.0), closed("closed_only", 25.0, 10.0)],
+            vec![inferred("undercounted", 9.0, 70.0), inferred("busy", 40.0, 50.0), inferred("untradable", 99.0, 5.0), ranked_inferred],
+            vec![closed("undercounted", 30.0, 66.0), closed("busy", 60.0, 48.0), closed("closed_only", 25.0, 10.0), ranked_closed],
             &settings,
             10,
             parse_ts("2026-09-20T08:00:00Z").unwrap(),
-            |id| (id != "untradable").then(|| ItemLookup { name: format!("Name {id}"), wfm_url: format!("{id}_slug"), trade_tax: 0 }),
+            |id| (id != "untradable").then(|| ItemLookup { name: format!("Name {id}"), wfm_url: format!("{id}_slug"), trade_tax: 0, max_rank: (id == "ranked").then_some(5) }),
             &HashMap::from([("busy".to_string(), "2026-09-20T01:00:00Z".to_string())]),
         );
-        assert_eq!(rows.len(), 3, "untradable ids are dropped");
+        assert_eq!(rows.len(), 4, "untradable ids are dropped");
         let row = |id: &str| rows.iter().find(|r| r.item_id == id).unwrap();
         let u = row("undercounted");
         assert_eq!((u.inferred_volume, u.closed_volume, u.candidate_inferred, u.candidate_closed), (Some(9.0), Some(30.0), false, true));
@@ -147,6 +151,8 @@ mod tests {
         let c = row("closed_only");
         assert_eq!((c.inferred_volume, c.profit, c.candidate_closed), (None, None, false), "no inferred profit, so the profit filter rejects it");
         assert!(!c.warm_closed, "the tab shows what the trader sees: a closed-only key is cold however warm its closed stats are");
+        let r = row("ranked");
+        assert_eq!((r.candidate_inferred, r.candidate_closed), (false, false), "rank 0 of a rank-5 item is no candidate in either mode (spec §25 P13)");
         assert_eq!(counts, CandidateCounts { inferred: 1, closed: 2, both: 1 });
     }
 }
