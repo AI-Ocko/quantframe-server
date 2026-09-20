@@ -17,7 +17,7 @@ import { CacheContextProvider } from "./cache.context";
 import { LiveScraperContextProvider } from "./liveScraper.context";
 export async function loadLanguage(lang: string) {
   try {
-    const response = await fetch(`/lang/${lang}.json`);
+    const response = await fetch(`/lang/${lang}.json`, { cache: "no-cache" });
     const translations = await response.json();
     // Add the translations to i18next
     i18n.addResourceBundle(lang, "translation", translations, true, true);

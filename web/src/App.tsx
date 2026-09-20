@@ -37,7 +37,7 @@ library.add(...ICONS);
 dom.watch();
 
 export async function initializeI18n() {
-  const response = await fetch("/lang/en.json");
+  const response = await fetch("/lang/en.json", { cache: "no-cache" });
   const translations = await response.json();
   await i18n.use(initReactI18next).init({
     resources: {
