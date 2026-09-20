@@ -10,7 +10,7 @@ use utils::{get_location, warning, Error, LoggerOptions};
 use super::backfill::{fetch_with_retries, parse_statistics, ClosedDay, StatisticsSource};
 use super::fetch::FetchError;
 use super::store::exec;
-use super::{db_err, stmt, ts};
+use super::{db_err, parse_ts, stmt, ts};
 use crate::market::limiter::{Lane, Limiter};
 
 pub const WINDOW_DAYS: i64 = 7;
@@ -154,39 +154,32 @@ pub async fn load_fresh(conn: &DatabaseConnection, now: DateTime<Utc>, warm_min_
              WHERE f.outcome = 'ok' AND f.fetched_at >= ? AND d.day >= ? AND d.day < ?",
             vec![
                 ts(now - Duration::days(FRESH_DAYS)).into(),
-                // One day wider than W: an item fetched before the cutoff is aggregated a day back.
-                (today - Duration::days(WINDOW_DAYS + 1)).to_string().into(),
+                // Far enough back to cover the window of an item last fetched `FRESH_DAYS` ago.
+                (today - Duration::days(WINDOW_DAYS + FRESH_DAYS + 1)).to_string().into(),
                 today.to_string().into(),
             ],
         ))
         .await
-        .map_err(|e| db_err(C, e))?
-        .iter()
-        .map(|r| {
-            let day: String = r.try_get("", "day").map_err(|e| db_err(C, e))?;
-            let fetched_at: String = r.try_get("", "fetched_at").map_err(|e| db_err(C, e))?;
-            Ok((
-                ClosedRow {
-                    item_id: r.try_get("", "item_id").map_err(|e| db_err(C, e))?,
-                    sub_type: r.try_get("", "sub_type").map_err(|e| db_err(C, e))?,
-                    day: NaiveDate::parse_from_str(&day, "%Y-%m-%d").map_err(|e| db_err(C, e))?,
-                    volume: r.try_get("", "volume").map_err(|e| db_err(C, e))?,
-                    median: r.try_get("", "median").map_err(|e| db_err(C, e))?,
-                    min_price: r.try_get("", "min_price").map_err(|e| db_err(C, e))?,
-                    max_price: r.try_get("", "max_price").map_err(|e| db_err(C, e))?,
-                    wa_price: r.try_get("", "wa_price").map_err(|e| db_err(C, e))?,
-                },
-                fetched_at,
-            ))
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
-    // spec §25 P12: an item fetched before today's cutoff cannot hold today − 1, so its window ends a day earlier.
-    let cutoff_at = ts(cutoff(now));
-    let (current, behind): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(_, fetched_at)| *fetched_at >= cutoff_at);
-    let days_of = |rows: Vec<(ClosedRow, String)>| rows.into_iter().map(|(row, _)| row).collect();
-    let mut stats = aggregate(days_of(current), today, warm_min_trades);
-    stats.extend(aggregate(days_of(behind), today - Duration::days(1), warm_min_trades));
-    Ok(stats)
+        .map_err(|e| db_err(C, e))?;
+    // spec §25 P12: what an item's data can contain depends on when it was fetched, not on the clock
+    // now, so each row is anchored on the cutoff in force at its own fetch.
+    let mut by_anchor: BTreeMap<NaiveDate, Vec<ClosedRow>> = BTreeMap::new();
+    for r in rows.iter() {
+        let day: String = r.try_get("", "day").map_err(|e| db_err(C, e))?;
+        let fetched_at: String = r.try_get("", "fetched_at").map_err(|e| db_err(C, e))?;
+        let anchor = parse_ts(&fetched_at).ok_or_else(|| db_err(C, format!("unparsable fetched_at {fetched_at}")))?;
+        by_anchor.entry(cutoff(anchor).date_naive()).or_default().push(ClosedRow {
+            item_id: r.try_get("", "item_id").map_err(|e| db_err(C, e))?,
+            sub_type: r.try_get("", "sub_type").map_err(|e| db_err(C, e))?,
+            day: NaiveDate::parse_from_str(&day, "%Y-%m-%d").map_err(|e| db_err(C, e))?,
+            volume: r.try_get("", "volume").map_err(|e| db_err(C, e))?,
+            median: r.try_get("", "median").map_err(|e| db_err(C, e))?,
+            min_price: r.try_get("", "min_price").map_err(|e| db_err(C, e))?,
+            max_price: r.try_get("", "max_price").map_err(|e| db_err(C, e))?,
+            wa_price: r.try_get("", "wa_price").map_err(|e| db_err(C, e))?,
+        });
+    }
+    Ok(by_anchor.into_iter().flat_map(|(anchor, rows)| aggregate(rows, anchor, warm_min_trades)).collect())
 }
 
 pub const CLOSED_PACE_S: u64 = 10;
@@ -397,27 +390,36 @@ mod tests {
     #[tokio::test]
     async fn load_fresh_anchors_the_window_on_the_fetch() {
         let (_dir, conn) = setup().await;
-        let now = parse_ts("2026-09-20T16:00:00Z").unwrap(); // today's cutoff is 08:30
-        let eight: Vec<ClosedDay> = (12..=19).map(|d| closed_day(&format!("2026-09-{d}"), 4, 50.0)).collect();
-        upsert_days(&conn, "item1", &eight).await.unwrap();
-        upsert_days(&conn, "item2", &eight).await.unwrap();
-        set_fetch_state(&conn, "item1", parse_ts("2026-09-20T09:00:00Z").unwrap(), "ok").await.unwrap();
-        set_fetch_state(&conn, "item2", parse_ts("2026-09-20T08:00:00Z").unwrap(), "ok").await.unwrap();
+        // D = 2026-09-20. Nine seeded days D−9 ..= D−1, four trades each but a distinctive 40 on D−1.
+        let nine: Vec<ClosedDay> = (11..=19).map(|d| closed_day(&format!("2026-09-{d}"), if d == 19 { 40 } else { 4 }, 50.0)).collect();
+        for id in ["item1", "item2", "item3", "item4"] {
+            upsert_days(&conn, id, &nine).await.unwrap();
+        }
+        set_fetch_state(&conn, "item1", parse_ts("2026-09-19T16:00:00Z").unwrap(), "ok").await.unwrap(); // A = D−1
+        set_fetch_state(&conn, "item2", parse_ts("2026-09-20T09:00:00Z").unwrap(), "ok").await.unwrap(); // A = D
+        set_fetch_state(&conn, "item3", parse_ts("2026-09-20T08:30:00Z").unwrap(), "ok").await.unwrap(); // A = D, exactly at the cutoff
+        set_fetch_state(&conn, "item4", parse_ts("2026-09-18T10:00:00Z").unwrap(), "ok").await.unwrap(); // A = D−2, a missed pass
         let by_id = |fresh: Vec<ClosedStats>| -> BTreeMap<String, ClosedStats> { fresh.into_iter().map(|s| (s.item_id.clone(), s)).collect() };
 
-        let fresh = by_id(load_fresh(&conn, now, 10).await.unwrap());
-        assert_eq!(fresh.len(), 2);
-        for (id, s) in &fresh {
-            assert_eq!((s.days, s.trades), (7, 28), "{id} covers a full seven days either way");
-        }
+        // Read before the day's cutoff: item1's week is the one its own fetch could see, not a short one.
+        let early = by_id(load_fresh(&conn, parse_ts("2026-09-20T03:00:00Z").unwrap(), 10).await.unwrap());
+        assert_eq!((early["item1"].days, early["item1"].trades), (7, 28), "fetched 09-19 16:00: 09-12 ..= 09-18, without 09-19's 40");
 
-        // A distinctive volume on today − 1: only an item fetched after the cutoff can hold it.
-        for id in ["item1", "item2"] {
-            upsert_days(&conn, id, &[closed_day("2026-09-19", 40, 50.0)]).await.unwrap();
+        // Read in the afternoon: the same fetch still reads the same week.
+        let now = parse_ts("2026-09-20T16:00:00Z").unwrap();
+        let late = by_id(load_fresh(&conn, now, 10).await.unwrap());
+        assert_eq!((late["item1"].days, late["item1"].trades), (7, 28), "the window does not move with the clock");
+        assert_eq!((late["item2"].days, late["item2"].trades), (7, 64), "fetched after today's cutoff: 09-13 ..= 09-19");
+        assert_eq!((late["item3"].days, late["item3"].trades), (7, 64), "a fetch exactly at the cutoff counts as after it");
+        assert_eq!((late["item4"].days, late["item4"].trades), (7, 28), "a pass missed for two days keeps a full, older week: 09-11 ..= 09-17");
+
+        // The left edge of that older week: only the item anchored on D−2 reaches back to D−9.
+        for id in ["item1", "item4"] {
+            upsert_days(&conn, id, &[closed_day("2026-09-11", 40, 50.0)]).await.unwrap();
         }
-        let fresh = by_id(load_fresh(&conn, now, 10).await.unwrap());
-        assert_eq!((fresh["item1"].days, fresh["item1"].trades), (7, 64), "fetched after the cutoff: 09-13 ..= 09-19");
-        assert_eq!((fresh["item2"].days, fresh["item2"].trades), (7, 28), "fetched before it: 09-12 ..= 09-18");
+        let late = by_id(load_fresh(&conn, now, 10).await.unwrap());
+        assert_eq!((late["item4"].days, late["item4"].trades), (7, 64), "09-11 is the first day of item4's window");
+        assert_eq!((late["item1"].days, late["item1"].trades), (7, 28), "09-11 is outside item1's window");
     }
 
     #[test]

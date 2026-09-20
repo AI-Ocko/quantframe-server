@@ -93,7 +93,8 @@ pub fn compare(
                 week_price_shift: c.as_ref().and_then(|c| c.week_price_shift),
                 profit: i.as_ref().and_then(|i| i.profit),
                 warm_inferred: i.as_ref().is_some_and(|i| i.warm),
-                warm_closed: c.as_ref().is_some_and(|c| c.warm),
+                // The trader treats a key the collector does not know as cold (spec §25 P12), so the tab must too.
+                warm_closed: c.as_ref().is_some_and(|c| c.warm) && i.is_some(),
                 candidate_inferred: as_inferred.contains(&uuid),
                 candidate_closed: as_closed.contains(&uuid),
                 guarded: guarded.contains(&(item_id.clone(), sub_type.clone())),
@@ -145,6 +146,7 @@ mod tests {
         assert_eq!(row("busy").fetched_at.as_deref(), Some("2026-09-20T01:00:00Z"));
         let c = row("closed_only");
         assert_eq!((c.inferred_volume, c.profit, c.candidate_closed), (None, None, false), "no inferred profit, so the profit filter rejects it");
+        assert!(!c.warm_closed, "the tab shows what the trader sees: a closed-only key is cold however warm its closed stats are");
         assert_eq!(counts, CandidateCounts { inferred: 1, closed: 2, both: 1 });
     }
 }
