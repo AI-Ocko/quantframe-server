@@ -23,6 +23,7 @@ mod m20260917_000001_create_helper_keys;
 mod m20260917_000002_drop_helper_override;
 mod m20260918_000001_create_helper_events;
 mod m20260920_000001_add_helper_events_alerted_at;
+mod m20260921_000001_create_closed_stats;
 
 pub struct Migrator;
 
@@ -53,6 +54,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260917_000002_drop_helper_override::Migration),
             Box::new(m20260918_000001_create_helper_events::Migration),
             Box::new(m20260920_000001_add_helper_events_alerted_at::Migration),
+            Box::new(m20260921_000001_create_closed_stats::Migration),
         ]
     }
 }

@@ -24,6 +24,8 @@ pub struct ClosedDay {
     pub median: Option<f64>,
     pub min_price: Option<i64>,
     pub max_price: Option<i64>,
+    pub avg_price: Option<f64>,
+    pub wa_price: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -46,6 +48,8 @@ struct Row {
     min_price: Option<f64>,
     max_price: Option<f64>,
     median: Option<f64>,
+    avg_price: Option<f64>,
+    wa_price: Option<f64>,
     mod_rank: Option<i64>,
     subtype: Option<String>,
 }
@@ -66,6 +70,8 @@ pub fn parse_statistics(body: &str) -> Result<Vec<ClosedDay>, Error> {
             median: r.median,
             min_price: r.min_price.map(|p| p.round() as i64),
             max_price: r.max_price.map(|p| p.round() as i64),
+            avg_price: r.avg_price,
+            wa_price: r.wa_price,
         })
         .collect())
 }
@@ -325,10 +331,10 @@ mod tests {
         assert_eq!(
             days,
             vec![
-                ClosedDay { sub_type: "rank=10".into(), day: "2026-09-14".into(), volume: 39, median: Some(50.0), min_price: Some(47), max_price: Some(50) },
-                ClosedDay { sub_type: "rank=0".into(), day: "2026-09-15".into(), volume: 12, median: Some(22.0), min_price: Some(20), max_price: Some(25) },
-                ClosedDay { sub_type: "subtype=intact".into(), day: "2026-09-15".into(), volume: 15, median: Some(11.0), min_price: Some(10), max_price: Some(12) },
-                ClosedDay { sub_type: String::new(), day: "2026-09-15".into(), volume: 43, median: Some(69.0), min_price: Some(66), max_price: Some(70) },
+                ClosedDay { sub_type: "rank=10".into(), day: "2026-09-14".into(), volume: 39, median: Some(50.0), min_price: Some(47), max_price: Some(50), avg_price: None, wa_price: None },
+                ClosedDay { sub_type: "rank=0".into(), day: "2026-09-15".into(), volume: 12, median: Some(22.0), min_price: Some(20), max_price: Some(25), avg_price: None, wa_price: None },
+                ClosedDay { sub_type: "subtype=intact".into(), day: "2026-09-15".into(), volume: 15, median: Some(11.0), min_price: Some(10), max_price: Some(12), avg_price: None, wa_price: None },
+                ClosedDay { sub_type: String::new(), day: "2026-09-15".into(), volume: 43, median: Some(69.0), min_price: Some(66), max_price: Some(70), avg_price: Some(68.0), wa_price: Some(68.5) },
             ]
         );
     }
