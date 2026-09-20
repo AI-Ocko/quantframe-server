@@ -1549,13 +1549,7 @@ git push
 
 This task runs only after the controller's final whole-branch review and fix wave. The deploy needs the user's explicit go-ahead and is run by the user with `!` commands (agent rsync to ockohome is denied in auto mode); the agent reads the results over ssh (`docker compose ps`, `docker compose logs quantframe-server`, `curl /healthz`) and the user checks the browser.
 
-- [ ] **Step 0: Pre-deploy settings check (spec §25 P12).** The user runs this and both values must be `-1`; if either is not, stop and ask the user whether they set it on purpose:
-
-```bash
-! ssh -o ClearAllForwardings=yes christopher@ockohome 'cd ~/stacks/quantframe-server && docker compose exec -T quantframe-server sh -c "find / -name settings.json -not -path \"/proc/*\" 2>/dev/null | head -1 | xargs grep -o \"\\\"trading_tax_cap\\\": *-\\?[0-9]*\\|\\\"price_shift_threshold\\\": *-\\?[0-9]*\""'
-```
-
-If the quoting fights back, the same two values are visible in the web UI under Settings → Live Scraper → Item → WTB ("Trading tax cap" and "Price shift threshold").
+- [ ] **Step 0: Pre-deploy settings check (spec §25 P12).** Before deploying, the user opens the running web UI, Settings → Live Scraper → Item → WTB, and confirms that **Trading tax cap** and **Price shift threshold** both read `-1`. If either does not, stop and ask the user whether they set it on purpose: the tax cap becomes a live filter in both modes on deploy, and a shift threshold other than `-1` becomes live in mode `closed`. (An agent cannot read the server's settings file; production reads of it are denied.)
 
 - [ ] **Step 1: Runbook.** In `docs/GO-LIVE-RUNBOOK.md` §1 Pre-flight add, after the Auto Delete item, the two lines below (the second one is from spec §25 P12):
 
