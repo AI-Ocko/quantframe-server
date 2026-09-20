@@ -1549,10 +1549,22 @@ git push
 
 This task runs only after the controller's final whole-branch review and fix wave. The deploy needs the user's explicit go-ahead and is run by the user with `!` commands (agent rsync to ockohome is denied in auto mode); the agent reads the results over ssh (`docker compose ps`, `docker compose logs quantframe-server`, `curl /healthz`) and the user checks the browser.
 
-- [ ] **Step 1: Runbook.** In `docs/GO-LIVE-RUNBOOK.md` §1 Pre-flight add, after the Auto Delete item:
+- [ ] **Step 0: Pre-deploy settings check (spec §25 P12).** The user runs this and both values must be `-1`; if either is not, stop and ask the user whether they set it on purpose:
+
+```bash
+! ssh -o ClearAllForwardings=yes christopher@ockohome 'cd ~/stacks/quantframe-server && docker compose exec -T quantframe-server sh -c "find / -name settings.json -not -path \"/proc/*\" 2>/dev/null | head -1 | xargs grep -o \"\\\"trading_tax_cap\\\": *-\\?[0-9]*\\|\\\"price_shift_threshold\\\": *-\\?[0-9]*\""'
+```
+
+If the quoting fights back, the same two values are visible in the web UI under Settings → Live Scraper → Item → WTB ("Trading tax cap" and "Price shift threshold").
+
+- [ ] **Step 1: Runbook.** In `docs/GO-LIVE-RUNBOOK.md` §1 Pre-flight add, after the Auto Delete item, the two lines below (the second one is from spec §25 P12):
 
 ```markdown
 - [ ] **Settings → Live Scraper → General → Price source** is the one you have reviewed. `Inferred` needs nothing more. `Closed trades` needs at least **48 h of dry-run in that mode** with the Dry-run log Summary reviewed, and **Market Data → Price source** showing the closed statistics fetched for nearly all items with `failed` near 0. Change the source only while in dry-run.
+```
+
+```markdown
+- [ ] **Settings → Live Scraper → Item → WTB**: **Trading tax cap** and **Price shift threshold** are `-1` unless you set them on purpose. Switching **Price source** to Closed trades makes every item whose closed statistics are warm eligible for live routing at once, so make that switch only while global **Dry-run** is on.
 ```
 
 and in §4 Rollback add as a new first step: `0. If the problem appeared after switching **Price source** to Closed trades, set it back to **Inferred**; it takes effect on the next trader cycle, with no restart.` Commit: `docs: add the price source pre-flight and rollback to the go-live runbook`.
@@ -1576,11 +1588,12 @@ Never add `--delete-excluded`: it would remove `secrets/`, `backups/` and `.env`
   1. With `price_source = inferred` (the default after deploy) the Dry-run log keeps its cadence and item count from before the deploy; the Price source tab's status line shows `ok` climbing by about 6 a minute.
   2. The user presses **Import 90-day history** on the Collector tab; about 70 minutes later it reads Finished and the Price source tab shows `ok` near 3 840, `failed` 0 or near it.
   3. Ash Prime Set on the tab: closed volume and moving average agree with its warframe.market statistics page for the last 7 days.
-  4. **Calibration:** five items the user trades, closed `volume` and `moving_avg` against the desktop Quantframe app's figures for the same items. Record both numbers per item. A systematic factor on volume is a spec error: stop, report it, do not switch.
+  4. **Calibration** (any time of day: the window is anchored on each item's fetch, spec §25 P12)**:** five items the user trades, closed `volume` and `moving_avg` against the desktop Quantframe app's figures for the same items. Record both numbers per item. A systematic factor on volume is a spec error: stop, report it, do not switch.
   5. The candidate counts are plausible: `closed` is larger than `inferred`, `both` is most of `inferred`.
   6. In dry-run, the user sets Price source to Closed trades and saves; the next trader cycle's `Progress: n/N` total follows the `closed` candidate count plus stock and wish-list items; `FastDropGuard` appears in few or no Dry-run log reasons; the Warm-up tab's warm count jumps from 0 to the closed-warm count.
   7. Setting it back to Inferred restores the previous cycle size on the next cycle.
-  8. Next day after 00:30 UTC: the log shows `[ClosedStats] Pass complete` within about 11 h and hot-set items show a `fetched_at` from today within the first hour.
+  8. Next day after 08:30 UTC: the log shows `[ClosedStats] Pass complete` within about 11 h and hot-set items show a `fetched_at` from today within the first hour.
+  9. The Warm-up tab's `tracked` count is the same in both modes (spec §25 P12); only `warm` and the trades histogram move when the mode changes.
 
 - [ ] **Step 4: Record and hand back.** Write `docs/PHASE-6D-ACCEPTANCE.md` in the form of `docs/PHASE-6C-ACCEPTANCE.md` (deployed commit, checks table with Pass/Fail and evidence, follow-ups including every deferred minor from the task reviews, and the still-open list carried forward by number). Commit `docs: record phase 6d closed price source acceptance`, push, and report to the controller. The controller merges to `main` only after this record is committed and the gate is green on the branch tip.
 
