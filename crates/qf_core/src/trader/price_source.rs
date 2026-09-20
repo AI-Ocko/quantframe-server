@@ -3,16 +3,20 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use service::sea_orm::{ConnectionTrait, DatabaseConnection};
 use utils::{Error, SubType};
 
 use crate::app::{ItemSettings, Settings};
 use crate::cache::client::CacheState;
+use crate::collector::closed;
 use crate::collector::orders::sub_type_key;
-use crate::collector::stats::ItemStats;
+use crate::collector::stats::{ItemStats, StatsConfig};
 use crate::collector::{db_err, stmt};
-use crate::enums::TradeMode;
+use crate::enums::{PriceSourceMode, TradeMode};
+use crate::trader::blend::{blend, Effective};
+use crate::utils::modules::states;
 
 pub const MAX_BUY_CANDIDATES: usize = 150;
 
@@ -40,6 +44,8 @@ pub struct ItemPriceInfo {
     pub warm: bool,
     #[serde(default)]
     pub history_days: i64,
+    #[serde(default)]
+    pub guarded: bool,
 }
 
 pub fn is_disabled(value: i64) -> bool {
@@ -76,20 +82,34 @@ pub fn sub_type_from_key(key: &str) -> Option<SubType> {
 pub trait PriceSource: Send + Sync {
     fn find_by(&self, wfm_id: &str, sub_type: &Option<SubType>) -> Option<ItemPriceInfo>;
     fn all(&self) -> Vec<ItemPriceInfo>;
+    /// Whether this item's `week_price_shift` is known (closed statistics only).
+    fn has_shift(&self, _wfm_id: &str, _sub_type_key: &str) -> bool {
+        false
+    }
 }
 
 #[derive(Default)]
 pub struct StatsPriceSource {
     items: HashMap<(String, String), ItemPriceInfo>,
+    has_shift: HashSet<(String, String)>,
 }
 
 impl StatsPriceSource {
-    /// Items whose id `url_of` can't resolve (no longer tradable) are skipped.
     pub fn from_stats(stats: Vec<ItemStats>, url_of: impl Fn(&str) -> Option<String>) -> Self {
-        let items = stats
+        Self::from_effective(stats.into_iter().map(|stats| Effective { stats, week_price_shift: None, guarded: false, closed: false }).collect(), url_of)
+    }
+
+    /// Items whose id `url_of` can't resolve (no longer tradable) are skipped.
+    pub fn from_effective(rows: Vec<Effective>, url_of: impl Fn(&str) -> Option<String>) -> Self {
+        let mut has_shift = HashSet::new();
+        let items = rows
             .into_iter()
-            .filter_map(|s| {
+            .filter_map(|e| {
+                let s = e.stats;
                 let wfm_url = url_of(&s.item_id)?;
+                if e.week_price_shift.is_some() {
+                    has_shift.insert((s.item_id.clone(), s.sub_type.clone()));
+                }
                 let info = ItemPriceInfo {
                     uuid: format!("{}:{}", s.item_id, s.sub_type),
                     wfm_url,
@@ -104,21 +124,49 @@ impl StatsPriceSource {
                     profit: s.profit.unwrap_or(0.0),
                     profit_margin: 0.0,
                     trading_tax: 0,
-                    week_price_shift: 0.0,
+                    week_price_shift: e.week_price_shift.unwrap_or(0.0),
                     warm: s.warm,
                     history_days: s.history_days,
+                    guarded: e.guarded,
                 };
                 Some(((s.item_id, s.sub_type), info))
             })
             .collect();
-        Self { items }
+        Self { items, has_shift }
+    }
+
+    /// Fills `trading_tax` from the tradable cache; items the lookup does not know keep 0.
+    pub fn with_trade_tax(mut self, tax_of: impl Fn(&str) -> Option<i64>) -> Self {
+        for info in self.items.values_mut() {
+            info.trading_tax = tax_of(&info.wfm_id).unwrap_or(0);
+        }
+        self
     }
 
     pub async fn load(conn: &DatabaseConnection, cache: &CacheState) -> Result<Self, Error> {
-        let stats = all_item_stats(conn).await?;
+        let (mode, guard_pct) = source_settings();
+        let rows = effective_stats(conn, mode, guard_pct, Utc::now()).await?;
         let tradable = cache.tradable_item();
-        Ok(Self::from_stats(stats, |id| tradable.get_by(id).ok().map(|item| item.wfm_url)))
+        Ok(Self::from_effective(rows, |id| tradable.get_by(id).ok().map(|item| item.wfm_url))
+            .with_trade_tax(|id| tradable.get_by(id).ok().map(|item| item.trade_tax)))
     }
+}
+
+/// `(mode, guard_pct)` from the live settings; inferred with the guard off when the app state is not up yet.
+pub fn source_settings() -> (PriceSourceMode, i64) {
+    states::try_app_state()
+        .map(|app| (app.settings.live_scraper.general.price_source, app.settings.live_scraper.general.fast_drop_guard_pct))
+        .unwrap_or((PriceSourceMode::Inferred, -1))
+}
+
+/// The one loader every consumer shares (spec §25 P7).
+pub async fn effective_stats(conn: &DatabaseConnection, mode: PriceSourceMode, guard_pct: i64, now: DateTime<Utc>) -> Result<Vec<Effective>, Error> {
+    let inferred = all_item_stats(conn).await?;
+    let closed = match mode {
+        PriceSourceMode::Inferred => Vec::new(),
+        PriceSourceMode::Closed => closed::load_fresh(conn, now, StatsConfig::default().warm_min_trades).await?,
+    };
+    Ok(blend(inferred, closed, mode, guard_pct, now))
 }
 
 impl PriceSource for StatsPriceSource {
@@ -128,6 +176,10 @@ impl PriceSource for StatsPriceSource {
 
     fn all(&self) -> Vec<ItemPriceInfo> {
         self.items.values().cloned().collect()
+    }
+
+    fn has_shift(&self, wfm_id: &str, sub_type_key: &str) -> bool {
+        self.has_shift.contains(&(wfm_id.to_string(), sub_type_key.to_string()))
     }
 }
 
@@ -170,6 +222,9 @@ pub fn get_interesting_items(settings: &ItemSettings, prices: &dyn PriceSource) 
         .filter(|i| is_disabled(wtb.volume_threshold) || i.volume > wtb.volume_threshold as f64)
         .filter(|i| is_disabled(wtb.profit_threshold) || i.profit > wtb.profit_threshold as f64)
         .filter(|i| is_disabled(wtb.avg_price_cap) || i.avg_price <= wtb.avg_price_cap as f64)
+        // A shift threshold is meaningfully negative ("drop no more than 5 % a week"), so only the exact -1 sentinel disables it.
+        .filter(|i| wtb.price_shift_threshold == -1 || !prices.has_shift(&i.wfm_id, &key_of(&i.sub_type)) || i.week_price_shift >= wtb.price_shift_threshold as f64)
+        .filter(|i| is_disabled(wtb.trading_tax_cap) || i.trading_tax <= wtb.trading_tax_cap)
         .collect();
     items.sort_by(|a, b| {
         b.volume
@@ -256,6 +311,31 @@ mod tests {
         assert_eq!(ids(get_interesting_items(&settings, &prices)), vec!["d", "a"]);
         settings.wtb.profit_threshold = -1;
         assert_eq!(ids(get_interesting_items(&settings, &prices)), vec!["d", "b", "a"]);
+    }
+
+    #[test]
+    fn the_shift_filter_applies_only_to_items_that_have_a_shift() {
+        use crate::trader::blend::Effective;
+        let eff = |id: &str, shift: Option<f64>| Effective { stats: stats(id, "", 50.0, 50.0, 100.0), week_price_shift: shift, guarded: id == "falling", closed: shift.is_some() };
+        let prices = StatsPriceSource::from_effective(vec![eff("rising", Some(4.0)), eff("falling", Some(-9.0)), eff("unknown", None)], |id| Some(format!("{id}_slug")));
+        let mut settings = ItemSettings::default();
+        settings.wtb.price_shift_threshold = -5;
+        let mut ids: Vec<String> = get_interesting_items(&settings, &prices).into_iter().map(|i| i.wfm_id).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["rising", "unknown"], "-9 is below the -5 threshold; no shift always passes");
+        settings.wtb.price_shift_threshold = -1;
+        assert_eq!(get_interesting_items(&settings, &prices).len(), 3, "disabled");
+        assert!(prices.find_by("falling", &None).unwrap().guarded);
+        assert_eq!(prices.find_by("rising", &None).unwrap().week_price_shift, 4.0);
+    }
+
+    #[test]
+    fn the_trading_tax_cap_drops_expensive_to_trade_items() {
+        let prices = source(vec![stats("cheap", "", 50.0, 50.0, 100.0), stats("dear", "", 50.0, 50.0, 100.0)]).with_trade_tax(|id| Some(if id == "dear" { 1_000_000 } else { 2_000 }));
+        let mut settings = ItemSettings::default();
+        assert_eq!(get_interesting_items(&settings, &prices).len(), 2, "the cap is disabled by default");
+        settings.wtb.trading_tax_cap = 500_000;
+        assert_eq!(get_interesting_items(&settings, &prices).into_iter().map(|i| i.wfm_id).collect::<Vec<_>>(), vec!["cheap"]);
     }
 
     #[test]

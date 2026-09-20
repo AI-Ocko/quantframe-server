@@ -236,6 +236,9 @@ pub async fn progress_buying(
     let mut post_price = market_info.highest_price;
     let (order_id, current_order_price, mut properties, mut trade_operations) =
         get_order_info(entry, OrderType::Buy, &ctx.orders, route);
+    if price.guarded {
+        trade_operations.add("FastDropGuard"); // informational, spec §25 P5
+    }
 
     if entry.buy_market_info.volume == 0 || entry.sell_market_info.volume == 0 {
         log(&format!("Item {} has no market volume. Skipping WTB order creation.", item_info.name));
@@ -383,6 +386,9 @@ pub async fn progress_selling(
     let market_info = entry.sell_market_info.clone();
     let (_, current_order_price, mut properties, mut trade_operations) =
         get_order_info(entry, OrderType::Sell, &ctx.orders, route);
+    if price.guarded {
+        trade_operations.add("FastDropGuard"); // informational, spec §25 P5
+    }
 
     let (min_price, min_profit, min_sma) = (
         stock_item.properties.get_property_value("min_price", None::<i64>),
@@ -725,6 +731,21 @@ mod tests {
         let log = ctx.orders.dry_log();
         assert_eq!(log.len(), 1);
         assert_eq!((log[0].action.as_str(), log[0].side.as_str(), log[0].price, log[0].forced_by.as_str()), ("create", "buy", Some(17), "global"));
+    }
+
+    #[tokio::test]
+    async fn a_guarded_price_tags_the_order_with_fast_drop_guard() {
+        for guarded in [true, false] {
+            let (_dir, ctx) = ctx_with(true, |_| {}).await;
+            let live = book(&[20, 25], &[15, 17]);
+            let mut e = entry("Buy", None, None);
+            e.apply_market_info(&live);
+            let info = ItemPriceInfo { guarded, ..price(30.0, true) };
+            progress_buying(&ctx, &item_info(), &mut e, &info, &live, route_for(true, true)).await.unwrap();
+            let log = ctx.orders.dry_log();
+            assert_eq!(log.len(), 1);
+            assert_eq!(log[0].reason.contains("FastDropGuard"), guarded);
+        }
     }
 
     #[tokio::test]

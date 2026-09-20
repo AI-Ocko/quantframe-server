@@ -5,7 +5,7 @@ use utils::{get_location, Error};
 
 use crate::collector::backfill::{self, BackfillStatus};
 use crate::collector::market::{self, Movers, OverviewRow, Warmup};
-use crate::trader::price_source::all_item_stats;
+use crate::trader::price_source::{effective_stats, source_settings};
 use crate::utils::modules::states;
 use crate::DATABASE;
 
@@ -20,7 +20,8 @@ fn name_of() -> Result<impl Fn(&str) -> Option<(String, String)>, Error> {
 }
 
 pub async fn market_overview() -> Result<Vec<OverviewRow>, Error> {
-    let stats = all_item_stats(database()?).await?;
+    let (mode, guard_pct) = source_settings();
+    let stats: Vec<_> = effective_stats(database()?, mode, guard_pct, Utc::now()).await?.into_iter().map(|e| e.stats).collect();
     Ok(market::overview(stats, name_of()?))
 }
 
@@ -29,7 +30,8 @@ pub async fn market_movers(min_volume: f64) -> Result<Movers, Error> {
 }
 
 pub async fn market_warmup() -> Result<Warmup, Error> {
-    let stats = all_item_stats(database()?).await?;
+    let (mode, guard_pct) = source_settings();
+    let stats: Vec<_> = effective_stats(database()?, mode, guard_pct, Utc::now()).await?.into_iter().map(|e| e.stats).collect();
     Ok(market::warmup(&stats, Utc::now().date_naive()))
 }
 
