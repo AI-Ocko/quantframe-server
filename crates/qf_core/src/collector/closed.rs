@@ -189,10 +189,10 @@ pub async fn stale_items(conn: &DatabaseConnection, now: DateTime<Utc>) -> Resul
         "SELECT s.item_id, s.slug FROM sweep_state s LEFT JOIN closed_fetch_state f ON f.item_id = s.item_id
          WHERE s.active = 1 AND (
                f.item_id IS NULL
-            OR (f.outcome = 'failed' AND f.fetched_at < ?)
-            OR (f.outcome <> 'failed' AND f.fetched_at < ?))
+            OR f.fetched_at < ?
+            OR (f.outcome = 'failed' AND f.fetched_at < ?))
          ORDER BY f.fetched_at IS NOT NULL, f.fetched_at, s.item_id",
-        vec![ts(now - Duration::hours(FAILED_RETRY)).into(), ts(cutoff(now)).into()],
+        vec![ts(cutoff(now)).into(), ts(now - Duration::hours(FAILED_RETRY)).into()],
     ))
     .await
     .map_err(|e| db_err(C, e))?
@@ -400,6 +400,19 @@ mod tests {
         assert_eq!(stale_items(&conn, now).await.unwrap().len(), 2);
         exec(&conn, "Test", "UPDATE sweep_state SET active = 0 WHERE item_id = 'item1'", vec![]).await.unwrap();
         assert_eq!(stale_items(&conn, now).await.unwrap().len(), 1, "inactive items are skipped");
+    }
+
+    #[tokio::test]
+    async fn a_failure_from_before_the_cutoff_is_stale_even_within_the_hour() {
+        let (_dir, conn) = setup().await;
+        let now = parse_ts("2026-09-20T01:00:00Z").unwrap(); // cutoff 00:30, the failed hour reaches back to 00:00
+        set_fetch_state(&conn, "item1", parse_ts("2026-09-20T00:15:00Z").unwrap(), "failed").await.unwrap();
+        set_fetch_state(&conn, "item2", parse_ts("2026-09-20T00:45:00Z").unwrap(), "failed").await.unwrap();
+        assert_eq!(
+            stale_items(&conn, now).await.unwrap(),
+            vec![("item1".to_string(), "slug1".to_string())],
+            "item1 failed before today's cutoff; item2 failed after it and is under an hour old"
+        );
     }
 
     #[test]
