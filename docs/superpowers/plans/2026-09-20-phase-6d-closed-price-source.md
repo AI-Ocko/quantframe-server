@@ -1593,6 +1593,80 @@ Never add `--delete-excluded`: it would remove `secrets/`, `backups/` and `.env`
 
 ---
 
+### Task 6: Acceptance follow-up — max-rank buy candidates and language-file revalidation
+
+Added during acceptance (spec §25 P13). Runs after Tasks 1–4 and the final review; Task 5's deploy is repeated afterwards.
+
+**Files:**
+- Modify: `crates/qf_core/src/trader/price_source.rs`, `crates/qf_core/src/trader/compare.rs`, `crates/qf_core/src/commands/market.rs`, `web/src/App.tsx`, `web/src/contexts/app.context.tsx`
+
+**Interfaces:**
+- Consumes: `StatsPriceSource::{from_effective, with_trade_tax}`, `get_interesting_items`, `compare::ItemLookup`, `CacheTradableItem.sub_type: Option<CacheSubType { max_rank: Option<i64>, .. }>`, `utils::SubType { rank: Option<i64>, .. }`.
+- Produces:
+
+```rust
+// price_source.rs
+pub struct ItemPriceInfo { /* existing fields */ pub max_rank: Option<i64> }   // #[serde(default)]
+impl StatsPriceSource { pub fn with_max_rank(self, max_rank_of: impl Fn(&str) -> Option<i64>) -> Self; }
+// compare.rs
+pub struct ItemLookup { pub name: String, pub wfm_url: String, pub trade_tax: i64, pub max_rank: Option<i64> }
+```
+
+- [ ] **Step 1: Failing test** in `price_source.rs`'s test module:
+
+```rust
+    #[test]
+    fn only_the_maximum_rank_of_a_ranked_item_is_a_buy_candidate() {
+        let prices = source(vec![
+            stats("mod", "rank=0", 90.0, 50.0, 20.0),
+            stats("mod", "rank=10", 40.0, 50.0, 80.0),
+            stats("set", "", 30.0, 50.0, 100.0),
+            stats("relic", "subtype=intact", 25.0, 50.0, 10.0),
+            stats("unknown_max", "rank=0", 20.0, 50.0, 10.0),
+        ])
+        .with_max_rank(|id| (id == "mod").then_some(10));
+        let ids: Vec<String> = get_interesting_items(&ItemSettings::default(), &prices).into_iter().map(|i| i.uuid).collect();
+        assert_eq!(ids, vec!["mod:rank=10", "set:", "relic:subtype=intact", "unknown_max:rank=0"], "rank 0 of a rank-10 mod is dropped; unranked items and items with no known max rank stay");
+        assert_eq!(prices.find_by("mod", &sub_type_from_key("rank=0")).unwrap().max_rank, Some(10), "find_by still serves the rank-0 key for stock and wish-list items");
+    }
+```
+
+  Run `cargo test -p qf_core --lib trader::price_source` — expected: FAIL to compile (`with_max_rank`, `max_rank` not found).
+
+- [ ] **Step 2: Implement.** Add `#[serde(default)] pub max_rank: Option<i64>,` to `ItemPriceInfo` (after `guarded`); set `max_rank: None` in `from_effective`'s literal; add beside `with_trade_tax`:
+
+```rust
+    /// Fills `max_rank` from the tradable cache (spec §25 P13); items without ranks keep `None`.
+    pub fn with_max_rank(mut self, max_rank_of: impl Fn(&str) -> Option<i64>) -> Self {
+        for info in self.items.values_mut() {
+            info.max_rank = max_rank_of(&info.wfm_id);
+        }
+        self
+    }
+```
+
+  chain it in `load` after `with_trade_tax`: `.with_max_rank(|id| tradable.get_by(id).ok().and_then(|item| item.sub_type.and_then(|s| s.max_rank)))`; and add to `get_interesting_items`, after the trading-tax filter:
+
+```rust
+        // Upstream lists mods and arcanes only at their maximum rank (spec §25 P13).
+        .filter(|i| match (i.sub_type.as_ref().and_then(|s| s.rank), i.max_rank) {
+            (Some(rank), Some(max)) => rank >= max,
+            _ => true,
+        })
+```
+
+  Run the test — expected: PASS, and every other `price_source` test still passes.
+
+- [ ] **Step 3: `compare` follows.** Add `pub max_rank: Option<i64>` to `ItemLookup`; in `compare`'s `candidates` closure chain `.with_max_rank(|id| lookup(id).and_then(|l| l.max_rank))` after `with_trade_tax`; in `commands/market.rs` fill it: `max_rank: item.sub_type.as_ref().and_then(|s| s.max_rank)` (bind before `item.name` is moved). Update the `ItemLookup { .. }` literal in `compare.rs`'s test with `max_rank: None`, then extend that test: add an inferred and a closed row for a key `("ranked", "rank=0")` with a lookup returning `max_rank: Some(5)` for `ranked`, and assert its row has `candidate_inferred == false` and `candidate_closed == false` while the counts for the other items are unchanged. RED first (the row is a candidate before the chain is added), then GREEN.
+
+- [ ] **Step 4: Language files revalidate.** In `web/src/App.tsx` change `fetch("/lang/en.json")` to `fetch("/lang/en.json", { cache: "no-cache" })`; in `web/src/contexts/app.context.tsx` change ``fetch(`/lang/${lang}.json`)`` to ``fetch(`/lang/${lang}.json`, { cache: "no-cache" })``. Nothing else in either file.
+
+- [ ] **Step 5: Full gate.** `cargo test -p utils --lib && cargo test -p qf_core --lib && cargo test -p qf-server && python3 scripts/check-rpc-commands.py && (cd web && pnpm build)` — green, no new warnings.
+
+- [ ] **Step 6: Commit** as two commits: `fix(trader): buy only the maximum rank of ranked items, as upstream does` and `fix(web): revalidate the language file on every load`. Do not push.
+
+---
+
 ## Self-Review (done while writing)
 
 - **Spec coverage:** P1 → Task 1 Steps 1, 5; P2 → Task 2 (loop, lane, stale order, failed retry, pass log, retention, import button); P3 → Task 1 `aggregate`/`load_fresh`; P4 → Task 3 `blend`; P5 → Task 3 guard + Step 6 tag; P6 → Task 3 Steps 4–6b; P7 → Task 3 Steps 1, 5, 7 and Task 4 Step 6; P8 → Task 4; P9 → nothing built, by design; P10 → tests in Tasks 1–4; P11 → Task 5.
