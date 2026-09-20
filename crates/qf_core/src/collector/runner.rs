@@ -10,7 +10,7 @@ use chrono::{Duration, Utc};
 use service::sea_orm::DatabaseConnection;
 use utils::{error, get_location, info, warning, Error, LoggerOptions};
 
-use super::backfill::HttpStatisticsSource;
+use super::backfill::{HttpStatisticsSource, WFM_API_V1};
 use super::closed;
 use super::fetch::{fetch_with_retries, FetchError, HttpOrderSource, OrderSource, WFM_API_V2};
 use super::health::HealthTracker;
@@ -295,8 +295,6 @@ async fn item_refresh_loop(collector: Arc<Collector>, cache_dir: PathBuf, http: 
         }
     }
 }
-
-const WFM_API_V1: &str = "https://api.warframe.market/v1";
 
 /// One closed-statistics fetch every `CLOSED_PACE_S` while anything is stale (spec §25 P2).
 async fn closed_stats_loop(collector: Arc<Collector>, http: reqwest::Client) {

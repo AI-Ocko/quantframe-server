@@ -149,12 +149,13 @@ pub async fn load_fresh(conn: &DatabaseConnection, now: DateTime<Utc>, warm_min_
     let today = now.date_naive();
     let rows = conn
         .query_all(stmt(
-            "SELECT d.item_id, d.sub_type, d.day, d.volume, d.median, d.min_price, d.max_price, d.wa_price
+            "SELECT d.item_id, d.sub_type, d.day, d.volume, d.median, d.min_price, d.max_price, d.wa_price, f.fetched_at
              FROM closed_stats_daily d JOIN closed_fetch_state f ON f.item_id = d.item_id
              WHERE f.outcome = 'ok' AND f.fetched_at >= ? AND d.day >= ? AND d.day < ?",
             vec![
                 ts(now - Duration::days(FRESH_DAYS)).into(),
-                (today - Duration::days(WINDOW_DAYS)).to_string().into(),
+                // One day wider than W: an item fetched before the cutoff is aggregated a day back.
+                (today - Duration::days(WINDOW_DAYS + 1)).to_string().into(),
                 today.to_string().into(),
             ],
         ))
@@ -163,19 +164,29 @@ pub async fn load_fresh(conn: &DatabaseConnection, now: DateTime<Utc>, warm_min_
         .iter()
         .map(|r| {
             let day: String = r.try_get("", "day").map_err(|e| db_err(C, e))?;
-            Ok(ClosedRow {
-                item_id: r.try_get("", "item_id").map_err(|e| db_err(C, e))?,
-                sub_type: r.try_get("", "sub_type").map_err(|e| db_err(C, e))?,
-                day: NaiveDate::parse_from_str(&day, "%Y-%m-%d").map_err(|e| db_err(C, e))?,
-                volume: r.try_get("", "volume").map_err(|e| db_err(C, e))?,
-                median: r.try_get("", "median").map_err(|e| db_err(C, e))?,
-                min_price: r.try_get("", "min_price").map_err(|e| db_err(C, e))?,
-                max_price: r.try_get("", "max_price").map_err(|e| db_err(C, e))?,
-                wa_price: r.try_get("", "wa_price").map_err(|e| db_err(C, e))?,
-            })
+            let fetched_at: String = r.try_get("", "fetched_at").map_err(|e| db_err(C, e))?;
+            Ok((
+                ClosedRow {
+                    item_id: r.try_get("", "item_id").map_err(|e| db_err(C, e))?,
+                    sub_type: r.try_get("", "sub_type").map_err(|e| db_err(C, e))?,
+                    day: NaiveDate::parse_from_str(&day, "%Y-%m-%d").map_err(|e| db_err(C, e))?,
+                    volume: r.try_get("", "volume").map_err(|e| db_err(C, e))?,
+                    median: r.try_get("", "median").map_err(|e| db_err(C, e))?,
+                    min_price: r.try_get("", "min_price").map_err(|e| db_err(C, e))?,
+                    max_price: r.try_get("", "max_price").map_err(|e| db_err(C, e))?,
+                    wa_price: r.try_get("", "wa_price").map_err(|e| db_err(C, e))?,
+                },
+                fetched_at,
+            ))
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    Ok(aggregate(rows, today, warm_min_trades))
+    // spec §25 P12: an item fetched before today's cutoff cannot hold today − 1, so its window ends a day earlier.
+    let cutoff_at = ts(cutoff(now));
+    let (current, behind): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(_, fetched_at)| *fetched_at >= cutoff_at);
+    let days_of = |rows: Vec<(ClosedRow, String)>| rows.into_iter().map(|(row, _)| row).collect();
+    let mut stats = aggregate(days_of(current), today, warm_min_trades);
+    stats.extend(aggregate(days_of(behind), today - Duration::days(1), warm_min_trades));
+    Ok(stats)
 }
 
 pub const CLOSED_PACE_S: u64 = 10;
@@ -183,9 +194,10 @@ pub const IDLE_SLEEP_S: u64 = 60;
 pub const CLOSED_RETENTION_DAYS: i64 = 90;
 const FAILED_RETRY: i64 = 1; // hours
 
-/// warframe.market publishes yesterday's row shortly after midnight UTC; half past is a safe margin (spec §25 P2).
+/// The only evidence of when warframe.market publishes yesterday's row is the probe that found it
+/// present by 08:05 UTC, so the daily cutoff is 08:30 UTC (spec §25 P12).
 pub fn cutoff(now: DateTime<Utc>) -> DateTime<Utc> {
-    let today = now.date_naive().and_hms_opt(0, 30, 0).expect("valid time").and_utc();
+    let today = now.date_naive().and_hms_opt(8, 30, 0).expect("valid time").and_utc();
     if now >= today {
         today
     } else {
@@ -382,6 +394,32 @@ mod tests {
         assert!(load_fresh(&conn, now, 10).await.unwrap().is_empty(), "a failed state is not fresh");
     }
 
+    #[tokio::test]
+    async fn load_fresh_anchors_the_window_on_the_fetch() {
+        let (_dir, conn) = setup().await;
+        let now = parse_ts("2026-09-20T16:00:00Z").unwrap(); // today's cutoff is 08:30
+        let eight: Vec<ClosedDay> = (12..=19).map(|d| closed_day(&format!("2026-09-{d}"), 4, 50.0)).collect();
+        upsert_days(&conn, "item1", &eight).await.unwrap();
+        upsert_days(&conn, "item2", &eight).await.unwrap();
+        set_fetch_state(&conn, "item1", parse_ts("2026-09-20T09:00:00Z").unwrap(), "ok").await.unwrap();
+        set_fetch_state(&conn, "item2", parse_ts("2026-09-20T08:00:00Z").unwrap(), "ok").await.unwrap();
+        let by_id = |fresh: Vec<ClosedStats>| -> BTreeMap<String, ClosedStats> { fresh.into_iter().map(|s| (s.item_id.clone(), s)).collect() };
+
+        let fresh = by_id(load_fresh(&conn, now, 10).await.unwrap());
+        assert_eq!(fresh.len(), 2);
+        for (id, s) in &fresh {
+            assert_eq!((s.days, s.trades), (7, 28), "{id} covers a full seven days either way");
+        }
+
+        // A distinctive volume on today − 1: only an item fetched after the cutoff can hold it.
+        for id in ["item1", "item2"] {
+            upsert_days(&conn, id, &[closed_day("2026-09-19", 40, 50.0)]).await.unwrap();
+        }
+        let fresh = by_id(load_fresh(&conn, now, 10).await.unwrap());
+        assert_eq!((fresh["item1"].days, fresh["item1"].trades), (7, 64), "fetched after the cutoff: 09-13 ..= 09-19");
+        assert_eq!((fresh["item2"].days, fresh["item2"].trades), (7, 28), "fetched before it: 09-12 ..= 09-18");
+    }
+
     #[test]
     fn aggregate_falls_back_to_the_moving_average_without_a_weighted_price() {
         let bare = |d: &str, volume: i64, median: f64| ClosedRow { wa_price: None, ..row(d, volume, median, 0.0) };
@@ -391,15 +429,15 @@ mod tests {
     }
 
     #[test]
-    fn cutoff_is_the_most_recent_half_past_midnight_utc() {
-        assert_eq!(ts(cutoff(parse_ts("2026-09-20T08:00:00Z").unwrap())), "2026-09-20T00:30:00Z");
-        assert_eq!(ts(cutoff(parse_ts("2026-09-20T00:10:00Z").unwrap())), "2026-09-19T00:30:00Z");
+    fn cutoff_is_the_most_recent_half_past_eight_utc() {
+        assert_eq!(ts(cutoff(parse_ts("2026-09-20T16:00:00Z").unwrap())), "2026-09-20T08:30:00Z");
+        assert_eq!(ts(cutoff(parse_ts("2026-09-20T08:00:00Z").unwrap())), "2026-09-19T08:30:00Z");
     }
 
     #[tokio::test]
     async fn stale_items_honour_the_cutoff_the_failed_hour_and_inactive_items() {
         let (_dir, conn) = setup().await; // item1/slug1 and item2/slug2, both active
-        let now = parse_ts("2026-09-20T08:00:00Z").unwrap();
+        let now = parse_ts("2026-09-20T16:00:00Z").unwrap(); // today's cutoff is 08:30
         assert_eq!(stale_items(&conn, now).await.unwrap().len(), 2, "never fetched");
         set_fetch_state(&conn, "item1", now - Duration::hours(2), "ok").await.unwrap();
         assert_eq!(stale_items(&conn, now).await.unwrap(), vec![("item2".to_string(), "slug2".to_string())], "item1 was fetched after today's cutoff");
@@ -416,9 +454,9 @@ mod tests {
     #[tokio::test]
     async fn a_failure_from_before_the_cutoff_is_stale_even_within_the_hour() {
         let (_dir, conn) = setup().await;
-        let now = parse_ts("2026-09-20T01:00:00Z").unwrap(); // cutoff 00:30, the failed hour reaches back to 00:00
-        set_fetch_state(&conn, "item1", parse_ts("2026-09-20T00:15:00Z").unwrap(), "failed").await.unwrap();
-        set_fetch_state(&conn, "item2", parse_ts("2026-09-20T00:45:00Z").unwrap(), "failed").await.unwrap();
+        let now = parse_ts("2026-09-20T09:00:00Z").unwrap(); // cutoff 08:30, the failed hour reaches back to 08:00
+        set_fetch_state(&conn, "item1", parse_ts("2026-09-20T08:15:00Z").unwrap(), "failed").await.unwrap();
+        set_fetch_state(&conn, "item2", parse_ts("2026-09-20T08:45:00Z").unwrap(), "failed").await.unwrap();
         assert_eq!(
             stale_items(&conn, now).await.unwrap(),
             vec![("item1".to_string(), "slug1".to_string())],
@@ -437,7 +475,7 @@ mod tests {
     #[tokio::test]
     async fn refresh_once_writes_ok_missing_and_failed_states() {
         let (_dir, conn) = setup().await;
-        let now = parse_ts("2026-09-20T08:00:00Z").unwrap();
+        let now = parse_ts("2026-09-20T16:00:00Z").unwrap(); // after today's 08:30 cutoff
         let limiter = Limiter::new(1000);
         let source = scripted(vec![
             ("slug1", vec![Ok(SMALL.to_string())]),

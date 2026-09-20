@@ -95,6 +95,9 @@ pub async fn insert_missing(conn: &DatabaseConnection, item_id: &str, days: &[Cl
     Ok(inserted)
 }
 
+/// The one warframe.market v1 base URL (spec §1: the statistics endpoint is the only v1 call besides sign-in).
+pub const WFM_API_V1: &str = "https://api.warframe.market/v1";
+
 pub type StatsFuture<'a> = Pin<Box<dyn Future<Output = Result<String, FetchError>> + Send + 'a>>;
 
 pub trait StatisticsSource: Send + Sync {
@@ -231,10 +234,11 @@ pub async fn run(conn: &DatabaseConnection, source: &dyn StatisticsSource, limit
     for (item_id, slug) in items {
         let outcome = match fetch_with_retries(source, limiter, Lane::Hot, &slug).await {
             Ok(body) => match parse_statistics(&body) {
+                // spec §25 P12: `item_stats_daily` first, exactly as before this phase, so a failure on the new table cannot cost it a row.
                 Ok(days) => async {
+                    let inserted = insert_missing(conn, &item_id, &days).await?;
                     super::closed::upsert_days(conn, &item_id, &days).await?;
-                    super::closed::set_fetch_state(conn, &item_id, Utc::now(), "ok").await?;
-                    insert_missing(conn, &item_id, &days).await.map(Some)
+                    super::closed::set_fetch_state(conn, &item_id, Utc::now(), "ok").await.map(|()| Some(inserted))
                 }
                 .await,
                 Err(e) => Err(e),
@@ -298,7 +302,7 @@ pub fn start(conn: DatabaseConnection, items: Vec<(String, String)>) -> Backfill
     };
     tokio::spawn(watch(tokio::spawn(async move {
         let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().unwrap_or_default();
-        let source = HttpStatisticsSource::new(http, "https://api.warframe.market/v1");
+        let source = HttpStatisticsSource::new(http, WFM_API_V1);
         run(&conn, &source, crate::market::limiter::global(), items).await
     })));
     fresh
