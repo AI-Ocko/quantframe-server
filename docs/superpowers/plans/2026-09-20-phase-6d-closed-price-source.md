@@ -519,10 +519,10 @@ pub async fn stale_items(conn: &DatabaseConnection, now: DateTime<Utc>) -> Resul
         "SELECT s.item_id, s.slug FROM sweep_state s LEFT JOIN closed_fetch_state f ON f.item_id = s.item_id
          WHERE s.active = 1 AND (
                f.item_id IS NULL
-            OR (f.outcome = 'failed' AND f.fetched_at < ?)
-            OR (f.outcome <> 'failed' AND f.fetched_at < ?))
+            OR f.fetched_at < ?
+            OR (f.outcome = 'failed' AND f.fetched_at < ?))
          ORDER BY f.fetched_at IS NOT NULL, f.fetched_at, s.item_id",
-        vec![ts(now - Duration::hours(FAILED_RETRY)).into(), ts(cutoff(now)).into()],
+        vec![ts(cutoff(now)).into(), ts(now - Duration::hours(FAILED_RETRY)).into()],
     ))
     .await
     .map_err(|e| db_err(C, e))?
