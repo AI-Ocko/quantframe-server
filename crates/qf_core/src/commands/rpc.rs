@@ -66,6 +66,7 @@ rpc_table! {
     market_warmup => market::market_warmup {},
     market_backfill_start => market::market_backfill_start {},
     market_backfill_status => market::market_backfill_status {},
+    market_price_sources => market::market_price_sources {},
     analytics_items => analytics::analytics_items { from: String, to: String },
     analytics_stock => analytics::analytics_stock {},
     analytics_partners => analytics::analytics_partners { from: String, to: String },
@@ -174,7 +175,7 @@ mod tests {
 
     #[tokio::test]
     async fn market_commands_are_routable_and_validate_args() {
-        for name in ["market_overview", "market_movers", "market_warmup"] {
+        for name in ["market_overview", "market_movers", "market_warmup", "market_price_sources"] {
             assert!(COMMANDS.contains(&name), "{name}");
         }
         assert!(dispatch("market_movers", json!({"minVolume": "three"})).await.unwrap().is_err(), "min_volume must be a number");

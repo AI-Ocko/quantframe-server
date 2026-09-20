@@ -7,7 +7,7 @@ import { ActionWithTooltip } from "@components/Shared/ActionWithTooltip";
 import { TextTranslate } from "@components/Shared/TextTranslate";
 import { faHandshake, faTrash } from "@fortawesome/free-solid-svg-icons";
 import { useTranslateCommon, useTranslateEnums, useTranslateForms } from "@hooks/useTranslate.hook";
-import { Box, Button, Checkbox, Divider, Flex, Group, Modal, MultiSelect, Paper, RangeSlider, Select, Stack, Tooltip } from "@mantine/core";
+import { Box, Button, Checkbox, Divider, Flex, Group, Modal, MultiSelect, NumberInput, Paper, RangeSlider, Select, Stack, Tooltip } from "@mantine/core";
 import { useForm, UseFormReturnType } from "@mantine/form";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
@@ -217,6 +217,29 @@ export const GeneralPanel = ({ form, setHideTab, setHideButtons }: GeneralPanelP
                 checked={form.values.live_scraper.general.delete_conflicting_orders}
                 onChange={(event) => form.setFieldValue(getFieldPath("general.delete_conflicting_orders"), event.currentTarget.checked)}
                 error={form.errors.delete_conflicting_orders}
+              />
+            </Tooltip>
+          </Group>
+          <Group gap={"md"} mt={25} align="end">
+            <Tooltip label={useTranslateFormFields("price_source.tooltip")}>
+              <Select
+                label={useTranslateFormFields("price_source.label")}
+                allowDeselect={false}
+                data={[
+                  { value: "inferred", label: useTranslateFormFields("price_source.options.inferred") },
+                  { value: "closed", label: useTranslateFormFields("price_source.options.closed") },
+                ]}
+                value={form.values.live_scraper.general.price_source}
+                onChange={(value) => form.setFieldValue(getFieldPath("general.price_source"), value ?? "inferred")}
+              />
+            </Tooltip>
+            <Tooltip label={useTranslateFormFields("fast_drop_guard_pct.tooltip")}>
+              <NumberInput
+                label={useTranslateFormFields("fast_drop_guard_pct.label")}
+                min={-1}
+                max={90}
+                value={form.values.live_scraper.general.fast_drop_guard_pct}
+                onChange={(value) => form.setFieldValue(getFieldPath("general.fast_drop_guard_pct"), Number(value))}
               />
             </Tooltip>
           </Group>

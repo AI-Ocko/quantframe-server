@@ -1,6 +1,6 @@
 //! warframe.market closed-trade dailies as a price basis (spec §25 P1–P3).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::Serialize;
@@ -130,6 +130,17 @@ pub async fn set_fetch_state(conn: &DatabaseConnection, item_id: &str, at: DateT
     .await
     .map_err(|e| db_err("ClosedStats:State", e))?;
     Ok(())
+}
+
+/// `item_id -> fetched_at` for every item whose last fetch succeeded.
+pub async fn fetch_times(conn: &DatabaseConnection) -> Result<HashMap<String, String>, Error> {
+    const C: &str = "ClosedStats:FetchTimes";
+    conn.query_all(stmt("SELECT item_id, fetched_at FROM closed_fetch_state WHERE outcome = 'ok'", vec![]))
+        .await
+        .map_err(|e| db_err(C, e))?
+        .iter()
+        .map(|r| Ok((r.try_get("", "item_id").map_err(|e| db_err(C, e))?, r.try_get("", "fetched_at").map_err(|e| db_err(C, e))?)))
+        .collect()
 }
 
 /// Closed stats for every item whose last fetch was `ok` within `FRESH_DAYS` (spec §25 P3).
@@ -437,6 +448,7 @@ mod tests {
         assert_eq!(refresh_once(&conn, &source, &limiter, &HashSet::new(), now).await.unwrap(), None, "both were fetched after the cutoff");
         let status = refresh_status(&conn, now).await.unwrap();
         assert_eq!((status.active, status.ok, status.missing, status.failed, status.stale), (2, 1, 1, 0, 0));
+        assert_eq!(fetch_times(&conn).await.unwrap().keys().collect::<Vec<_>>(), vec!["item1"]);
         let days: i64 = conn.query_one(stmt("SELECT COUNT(*) AS n FROM closed_stats_daily WHERE item_id = 'item1'", vec![])).await.unwrap().unwrap().try_get("", "n").unwrap();
         assert_eq!(days, 4, "the four fixture rows");
 

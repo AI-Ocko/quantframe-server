@@ -108,6 +108,8 @@ export namespace TauriTypes {
     stock_mode: StockMode;
     trade_modes: TradeMode[];
     delete_conflicting_orders: boolean;
+    price_source: "inferred" | "closed";
+    fast_drop_guard_pct: number;
   }
   export interface WFInventorySettings {
     inv_path: string;
@@ -1271,6 +1273,32 @@ export namespace TauriTypes {
     items_missing: number;
     items_failed: number;
     last_error?: string | null;
+  }
+  export interface MarketPriceSourceRow {
+    item_id: string;
+    sub_type: string;
+    name: string;
+    wfm_url: string;
+    inferred_volume: number | null;
+    inferred_moving_avg: number | null;
+    closed_volume: number | null;
+    closed_moving_avg: number | null;
+    closed_days: number | null;
+    week_price_shift: number | null;
+    profit: number | null;
+    warm_inferred: boolean;
+    warm_closed: boolean;
+    candidate_inferred: boolean;
+    candidate_closed: boolean;
+    guarded: boolean;
+    fetched_at: string | null;
+  }
+  export interface MarketPriceSources {
+    mode: "inferred" | "closed";
+    guard_pct: number;
+    refresh: { active: number; ok: number; missing: number; failed: number; stale: number; oldest_fetched_at: string | null };
+    candidates: { inferred: number; closed: number; both: number };
+    rows: MarketPriceSourceRow[];
   }
   export interface MarketTradePoint {
     vanished_at: string;

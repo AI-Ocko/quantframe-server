@@ -1308,6 +1308,18 @@
                   "error": "Invalid auto delete",
                   "tooltip": "Automatically delete stock items"
                 },
+                "price_source": {
+                  "label": "Price source",
+                  "tooltip": "Inferred: the collector's own statistics. Closed: warframe.market's closed-trade statistics blended with the collector's live data. Change it only while in dry-run.",
+                  "options": {
+                    "inferred": "Inferred (collector)",
+                    "closed": "Closed trades (warframe.market)"
+                  }
+                },
+                "fast_drop_guard_pct": {
+                  "label": "Fast-drop guard (%)",
+                  "tooltip": "Closed mode only. When the collector's 48-hour average is this far below the closed 7-day average, the lower figure is used. -1 turns it off."
+                },
                 "delete_conflicting_orders": {
                   "label": "Should Delete Other Trade Types",
                   "error": "Invalid should delete other trade types",
@@ -2122,6 +2134,30 @@
           "trades_title": "Trades in the last 7 days",
           "warm_count": "Warm items",
           "items": "Items"
+        },
+        "price_source": {
+          "title": "Price source",
+          "mode": "Trader is using: {{mode}} · fast-drop guard {{guard}} %",
+          "modes": { "inferred": "inferred statistics", "closed": "closed-trade statistics" },
+          "refresh": "Closed statistics: {{ok}} of {{active}} items fetched, {{missing}} missing, {{failed}} failed, {{stale}} waiting for today's refresh",
+          "candidates": { "inferred": "Buy candidates (inferred)", "closed": "Buy candidates (closed)", "both": "In both" },
+          "search": "Search",
+          "only_diffs": "Differences only",
+          "yes": "Yes",
+          "no": "No",
+          "columns": {
+            "name": "Item",
+            "inferred_volume": "Volume/day (inferred)",
+            "closed_volume": "Volume/day (closed)",
+            "inferred_moving_avg": "Moving avg (inferred)",
+            "closed_moving_avg": "Moving avg (closed)",
+            "week_price_shift": "Week shift",
+            "profit": "Profit",
+            "closed_days": "Closed days",
+            "candidate_inferred": "Candidate (inferred)",
+            "candidate_closed": "Candidate (closed)",
+            "guarded": "Guard"
+          }
         }
       }
     },

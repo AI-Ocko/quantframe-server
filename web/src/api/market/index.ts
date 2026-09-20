@@ -19,4 +19,7 @@ export class MarketModule {
   backfillStatus() {
     return this.client.sendInvoke<TauriTypes.MarketBackfillStatus>("market_backfill_status");
   }
+  priceSources() {
+    return this.client.sendInvoke<TauriTypes.MarketPriceSources>("market_price_sources");
+  }
 }
