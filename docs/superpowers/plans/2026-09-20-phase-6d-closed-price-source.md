@@ -915,7 +915,7 @@ Run `cargo test -p qf_core --lib trader::blend` — expected: PASS.
     }
 ```
 
-Note `-1` is the codebase's "disabled" value (`is_disabled`), so a threshold of exactly −1 p cannot be expressed; that matches the desktop app and is accepted. Run `cargo test -p qf_core --lib trader::price_source` — expected: FAIL to compile (`from_effective`, `guarded` not found).
+Note that for this setting only exactly `-1` means disabled (spec §25 P6), so a threshold of exactly −1 p cannot be expressed; that is accepted. Run `cargo test -p qf_core --lib trader::price_source` — expected: FAIL to compile (`from_effective`, `guarded` not found).
 
 - [ ] **Step 5: Implement in `price_source.rs`.**
   1. `ItemPriceInfo`: add `#[serde(default)] pub guarded: bool,` after `history_days`.
@@ -930,7 +930,8 @@ Note `-1` is the codebase's "disabled" value (`is_disabled`), so a threshold of 
   3. `PriceSource` trait: add `fn has_shift(&self, wfm_id: &str, sub_type_key: &str) -> bool { false }` with that default body, and implement it on `StatsPriceSource` as `self.has_shift.contains(&(wfm_id.to_string(), sub_type_key.to_string()))`. In `get_interesting_items` add, after the `avg_price_cap` filter:
 
 ```rust
-        .filter(|i| is_disabled(wtb.price_shift_threshold) || !prices.has_shift(&i.wfm_id, &key_of(&i.sub_type)) || i.week_price_shift >= wtb.price_shift_threshold as f64)
+        // Only exactly -1 disables this one: shift thresholds are naturally negative (spec §25 P6), so `is_disabled` (<= -1) would switch them all off.
+        .filter(|i| wtb.price_shift_threshold == -1 || !prices.has_shift(&i.wfm_id, &key_of(&i.sub_type)) || i.week_price_shift >= wtb.price_shift_threshold as f64)
 ```
 
   4. Loader and settings accessor:
