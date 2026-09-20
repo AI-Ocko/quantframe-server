@@ -1,14 +1,17 @@
 //! warframe.market closed-trade dailies as a price basis (spec §25 P1–P3).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::Serialize;
 use service::sea_orm::{ConnectionTrait, DatabaseConnection, TransactionTrait};
-use utils::Error;
+use utils::{get_location, warning, Error, LoggerOptions};
 
-use super::backfill::ClosedDay;
+use super::backfill::{fetch_with_retries, parse_statistics, ClosedDay, StatisticsSource};
+use super::fetch::FetchError;
+use super::store::exec;
 use super::{db_err, stmt, ts};
+use crate::market::limiter::{Lane, Limiter};
 
 pub const WINDOW_DAYS: i64 = 7;
 pub const WARM_MIN_DAYS: usize = 5;
@@ -164,11 +167,135 @@ pub async fn load_fresh(conn: &DatabaseConnection, now: DateTime<Utc>, warm_min_
     Ok(aggregate(rows, today, warm_min_trades))
 }
 
+pub const CLOSED_PACE_S: u64 = 10;
+pub const IDLE_SLEEP_S: u64 = 60;
+pub const CLOSED_RETENTION_DAYS: i64 = 90;
+const FAILED_RETRY: i64 = 1; // hours
+
+/// warframe.market publishes yesterday's row shortly after midnight UTC; half past is a safe margin (spec §25 P2).
+pub fn cutoff(now: DateTime<Utc>) -> DateTime<Utc> {
+    let today = now.date_naive().and_hms_opt(0, 30, 0).expect("valid time").and_utc();
+    if now >= today {
+        today
+    } else {
+        today - Duration::days(1)
+    }
+}
+
+/// Active items that need a fetch: never fetched first, then oldest fetch, then item id (spec §25 P2).
+pub async fn stale_items(conn: &DatabaseConnection, now: DateTime<Utc>) -> Result<Vec<(String, String)>, Error> {
+    const C: &str = "ClosedStats:Stale";
+    conn.query_all(stmt(
+        "SELECT s.item_id, s.slug FROM sweep_state s LEFT JOIN closed_fetch_state f ON f.item_id = s.item_id
+         WHERE s.active = 1 AND (
+               f.item_id IS NULL
+            OR (f.outcome = 'failed' AND f.fetched_at < ?)
+            OR (f.outcome <> 'failed' AND f.fetched_at < ?))
+         ORDER BY f.fetched_at IS NOT NULL, f.fetched_at, s.item_id",
+        vec![ts(now - Duration::hours(FAILED_RETRY)).into(), ts(cutoff(now)).into()],
+    ))
+    .await
+    .map_err(|e| db_err(C, e))?
+    .iter()
+    .map(|r| Ok((r.try_get("", "item_id").map_err(|e| db_err(C, e))?, r.try_get("", "slug").map_err(|e| db_err(C, e))?)))
+    .collect()
+}
+
+pub fn pick(stale: &[(String, String)], hot: &HashSet<String>) -> Option<(String, String)> {
+    stale.iter().find(|(id, _)| hot.contains(id)).or_else(|| stale.first()).cloned()
+}
+
+/// Fetches one stale item through the Cold lane. `None` when nothing is stale; otherwise the stale count before this fetch.
+pub async fn refresh_once(
+    conn: &DatabaseConnection,
+    source: &dyn StatisticsSource,
+    limiter: &Limiter,
+    hot: &HashSet<String>,
+    now: DateTime<Utc>,
+) -> Result<Option<usize>, Error> {
+    const C: &str = "ClosedStats";
+    let stale = stale_items(conn, now).await?;
+    let Some((item_id, slug)) = pick(&stale, hot) else { return Ok(None) };
+    let outcome = match fetch_with_retries(source, limiter, Lane::Cold, &slug).await {
+        Ok(body) => match parse_statistics(&body) {
+            Ok(days) => upsert_days(conn, &item_id, &days).await.map(|_| "ok"),
+            Err(e) => Err(e),
+        },
+        Err(FetchError::NotFound) => Ok("missing"),
+        Err(e) => Err(Error::new(C, e.to_string(), get_location!())),
+    };
+    let outcome = outcome.unwrap_or_else(|e| {
+        warning(C, format!("{slug}: {}", e.message), &LoggerOptions::default());
+        "failed"
+    });
+    set_fetch_state(conn, &item_id, now, outcome).await?;
+    Ok(Some(stale.len()))
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct RefreshStatus {
+    pub active: i64,
+    pub ok: i64,
+    pub missing: i64,
+    pub failed: i64,
+    pub stale: i64,
+    pub oldest_fetched_at: Option<String>,
+}
+
+pub async fn refresh_status(conn: &DatabaseConnection, now: DateTime<Utc>) -> Result<RefreshStatus, Error> {
+    const C: &str = "ClosedStats:Status";
+    let row = conn
+        .query_one(stmt(
+            "SELECT COUNT(*) AS active,
+                    COALESCE(SUM(f.outcome = 'ok'), 0) AS ok,
+                    COALESCE(SUM(f.outcome = 'missing'), 0) AS missing,
+                    COALESCE(SUM(f.outcome = 'failed'), 0) AS failed,
+                    MIN(f.fetched_at) AS oldest
+             FROM sweep_state s LEFT JOIN closed_fetch_state f ON f.item_id = s.item_id WHERE s.active = 1",
+            vec![],
+        ))
+        .await
+        .map_err(|e| db_err(C, e))?
+        .ok_or_else(|| db_err(C, "no status row"))?;
+    Ok(RefreshStatus {
+        active: row.try_get("", "active").map_err(|e| db_err(C, e))?,
+        ok: row.try_get("", "ok").map_err(|e| db_err(C, e))?,
+        missing: row.try_get("", "missing").map_err(|e| db_err(C, e))?,
+        failed: row.try_get("", "failed").map_err(|e| db_err(C, e))?,
+        stale: stale_items(conn, now).await?.len() as i64,
+        oldest_fetched_at: row.try_get("", "oldest").map_err(|e| db_err(C, e))?,
+    })
+}
+
+pub async fn apply_retention(conn: &DatabaseConnection, now: DateTime<Utc>) -> Result<u64, Error> {
+    exec(
+        conn,
+        "ClosedStats:Retention",
+        "DELETE FROM closed_stats_daily WHERE day < ?",
+        vec![(now.date_naive() - Duration::days(CLOSED_RETENTION_DAYS)).to_string().into()],
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collector::backfill::StatsFuture;
     use crate::collector::parse_ts;
     use crate::collector::store::tests::setup;
+
+    const SMALL: &str = include_str!("../../tests/fixtures/statistics_small.json");
+
+    struct Scripted(std::sync::Mutex<std::collections::HashMap<String, std::collections::VecDeque<Result<String, FetchError>>>>);
+    impl StatisticsSource for Scripted {
+        fn fetch<'a>(&'a self, slug: &'a str) -> StatsFuture<'a> {
+            let next = self.0.lock().unwrap().get_mut(slug).and_then(|q| q.pop_front()).unwrap_or(Err(FetchError::Transient("unscripted".into())));
+            Box::pin(async move { next })
+        }
+    }
+    fn scripted(entries: Vec<(&str, Vec<Result<String, FetchError>>)>) -> Scripted {
+        Scripted(std::sync::Mutex::new(entries.into_iter().map(|(k, v)| (k.to_string(), v.into())).collect()))
+    }
 
     fn day(d: &str) -> NaiveDate {
         NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap()
@@ -242,5 +369,74 @@ mod tests {
         assert!(fresh[0].warm);
         set_fetch_state(&conn, "item1", now, "failed").await.unwrap();
         assert!(load_fresh(&conn, now, 10).await.unwrap().is_empty(), "a failed state is not fresh");
+    }
+
+    #[test]
+    fn aggregate_falls_back_to_the_moving_average_without_a_weighted_price() {
+        let bare = |d: &str, volume: i64, median: f64| ClosedRow { wa_price: None, ..row(d, volume, median, 0.0) };
+        let stats = aggregate(vec![bare("2026-09-18", 30, 70.0), bare("2026-09-19", 10, 60.0)], day("2026-09-20"), 10);
+        assert_eq!(stats[0].avg_price, stats[0].moving_avg, "no day has both volume and a weighted price");
+        assert_eq!(stats[0].avg_price, Some(65.0));
+    }
+
+    #[test]
+    fn cutoff_is_the_most_recent_half_past_midnight_utc() {
+        assert_eq!(ts(cutoff(parse_ts("2026-09-20T08:00:00Z").unwrap())), "2026-09-20T00:30:00Z");
+        assert_eq!(ts(cutoff(parse_ts("2026-09-20T00:10:00Z").unwrap())), "2026-09-19T00:30:00Z");
+    }
+
+    #[tokio::test]
+    async fn stale_items_honour_the_cutoff_the_failed_hour_and_inactive_items() {
+        let (_dir, conn) = setup().await; // item1/slug1 and item2/slug2, both active
+        let now = parse_ts("2026-09-20T08:00:00Z").unwrap();
+        assert_eq!(stale_items(&conn, now).await.unwrap().len(), 2, "never fetched");
+        set_fetch_state(&conn, "item1", now - Duration::hours(2), "ok").await.unwrap();
+        assert_eq!(stale_items(&conn, now).await.unwrap(), vec![("item2".to_string(), "slug2".to_string())], "item1 was fetched after today's cutoff");
+        set_fetch_state(&conn, "item1", now - Duration::hours(9), "ok").await.unwrap();
+        assert_eq!(stale_items(&conn, now).await.unwrap()[0].0, "item2", "never fetched sorts before an old fetch");
+        set_fetch_state(&conn, "item2", now - Duration::minutes(30), "failed").await.unwrap();
+        assert_eq!(stale_items(&conn, now).await.unwrap().len(), 1, "a failure is retried only after an hour");
+        set_fetch_state(&conn, "item2", now - Duration::minutes(90), "failed").await.unwrap();
+        assert_eq!(stale_items(&conn, now).await.unwrap().len(), 2);
+        exec(&conn, "Test", "UPDATE sweep_state SET active = 0 WHERE item_id = 'item1'", vec![]).await.unwrap();
+        assert_eq!(stale_items(&conn, now).await.unwrap().len(), 1, "inactive items are skipped");
+    }
+
+    #[test]
+    fn pick_prefers_a_hot_item() {
+        let stale = vec![("a".to_string(), "sa".to_string()), ("b".to_string(), "sb".to_string())];
+        assert_eq!(pick(&stale, &HashSet::new()).unwrap().0, "a");
+        assert_eq!(pick(&stale, &HashSet::from(["b".to_string()])).unwrap().0, "b");
+        assert!(pick(&[], &HashSet::new()).is_none());
+    }
+
+    #[tokio::test]
+    async fn refresh_once_writes_ok_missing_and_failed_states() {
+        let (_dir, conn) = setup().await;
+        let now = parse_ts("2026-09-20T08:00:00Z").unwrap();
+        let limiter = Limiter::new(1000);
+        let source = scripted(vec![
+            ("slug1", vec![Ok(SMALL.to_string())]),
+            ("slug2", vec![Err(FetchError::NotFound)]),
+        ]);
+        assert_eq!(refresh_once(&conn, &source, &limiter, &HashSet::new(), now).await.unwrap(), Some(2));
+        assert_eq!(refresh_once(&conn, &source, &limiter, &HashSet::new(), now).await.unwrap(), Some(1));
+        assert_eq!(refresh_once(&conn, &source, &limiter, &HashSet::new(), now).await.unwrap(), None, "both were fetched after the cutoff");
+        let status = refresh_status(&conn, now).await.unwrap();
+        assert_eq!((status.active, status.ok, status.missing, status.failed, status.stale), (2, 1, 1, 0, 0));
+        let days: i64 = conn.query_one(stmt("SELECT COUNT(*) AS n FROM closed_stats_daily WHERE item_id = 'item1'", vec![])).await.unwrap().unwrap().try_get("", "n").unwrap();
+        assert_eq!(days, 4, "the four fixture rows");
+
+        let later = now + Duration::days(1);
+        let dead = scripted(vec![("slug1", vec![Err(FetchError::Transient("1".into())), Err(FetchError::Transient("2".into())), Err(FetchError::Transient("3".into()))])]);
+        refresh_once(&conn, &dead, &limiter, &HashSet::from(["item1".to_string()]), later).await.unwrap();
+        assert_eq!(refresh_status(&conn, later).await.unwrap().failed, 1);
+    }
+
+    #[tokio::test]
+    async fn retention_drops_days_older_than_ninety() {
+        let (_dir, conn) = setup().await;
+        upsert_days(&conn, "item1", &[closed_day("2026-06-01", 1, 1.0), closed_day("2026-09-19", 1, 1.0)]).await.unwrap();
+        assert_eq!(apply_retention(&conn, parse_ts("2026-09-20T08:00:00Z").unwrap()).await.unwrap(), 1);
     }
 }

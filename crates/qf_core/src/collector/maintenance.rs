@@ -266,6 +266,7 @@ pub async fn hourly(conn: &DatabaseConnection, now: DateTime<Utc>) -> Result<Hou
     let hourly_rows = rollup_hourly(conn, now).await?;
     let daily_rows = rollup_daily(conn, now).await?;
     let (deleted_summaries, deleted_vanished) = apply_retention(conn, now).await?;
+    super::closed::apply_retention(conn, now).await?;
     Ok(HourlyReport { hourly_rows, daily_rows, deleted_summaries, deleted_vanished })
 }
 

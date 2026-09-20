@@ -10,6 +10,8 @@ use chrono::{Duration, Utc};
 use service::sea_orm::DatabaseConnection;
 use utils::{error, get_location, info, warning, Error, LoggerOptions};
 
+use super::backfill::HttpStatisticsSource;
+use super::closed;
 use super::fetch::{fetch_with_retries, FetchError, HttpOrderSource, OrderSource, WFM_API_V2};
 use super::health::HealthTracker;
 use super::maintenance;
@@ -294,6 +296,40 @@ async fn item_refresh_loop(collector: Arc<Collector>, cache_dir: PathBuf, http: 
     }
 }
 
+const WFM_API_V1: &str = "https://api.warframe.market/v1";
+
+/// One closed-statistics fetch every `CLOSED_PACE_S` while anything is stale (spec §25 P2).
+async fn closed_stats_loop(collector: Arc<Collector>, http: reqwest::Client) {
+    let source = HttpStatisticsSource::new(http, WFM_API_V1);
+    let mut draining = false;
+    loop {
+        match closed::refresh_once(&collector.conn, &source, collector.limiter, &collector.hot_ids(), Utc::now()).await {
+            Ok(Some(_)) => {
+                draining = true;
+                tokio::time::sleep(StdDuration::from_secs(closed::CLOSED_PACE_S)).await;
+            }
+            Ok(None) => {
+                if draining {
+                    draining = false;
+                    match closed::refresh_status(&collector.conn, Utc::now()).await {
+                        Ok(s) => info(
+                            "ClosedStats",
+                            format!("Pass complete: ok {}, missing {}, failed {}", s.ok, s.missing, s.failed),
+                            &LoggerOptions::default(),
+                        ),
+                        Err(e) => log_error("ClosedStats", &e),
+                    }
+                }
+                tokio::time::sleep(StdDuration::from_secs(closed::IDLE_SLEEP_S)).await;
+            }
+            Err(e) => {
+                log_error("ClosedStats", &e);
+                tokio::time::sleep(ERROR_PAUSE).await;
+            }
+        }
+    }
+}
+
 static COLLECTOR: OnceLock<Arc<Collector>> = OnceLock::new();
 
 pub fn get() -> Option<Arc<Collector>> {
@@ -337,8 +373,10 @@ pub async fn start(opts: CollectorStart) -> Result<(), Error> {
     supervise("Collector:Cold", RESTART_DELAY, move || cold_loop(c.clone()));
     let c = collector.clone();
     supervise("Collector:Maintenance", RESTART_DELAY, move || maintenance_loop(c.clone()));
-    let (c, dir) = (collector.clone(), opts.cache_dir);
-    supervise("Collector:ItemRefresh", RESTART_DELAY, move || item_refresh_loop(c.clone(), dir.clone(), http.clone()));
+    let (c, dir, item_http) = (collector.clone(), opts.cache_dir, http.clone());
+    supervise("Collector:ItemRefresh", RESTART_DELAY, move || item_refresh_loop(c.clone(), dir.clone(), item_http.clone()));
+    let c = collector.clone();
+    supervise("Collector:ClosedStats", RESTART_DELAY, move || closed_stats_loop(c.clone(), http.clone()));
 
     info(
         "Collector",

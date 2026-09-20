@@ -190,10 +190,10 @@ fn jitter() -> Duration {
 }
 
 /// Takes a limiter token for every attempt and retries everything but a 404 at most twice with jitter.
-async fn fetch_with_retries(source: &dyn StatisticsSource, limiter: &Limiter, slug: &str) -> Result<String, FetchError> {
+pub(crate) async fn fetch_with_retries(source: &dyn StatisticsSource, limiter: &Limiter, lane: Lane, slug: &str) -> Result<String, FetchError> {
     let mut retries = 0;
     loop {
-        limiter.acquire(Lane::Hot).await;
+        limiter.acquire(lane).await;
         match source.fetch(slug).await {
             Ok(body) => return Ok(body),
             Err(FetchError::NotFound) => return Err(FetchError::NotFound),
@@ -229,9 +229,14 @@ pub async fn run(conn: &DatabaseConnection, source: &dyn StatisticsSource, limit
     }
     info(C, format!("Started: {total} items"), &LoggerOptions::default());
     for (item_id, slug) in items {
-        let outcome = match fetch_with_retries(source, limiter, &slug).await {
+        let outcome = match fetch_with_retries(source, limiter, Lane::Hot, &slug).await {
             Ok(body) => match parse_statistics(&body) {
-                Ok(days) => insert_missing(conn, &item_id, &days).await.map(Some),
+                Ok(days) => async {
+                    super::closed::upsert_days(conn, &item_id, &days).await?;
+                    super::closed::set_fetch_state(conn, &item_id, Utc::now(), "ok").await?;
+                    insert_missing(conn, &item_id, &days).await.map(Some)
+                }
+                .await,
                 Err(e) => Err(e),
             },
             Err(FetchError::NotFound) => Ok(None),
@@ -396,6 +401,10 @@ mod tests {
         assert!(final_status.last_error.is_some(), "the dead item's last transient error is kept");
         assert!(final_status.started_at.is_some() && final_status.finished_at.is_some());
         assert_eq!(status(), final_status, "the process-wide status holds the final snapshot");
+        let closed: i64 = conn.query_one(stmt("SELECT COUNT(*) AS n FROM closed_stats_daily", vec![])).await.unwrap().unwrap().try_get("", "n").unwrap();
+        assert_eq!(closed, 8, "the run fills closed_stats_daily as well (spec §25 P2)");
+        let states: i64 = conn.query_one(stmt("SELECT COUNT(*) AS n FROM closed_fetch_state WHERE outcome = 'ok'", vec![])).await.unwrap().unwrap().try_get("", "n").unwrap();
+        assert_eq!(states, 2);
     }
 
     #[tokio::test]
