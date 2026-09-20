@@ -1667,6 +1667,104 @@ pub struct ItemLookup { pub name: String, pub wfm_url: String, pub trade_tax: i6
 
 ---
 
+### Task 7: Delete buy orders for items that are no longer candidates
+
+Added before the phase 5 flip (spec §25 P14). Runs after Task 6; the deploy is repeated afterwards.
+
+**Files:**
+- Modify: `crates/qf_core/src/trader/helpers.rs` (two pure functions + tests), `crates/qf_core/src/trader/item.rs` (`ItemTrader` state, the sweep at the end of `process_items`, one test)
+
+**Interfaces:**
+- Consumes: `ItemEntry { wfm_id, sub_type: Option<SubType>, operations, .. }`, `OrderList<Order>` (`buy_orders`), `Order { id, item_id, subtype, order_type, .. }`, `SubTypeExt::to_entity`, `price_source::key_of`, `Settings.live_scraper.items.general.is_item_blacklisted`, `TradeOrders::{cache_orders, delete}`, `WriteMeta`.
+- Produces:
+
+```rust
+// helpers.rs
+pub const ORPHAN_GRACE: chrono::Duration = chrono::Duration::minutes(30);
+/// Ids of cached buy orders that no Buy/WishList entry of this cycle covers (spec §25 P14).
+pub fn orphan_buy_orders(settings: &Settings, entries: &[ItemEntry], my_orders: &OrderList<Order>) -> Vec<String>;
+/// Updates `first_seen` and returns the orphans that have been orphans for at least `grace`.
+pub fn due_orphans(first_seen: &mut HashMap<String, DateTime<Utc>>, orphans: &[String], now: DateTime<Utc>, grace: chrono::Duration) -> Vec<String>;
+// item.rs
+pub struct ItemTrader { running, just_started, orphan_first_seen: Mutex<HashMap<String, DateTime<Utc>>> }
+```
+
+- [ ] **Step 1: Failing tests for the pure functions** in `helpers.rs`'s test module. Build `ItemEntry` values with `ItemEntry::new(stock_id, wish_list_id, wfm_url, wfm_id, sub_type, ..)` the way `item.rs`'s test helper `entry(ops, ..)` does, and `Order` values through `serde_json::from_value` the way `item.rs`'s `live_order` helper builds `OrderWithUser` (an `Order` needs `id`, `type`, `platinum`, `quantity`, `visible`, `itemId`, `createdAt`, `updatedAt`, plus `rank` for a ranked one). Cases for `orphan_buy_orders`: a buy order whose `(item_id, sub-type)` matches a `Buy` entry is not returned; one matching only a `WishList` entry is not returned; one matching only a `Sell` entry IS returned; a `rank=0` buy order is returned when the only entry for that item is `rank=10`; an order for an item blacklisted for `TradeMode::Buy` is not returned; a sell order is never returned; with `TradeMode::Buy` removed from `trade_modes` the result is empty. Cases for `due_orphans` with `grace = 30 min`: first sight at `t0` returns nothing and records `t0`; at `t0 + 29 min` nothing; at `t0 + 30 min` the id is returned; an id absent from `orphans` at `t0 + 10 min` is removed from the map, and when it reappears at `t0 + 20 min` its clock restarts (not due at `t0 + 45 min`, due at `t0 + 50 min`). Run `cargo test -p qf_core --lib trader::helpers` — expected: FAIL to compile.
+
+- [ ] **Step 2: Implement the pure functions.**
+
+```rust
+pub const ORPHAN_GRACE: chrono::Duration = chrono::Duration::minutes(30);
+
+pub fn orphan_buy_orders(settings: &Settings, entries: &[ItemEntry], my_orders: &OrderList<Order>) -> Vec<String> {
+    if !settings.live_scraper.has_trade_mode(TradeMode::Buy) {
+        return Vec::new(); // `orders_to_delete` already removes every buy order in that configuration
+    }
+    let covered: HashSet<(String, String)> = entries
+        .iter()
+        .filter(|e| e.operations.has("Buy") || e.operations.has("WishList"))
+        .map(|e| (e.wfm_id.clone(), key_of(&e.sub_type)))
+        .collect();
+    my_orders
+        .buy_orders
+        .iter()
+        .filter(|o| {
+            let sub_type = SubTypeExt::to_entity(&o.subtype);
+            !covered.contains(&(o.item_id.clone(), key_of(&sub_type)))
+                && !settings.live_scraper.items.general.is_item_blacklisted(&o.item_id, &sub_type, &TradeMode::Buy)
+        })
+        .map(|o| o.id.clone())
+        .collect()
+}
+
+pub fn due_orphans(first_seen: &mut HashMap<String, DateTime<Utc>>, orphans: &[String], now: DateTime<Utc>, grace: chrono::Duration) -> Vec<String> {
+    let current: HashSet<&String> = orphans.iter().collect();
+    first_seen.retain(|id, _| current.contains(id));
+    orphans
+        .iter()
+        .filter(|id| now - *first_seen.entry((*id).clone()).or_insert(now) >= grace)
+        .cloned()
+        .collect()
+}
+```
+
+  If `OrderList`'s buy-side accessor or `ItemEntry`'s field names differ from the above, use the real ones (`grep -n "pub " crates/qf_core/src/trader/item_entry.rs` and the `OrderList` type in `crates/wf-market`) and keep the two signatures. Run the tests — expected: PASS.
+
+- [ ] **Step 3: Failing `check` test** in `item.rs`'s test module, under global dry-run (`ctx_with(true, |_| {})`): seed a buy order with `seed_order(&ctx, OrderType::Buy, 17, route)` for `item1`; run the sweep twice through a new method `sweep_orphans(&self, ctx, entries: &[ItemEntry], now)` with an empty `entries` slice — first call at `t0` must leave `ctx.orders.dry_log()` without a `delete`; second call at `t0 + 31 min` must append one row with `action == "delete"` and `reason == "NotCandidate"`. Then a third case: with an `entry("Buy", None, None)` for `item1` in `entries`, nothing is deleted at any time. Expected: FAIL to compile (`sweep_orphans` not found).
+
+- [ ] **Step 4: Wire it in.** Add `orphan_first_seen: Mutex<HashMap<String, DateTime<Utc>>>` to `ItemTrader` (initialised empty in `new`), and:
+
+```rust
+    /// Deletes buy orders no candidate or wish-list entry has covered for `ORPHAN_GRACE` (spec §25 P14).
+    async fn sweep_orphans(&self, ctx: &TradeContext, entries: &[ItemEntry], now: DateTime<Utc>) {
+        let orphans = orphan_buy_orders(&ctx.settings, entries, &ctx.orders.cache_orders());
+        let due = due_orphans(&mut self.orphan_first_seen.lock().unwrap_or_else(|p| p.into_inner()), &orphans, now, ORPHAN_GRACE);
+        let meta = WriteMeta { sub_type: String::new(), reason: "NotCandidate".into() };
+        for id in due {
+            match ctx.orders.delete(&id, &meta).await {
+                Ok(_) => info(comp("Orphan"), format!("Deleted buy order {id}: its item is no longer a candidate"), &LoggerOptions::default()),
+                Err(e) => error(comp("Orphan"), &format!("Failed to delete {id}: {}", e.message), &LoggerOptions::default().set_file(LOG_FILE)),
+            }
+        }
+    }
+```
+
+  The `MutexGuard` must not be held across the `.await`: compute `due` in its own statement (as above, the temporary guard drops at the end of that statement) before the loop. In `process_items`, track whether the item loop ended early (`let mut interrupted = false;` set to `true` where the loop `break`s on `should_stop`), and after the global knapsack block add:
+
+```rust
+        if !interrupted && total > 0 {
+            self.sweep_orphans(ctx, &interesting_items, Utc::now()).await;
+        }
+```
+
+  Run `cargo test -p qf_core --lib trader::item trader::helpers` — expected: PASS.
+
+- [ ] **Step 5: Full gate.** `cargo test -p utils --lib && cargo test -p qf_core --lib && cargo test -p qf-server && python3 scripts/check-rpc-commands.py && (cd web && pnpm build)` — green, no new warnings.
+
+- [ ] **Step 6: Commit** `fix(trader): delete buy orders whose item has not been a candidate for 30 minutes`. Do not push.
+
+---
+
 ## Self-Review (done while writing)
 
 - **Spec coverage:** P1 → Task 1 Steps 1, 5; P2 → Task 2 (loop, lane, stale order, failed retry, pass log, retention, import button); P3 → Task 1 `aggregate`/`load_fresh`; P4 → Task 3 `blend`; P5 → Task 3 guard + Step 6 tag; P6 → Task 3 Steps 4–6b; P7 → Task 3 Steps 1, 5, 7 and Task 4 Step 6; P8 → Task 4; P9 → nothing built, by design; P10 → tests in Tasks 1–4; P11 → Task 5.
