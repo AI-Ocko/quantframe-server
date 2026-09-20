@@ -95,8 +95,12 @@ pub struct StatsPriceSource {
 }
 
 impl StatsPriceSource {
+    /// Wraps inferred rows with no shift and no guard; used by the tests and by any caller without closed data.
     pub fn from_stats(stats: Vec<ItemStats>, url_of: impl Fn(&str) -> Option<String>) -> Self {
-        Self::from_effective(stats.into_iter().map(|stats| Effective { stats, week_price_shift: None, guarded: false, closed: false }).collect(), url_of)
+        Self::from_effective(
+            stats.into_iter().map(|stats| Effective { stats, week_price_shift: None, guarded: false, closed: false, inferred: true }).collect(),
+            url_of,
+        )
     }
 
     /// Items whose id `url_of` can't resolve (no longer tradable) are skipped.
@@ -316,7 +320,13 @@ mod tests {
     #[test]
     fn the_shift_filter_applies_only_to_items_that_have_a_shift() {
         use crate::trader::blend::Effective;
-        let eff = |id: &str, shift: Option<f64>| Effective { stats: stats(id, "", 50.0, 50.0, 100.0), week_price_shift: shift, guarded: id == "falling", closed: shift.is_some() };
+        let eff = |id: &str, shift: Option<f64>| Effective {
+            stats: stats(id, "", 50.0, 50.0, 100.0),
+            week_price_shift: shift,
+            guarded: id == "falling",
+            closed: shift.is_some(),
+            inferred: true,
+        };
         let prices = StatsPriceSource::from_effective(vec![eff("rising", Some(4.0)), eff("falling", Some(-9.0)), eff("unknown", None)], |id| Some(format!("{id}_slug")));
         let mut settings = ItemSettings::default();
         settings.wtb.price_shift_threshold = -5;

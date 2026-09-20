@@ -10,9 +10,15 @@ import { TauriTypes } from "$types";
 const PAGE = 50;
 type Row = TauriTypes.MarketPriceSourceRow;
 
-/** Candidate membership differs, or the two moving averages are more than 10 % apart (spec §25 P8). */
+/**
+ * Candidate membership or the warm flags differ, an inferred candidate has no closed values at all
+ * (it silently stays on the inferred basis in closed mode), or the two moving averages are more than
+ * 10 % apart (spec §25 P8, P12).
+ */
 function differs(r: Row) {
   if (r.candidate_inferred !== r.candidate_closed) return true;
+  if (r.warm_inferred !== r.warm_closed) return true;
+  if (r.candidate_inferred && r.closed_volume == null) return true;
   if (r.inferred_moving_avg == null || r.closed_moving_avg == null || r.closed_moving_avg === 0) return false;
   return Math.abs(r.inferred_moving_avg - r.closed_moving_avg) / r.closed_moving_avg > 0.1;
 }
@@ -91,6 +97,8 @@ export function PriceSourcePanel({ isActive }: { isActive?: boolean }) {
           { accessor: "week_price_shift", title: t("columns.week_price_shift"), sortable: true, render: (r) => num(r.week_price_shift, 1) },
           { accessor: "profit", title: t("columns.profit"), sortable: true, render: (r) => num(r.profit, 0) },
           { accessor: "closed_days", title: t("columns.closed_days"), sortable: true },
+          { accessor: "warm_inferred", title: t("columns.warm_inferred"), sortable: true, render: (r) => yesNo(r.warm_inferred) },
+          { accessor: "warm_closed", title: t("columns.warm_closed"), sortable: true, render: (r) => yesNo(r.warm_closed) },
           { accessor: "candidate_inferred", title: t("columns.candidate_inferred"), sortable: true, render: (r) => yesNo(r.candidate_inferred) },
           { accessor: "candidate_closed", title: t("columns.candidate_closed"), sortable: true, render: (r) => yesNo(r.candidate_closed) },
           { accessor: "guarded", title: t("columns.guarded"), sortable: true, render: (r) => (r.guarded ? <Badge color="orange">{t("yes")}</Badge> : null) },

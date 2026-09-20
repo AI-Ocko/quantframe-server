@@ -43,9 +43,10 @@ pub async fn market_movers(min_volume: f64) -> Result<Movers, Error> {
     market::movers(database()?, min_volume, name_of()?).await
 }
 
+/// Only keys the collector knows: `tracked`, the history histogram and the projection stay on its own universe (spec §25 P12).
 pub async fn market_warmup() -> Result<Warmup, Error> {
     let (mode, guard_pct) = source_settings();
-    let stats: Vec<_> = effective_stats(database()?, mode, guard_pct, Utc::now()).await?.into_iter().map(|e| e.stats).collect();
+    let stats: Vec<_> = effective_stats(database()?, mode, guard_pct, Utc::now()).await?.into_iter().filter(|e| e.inferred).map(|e| e.stats).collect();
     Ok(market::warmup(&stats, Utc::now().date_naive()))
 }
 

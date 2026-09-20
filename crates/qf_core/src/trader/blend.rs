@@ -19,11 +19,13 @@ pub struct Effective {
     pub guarded: bool,
     /// The price fields come from closed statistics.
     pub closed: bool,
+    /// The key has an inferred row, i.e. the collector knows it (spec §25 P12).
+    pub inferred: bool,
 }
 
 /// `closed` must already be limited to fresh items (`closed::load_fresh`).
 pub fn blend(inferred: Vec<ItemStats>, closed: Vec<ClosedStats>, mode: PriceSourceMode, guard_pct: i64, now: DateTime<Utc>) -> Vec<Effective> {
-    let plain = |stats: ItemStats| Effective { stats, week_price_shift: None, guarded: false, closed: false };
+    let plain = |stats: ItemStats| Effective { stats, week_price_shift: None, guarded: false, closed: false, inferred: true };
     if mode == PriceSourceMode::Inferred {
         return inferred.into_iter().map(plain).collect();
     }
@@ -40,6 +42,7 @@ pub fn blend(inferred: Vec<ItemStats>, closed: Vec<ClosedStats>, mode: PriceSour
 }
 
 fn merge(inferred: Option<ItemStats>, c: ClosedStats, guard_pct: i64, now: DateTime<Utc>) -> Effective {
+    let known = inferred.is_some();
     // spec §25 P5: the collector sees a falling market within minutes; the closed average is a week old by construction.
     let fast_drop = inferred.as_ref().and_then(|i| {
         let (recent, closed_avg) = (i.avg_price?, c.moving_avg?);
@@ -57,12 +60,14 @@ fn merge(inferred: Option<ItemStats>, c: ClosedStats, guard_pct: i64, now: DateT
             max_price: c.max_price,
             median: c.median,
             history_days: inferred.as_ref().map(|i| i.history_days).unwrap_or(0),
-            warm: c.warm,
+            // spec §25 P12: `warm` is the live/dry-run gate, and a key the collector has never seen must not open it.
+            warm: c.warm && known,
             updated_at: inferred.map(|i| i.updated_at).unwrap_or_else(|| ts(now)),
         },
         week_price_shift: c.week_price_shift,
         guarded: fast_drop.is_some(),
         closed: true,
+        inferred: known,
     }
 }
 
@@ -86,14 +91,14 @@ mod tests {
         let rows = vec![inferred("a", 9.0, 70.0, 50.0, 12.0)];
         let out = blend(rows.clone(), vec![closed("a", 30.0, 66.0)], PriceSourceMode::Inferred, 10, now());
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0], Effective { stats: rows[0].clone(), week_price_shift: None, guarded: false, closed: false });
+        assert_eq!(out[0], Effective { stats: rows[0].clone(), week_price_shift: None, guarded: false, closed: false, inferred: true });
     }
 
     #[test]
     fn closed_mode_takes_the_closed_fields_and_keeps_the_inferred_profit() {
         let out = blend(vec![inferred("a", 9.0, 70.0, 69.0, 12.0)], vec![closed("a", 30.0, 66.0)], PriceSourceMode::Closed, 10, now());
         let e = &out[0];
-        assert!(e.closed && !e.guarded);
+        assert!(e.closed && !e.guarded && e.inferred);
         assert_eq!((e.stats.volume, e.stats.moving_avg, e.stats.median, e.stats.avg_price), (30.0, Some(66.0), Some(67.0), Some(68.0)));
         assert_eq!((e.stats.min_price, e.stats.max_price, e.stats.warm), (Some(40), Some(90), true));
         assert_eq!((e.stats.profit, e.stats.history_days), (Some(12.0), 5), "profit and history stay inferred");
@@ -107,8 +112,11 @@ mod tests {
         let c = out.iter().find(|e| e.stats.item_id == "only_closed").unwrap();
         assert_eq!((c.stats.profit, c.stats.history_days, c.closed), (None, 0, true));
         assert_eq!(c.stats.updated_at, ts(now()));
+        assert!(!c.inferred, "the collector does not know this key");
+        assert!(!c.stats.warm, "a closed-only key is never warm, so it keeps routing to dry-run as on main");
         let i = out.iter().find(|e| e.stats.item_id == "only_inferred").unwrap();
         assert_eq!((i.stats.moving_avg, i.closed, i.week_price_shift), (Some(70.0), false, None));
+        assert!(i.inferred);
     }
 
     #[test]

@@ -239,7 +239,7 @@ export const GeneralPanel = ({ form, setHideTab, setHideButtons }: GeneralPanelP
                 min={-1}
                 max={90}
                 value={form.values.live_scraper.general.fast_drop_guard_pct}
-                onChange={(value) => form.setFieldValue(getFieldPath("general.fast_drop_guard_pct"), Number(value))}
+                onChange={(value) => form.setFieldValue(getFieldPath("general.fast_drop_guard_pct"), value === "" ? -1 : Number(value))}
               />
             </Tooltip>
           </Group>

@@ -2154,6 +2154,8 @@
             "week_price_shift": "Week shift",
             "profit": "Profit",
             "closed_days": "Closed days",
+            "warm_inferred": "Warm (inferred)",
+            "warm_closed": "Warm (closed)",
             "candidate_inferred": "Candidate (inferred)",
             "candidate_closed": "Candidate (closed)",
             "guarded": "Guard"
