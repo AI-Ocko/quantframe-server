@@ -18,6 +18,7 @@ use super::maintenance;
 use super::orders::V2Order;
 use super::stats::StatsConfig;
 use super::store::{self, SweepInput, SweepTarget};
+use super::trade_tax;
 use super::ts;
 use crate::game_data;
 use crate::market::limiter::{self, Lane, Limiter};
@@ -328,6 +329,21 @@ async fn closed_stats_loop(collector: Arc<Collector>, http: reqwest::Client) {
     }
 }
 
+/// One item-detail fetch every `TAX_PACE_S` while any active item's trade tax is unknown (spec §25 P18).
+async fn trade_tax_loop(collector: Arc<Collector>, http: reqwest::Client) {
+    let source = trade_tax::HttpItemDetailSource::new(http, WFM_API_V2);
+    loop {
+        match trade_tax::fetch_once(&collector.conn, &source, collector.limiter, &collector.hot_ids(), Utc::now()).await {
+            Ok(Some(_)) => tokio::time::sleep(StdDuration::from_secs(trade_tax::TAX_PACE_S)).await,
+            Ok(None) => tokio::time::sleep(StdDuration::from_secs(trade_tax::TAX_IDLE_S)).await,
+            Err(e) => {
+                log_error("TradeTax", &e);
+                tokio::time::sleep(ERROR_PAUSE).await;
+            }
+        }
+    }
+}
+
 static COLLECTOR: OnceLock<Arc<Collector>> = OnceLock::new();
 
 pub fn get() -> Option<Arc<Collector>> {
@@ -373,6 +389,8 @@ pub async fn start(opts: CollectorStart) -> Result<(), Error> {
     supervise("Collector:Maintenance", RESTART_DELAY, move || maintenance_loop(c.clone()));
     let (c, dir, item_http) = (collector.clone(), opts.cache_dir, http.clone());
     supervise("Collector:ItemRefresh", RESTART_DELAY, move || item_refresh_loop(c.clone(), dir.clone(), item_http.clone()));
+    let (c, tax_http) = (collector.clone(), http.clone());
+    supervise("Collector:TradeTax", RESTART_DELAY, move || trade_tax_loop(c.clone(), tax_http.clone()));
     let c = collector.clone();
     supervise("Collector:ClosedStats", RESTART_DELAY, move || closed_stats_loop(c.clone(), http.clone()));
 
