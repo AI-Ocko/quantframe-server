@@ -19,7 +19,7 @@ use wf_market::{
 use super::helpers::*;
 use super::item_entry::ItemEntry;
 use super::orders::{route_for, Route, WriteMeta};
-use super::price_source::{is_disabled, ItemPriceInfo};
+use super::price_source::{is_disabled, key_of, ItemPriceInfo};
 use super::TradeContext;
 use crate::{cache::types::CacheTradableItem, enums::TradeMode, send_event, types::UIEvent, utils::{OrderListExt, SubTypeExt}};
 
@@ -28,6 +28,20 @@ static LOG_FILE: &str = "trader_item.log";
 
 fn comp(suffix: &str) -> String {
     format!("{}{}", COMPONENT, suffix)
+}
+
+/// `"<name> [<sub-type>]"`, the sub-type dropped when the item has none (spec §25 P14).
+fn orphan_name(name: &str, sub_type_key: &str) -> String {
+    if sub_type_key.is_empty() {
+        name.to_string()
+    } else {
+        format!("{} [{}]", name, sub_type_key)
+    }
+}
+
+/// `"<name> [<sub-type>] at <platinum>p"` for the orphan sweep's log lines (spec §25 P14).
+fn orphan_label(name: &str, sub_type_key: &str, platinum: u32) -> String {
+    format!("{} at {}p", orphan_name(name, sub_type_key), platinum)
 }
 
 pub struct ItemTrader {
@@ -44,7 +58,8 @@ impl ItemTrader {
 
     /// Deletes buy orders no candidate or wish-list entry has covered for `ORPHAN_GRACE` (spec §25 P14).
     async fn sweep_orphans(&self, ctx: &TradeContext, entries: &[ItemEntry], now: DateTime<Utc>) {
-        let orphans = orphan_buy_orders(&ctx.settings, entries, &ctx.orders.cache_orders());
+        let my_orders = ctx.orders.cache_orders();
+        let orphans = orphan_buy_orders(&ctx.settings, entries, &my_orders);
         // The guard is a temporary of this statement only: it must not be held across the delete below.
         let due = due_orphans(
             &mut self.orphan_first_seen.lock().unwrap_or_else(|p| p.into_inner()),
@@ -52,17 +67,31 @@ impl ItemTrader {
             now,
             ORPHAN_GRACE,
         );
-        let meta = WriteMeta { sub_type: String::new(), reason: "NotCandidate".into() };
         for id in due {
+            // An order missing from the snapshot (it should always be there) is still deleted, logged by id alone.
+            let order = my_orders.buy_orders.iter().find(|o| o.id == id);
+            let sub_type = order.map(|o| key_of(&SubTypeExt::to_entity(&o.subtype))).unwrap_or_default();
+            let (named, labelled) = match order {
+                Some(o) => {
+                    // An item the tradable cache no longer knows is logged by its item id.
+                    let name = ctx.cache.tradable_item().get_by(&o.item_id).map(|i| i.name).unwrap_or_else(|_| o.item_id.clone());
+                    (
+                        format!(" for {}", orphan_name(&name, &sub_type)),
+                        format!(" for {}", orphan_label(&name, &sub_type, o.platinum)),
+                    )
+                }
+                None => (String::new(), String::new()),
+            };
+            let meta = WriteMeta { sub_type, reason: "NotCandidate".into() };
             match ctx.orders.delete(&id, &meta).await {
                 Ok(_) => info(
                     comp("Orphan"),
-                    format!("Deleted buy order {}: its item is no longer a candidate", id),
+                    format!("Deleted buy order {}{}: its item is no longer a candidate", id, labelled),
                     &LoggerOptions::default(),
                 ),
                 Err(e) => error(
                     comp("Orphan"),
-                    &format!("Failed to delete {}: {}", id, e.message),
+                    &format!("Failed to delete buy order {}{}: {}", id, named, e.message),
                     &LoggerOptions::default().set_file(LOG_FILE),
                 ),
             }
@@ -747,6 +776,12 @@ mod tests {
         ctx.orders.create(params, route, &WriteMeta::default()).await.unwrap();
     }
 
+    async fn seed_ranked_order(ctx: &TradeContext, order_type: OrderType, platinum: u32, rank: i64, route: Route) {
+        let sub_type = WFSubType { rank: Some(rank), ..Default::default() };
+        let params = CreateOrderParams::new_with_subtype("item1", order_type, platinum, 1, true, None, sub_type);
+        ctx.orders.create(params, route, &WriteMeta::default()).await.unwrap();
+    }
+
     async fn stock(ctx: &TradeContext, bought: i64, owned: i64) -> i64 {
         StockItemMutation::create(
             &ctx.conn,
@@ -917,10 +952,21 @@ mod tests {
         ItemTrader::new(Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)))
     }
 
+    #[test]
+    fn orphan_label_names_the_item_its_sub_type_and_its_price() {
+        assert_eq!(orphan_label("Test Item", "rank=3", 17), "Test Item [rank=3] at 17p");
+    }
+
+    #[test]
+    fn orphan_label_omits_an_empty_sub_type() {
+        assert_eq!(orphan_label("Test Item", "", 17), "Test Item at 17p");
+    }
+
     #[tokio::test]
     async fn an_orphaned_buy_order_is_deleted_once_the_grace_has_passed() {
         let (_dir, ctx) = ctx_with(true, |_| {}).await;
         seed_order(&ctx, OrderType::Buy, 17, route_for(true, true)).await;
+        seed_ranked_order(&ctx, OrderType::Buy, 19, 3, route_for(true, true)).await;
         let trader = trader();
         let t0 = Utc::now();
 
@@ -928,8 +974,12 @@ mod tests {
         assert!(ctx.orders.dry_log().iter().all(|row| row.action != "delete"), "nothing is deleted inside the grace");
 
         trader.sweep_orphans(&ctx, &[], t0 + chrono::Duration::minutes(31)).await;
-        let last = ctx.orders.dry_log().last().unwrap().clone();
-        assert_eq!((last.action.as_str(), last.side.as_str(), last.reason.as_str()), ("delete", "buy", "NotCandidate"));
+        let deletes: Vec<_> = ctx.orders.dry_log().into_iter().filter(|row| row.action == "delete").collect();
+        assert_eq!(deletes.len(), 2);
+        assert!(deletes.iter().all(|row| row.side == "buy" && row.reason == "NotCandidate"));
+        let mut keys: Vec<String> = deletes.iter().map(|row| row.sub_type.clone()).collect();
+        keys.sort();
+        assert_eq!(keys, vec![String::new(), "rank=3".to_string()], "the delete carries the order's sub-type key");
         assert!(ctx.orders.cache_orders().buy_orders.is_empty());
     }
 
