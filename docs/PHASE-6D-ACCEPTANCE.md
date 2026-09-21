@@ -14,7 +14,7 @@
 | 2026-09-21 00:21 | `9d61ab9` | Task 7: orphaned buy order sweep |
 | 2026-09-21 01:27 | `956a704` | Task 8: the sweep's log line names the item |
 
-- **Pre-deploy settings check (P12):** the user read **Trading tax cap = 150 000** and **Price shift threshold = −1** from the web UI. The cap was imported from the desktop app and is deliberate. Checked against the desktop app's item cache: tradable items are taxed at 2 000 to 10 000 credits or at 1 000 000 and above, nothing in between, so the cap excludes exactly the 81 million-credit items (primed mods, Archon mods, legendary arcanes) and nothing else. The user kept it.
+- **Pre-deploy settings check (P12):** the user read **150 000** and **Price shift threshold = −1** from the web UI. **Correction, 2026-09-21:** the 150 000 is almost certainly **Max Total Price Cap**, not Trading Tax Cap: the desktop settings the server imported hold `max_total_price_cap = 150000` and `trading_tax_cap = -1`, and the two fields sit next to each other in the form. It does not matter which, because **the trading-tax filter is inert on the server** (see "Defect found after acceptance" below).
 - ockohome now runs `956a704`. **Price source is `closed`, global dry-run is ON, Auto Delete is OFF** (user, 2026-09-20). The phase 5 flip is still pending, on or after 2026-09-22; closed mode needs 48 h of reviewed dry-run first, and that clock started 2026-09-20 21:45 UTC, less four restarts.
 
 | # | Check (spec §25 P11–P14) | Result | Notes |
@@ -33,6 +33,10 @@
 | 11 | Task 6: labels appear after a deploy | Pass | Confirmed by the user after the language-file revalidation fix. Before it, a hard refresh did not reach the script-initiated fetch |
 | 12 | Tasks 7–8: orphan sweep | Pass | Twice, identically. Start 01:28:34 UTC, first cycle ended 01:30:19, sweep fired by 02:01: nine adopted real buy orders deleted in simulation, reason `NotCandidate`, 0 failures. Akbolto Prime Set 73 p, Arcane Nullifier [rank=5] 45 p, Equilibrium [rank=10] 30 p, Volt Prime Neuroptics Blueprint 25 p, Akjagara Prime Barrel 20 p, Synoid Gammacor 15 p, Secura Penta 15 p, Hystrix Prime Set 12 p, Augur Reach [rank=5] 12 p. The user judged all nine stale |
 
+## Defect found after acceptance (2026-09-21), not fixed
+
+**The trading-tax cap filter added in Task 3 never excludes anything.** `game_data::to_tradable_item` sets `trade_tax: 0` for every item (`crates/qf_core/src/game_data/mod.rs`, with a test asserting it), because warframe.market's v2 item list carries no tax. `ItemPriceInfo.trading_tax` is therefore 0 for every item and `trading_tax ≤ trading_tax_cap` always holds. Found when the dry run turned out to be bidding on 30 items taxed at 1 000 000 credits or more (Arcane Energize, Arcane Grace, the Archon mods, Legendary Fusion Core, …). The controller's claim in P6 that "the tax data was already in the item cache" was checked against the *desktop app's* cache file, which does carry `tradeTax`, and not against the server's loader. No reviewer caught it: each checked that the field had no other reader, none checked that it was populated. Trading impact: none relative to the desktop app, whose `trading_tax_cap` is −1 and whose own candidate list holds 32 such items. It means the setting is dead on the server until tax data is loaded; follow-up 0.
+
 ## What the plan got wrong, and how it was caught
 
 The plan and spec were the controller's. Execution corrected them five times; each correction is in the spec (§25 P12–P14) and the plan.
@@ -45,7 +49,7 @@ The plan and spec were the controller's. Execution corrected them five times; ea
 
 ## Rulings made during execution
 
-- The trading-tax cap applies in both price modes, as P6 says. Cost if wrong: a user who had set a cap sees fewer candidates after deploy. (The user had: 150 000, kept on purpose.)
+- The trading-tax cap applies in both price modes, as P6 says. Cost if wrong: a user who had set a cap sees fewer candidates after deploy. (Moot for now: the filter is inert, see above.)
 - No fix round for Task 1's unrun web build: the task changed no web file and the gate binds the branch tip. Cost if wrong: a web break surfaces at Task 4.
 - The daily cutoff applies to failed fetches too; the spec beats the plan's SQL. Cost if wrong: one extra request per failed item per day.
 - For `price_shift_threshold` only, exactly −1 means disabled. Cost if wrong: −1 p cannot be expressed, and a stored value such as −3 becomes live in closed mode.
@@ -60,6 +64,7 @@ The plan and spec were the controller's. Execution corrected them five times; ea
 
 ## Follow-ups
 
+0. **Load trade tax on the server, or remove the filter.** warframe.market's v2 item list has no tax field; the desktop app gets it from the Quantframe API. Options: derive it from the item's rarity and type (2 000 to 8 000 for ordinary items, 1 000 000 for legendary and primed mods, 2 100 000 for the few above that, per the desktop cache's distribution), or read it once per item from the v2 item detail. Until then `trading_tax_cap` does nothing.
 1. **Upstream differences recorded, not built (P13).** Upstream's `profit` is the mean daily closed price range (`max_price − min_price`), not a buy/sell spread; `profit_margin` is `profit ÷ avg_price × 100`, which makes the still-unbuilt `min_wtb_profit_margin` filter definable; upstream applies no 150-candidate cap (213 of its 1 467 rows pass the default filters). Each changes what is bought, so each is the user's decision.
 2. **Live expectations to confirm on the first live run:** cycles of about three minutes (every order is rewritten every cycle, as upstream does); warframe.market's per-account order cap binding below 150 candidates (`has reached the order limit. Skipping.`).
 3. **Orphan sweep:** the due list is a pre-loop snapshot, so a badly stale live order cache could spend the five-failure budget in one sweep; the outcome is a trader stop, and the knapsack block has the same exposure.
