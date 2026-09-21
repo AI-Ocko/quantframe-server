@@ -1842,6 +1842,42 @@ Added 2026-09-21 (spec §25 P17). Default 150 leaves the candidate list unchange
 
 ---
 
+### Task 11: Trade tax from warframe.market's item detail
+
+Added 2026-09-21 (spec §25 P18). Makes the `trading_tax_cap` filter of P6 effective; with the cap at `-1` nothing changes.
+
+**Files:**
+- Create: `crates/migration/src/m20260922_000001_create_item_trade_tax.rs`, `crates/qf_core/src/collector/trade_tax.rs`, `crates/qf_core/tests/fixtures/item_detail_small.json`
+- Modify: `crates/migration/src/lib.rs`, `crates/qf_core/src/collector/mod.rs` (`pub mod trade_tax;`), `crates/qf_core/src/collector/runner.rs` (supervised loop), `crates/qf_core/src/trader/price_source.rs` (`load` reads the table), `crates/qf_core/src/commands/market.rs` (`market_price_sources`' lookup reads the table)
+
+**Interfaces (produces):**
+
+```rust
+// collector/trade_tax.rs
+pub const TAX_PACE_S: u64 = 10;
+pub const TAX_IDLE_S: u64 = 600;
+pub fn parse_trading_tax(body: &str) -> Result<i64, Error>;                       // data.tradingTax, 0 when the field is absent; malformed body is an error
+pub async fn missing_items(conn: &DatabaseConnection) -> Result<Vec<(String, String)>, Error>;   // active sweep_state items with no item_trade_tax row, ordered by item_id -> (item_id, slug)
+pub async fn upsert_tax(conn: &DatabaseConnection, item_id: &str, trading_tax: i64, at: DateTime<Utc>) -> Result<(), Error>;
+pub async fn load_all(conn: &DatabaseConnection) -> Result<HashMap<String, i64>, Error>;
+pub struct HttpItemDetailSource { /* http, base_url */ }                          // implements backfill::StatisticsSource: GET {base}/item/{slug}
+pub async fn fetch_once(conn: &DatabaseConnection, source: &dyn StatisticsSource, limiter: &Limiter, hot: &HashSet<String>, now: DateTime<Utc>) -> Result<Option<usize>, Error>;  // None = nothing missing; Some(n) = missing count before this fetch
+```
+
+- [ ] **Step 1: Migration.** Same shape as `m20260921_000001_create_closed_stats.rs`: `CREATE TABLE IF NOT EXISTS item_trade_tax (item_id TEXT PRIMARY KEY, trading_tax INTEGER NOT NULL, fetched_at TEXT NOT NULL)`, `DOWN` drops it. Register it after the closed-stats migration in `lib.rs`.
+
+- [ ] **Step 2: Fixture and failing tests.** `item_detail_small.json`: `{"apiVersion":"0.13.0","data":{"id":"x","slug":"primed_flow","tradingTax":1000000,"maxRank":10,"tags":["mod","legendary"]},"error":null}`. Tests in `trade_tax.rs` (use `collector::store::tests::setup`, which syncs `item1/slug1` and `item2/slug2`, and a scripted source like the one in `closed.rs`'s tests): `parse_trading_tax` gives 1 000 000 for the fixture, 0 for a body whose `data` has no `tradingTax`, and an error for `"not json"` and for a body without `data`; `missing_items` lists both items, then only `item2` after `upsert_tax(item1)`, and skips an item set inactive; `fetch_once` with `slug1 → fixture` and `slug2 → NotFound` stores 1 000 000 for `item1`, stores nothing for `item2` (it stays missing), returns `Some(2)` then `Some(1)`, prefers a hot item, and returns `None` once nothing is missing (after `upsert_tax(item2, 0)`); `load_all` returns the map. Behavioural RED: land the functions with do-nothing bodies first.
+
+- [ ] **Step 3: Implement `trade_tax.rs`.** `HttpItemDetailSource` mirrors `backfill::HttpStatisticsSource` (headers `Platform: pc`, `Language: en`; 200 ok, 404 `NotFound`, 429 `RateLimited`, anything else `Transient`) with the URL `{base_url}/item/{slug}`, and implements the existing `backfill::StatisticsSource` trait so `backfill::fetch_with_retries(source, limiter, Lane::Cold, slug)` is reused as is. `fetch_once`: `missing_items` → `closed::pick(&missing, hot)` → fetch → `Ok(body)` parses and upserts; `NotFound` stores nothing; an exhausted retry logs a `TradeTax` warning and stores nothing; return `Some(missing.len())`. A 404 item would be re-picked forever and block the queue, so after a `NotFound` or a failure `fetch_once` must not pick the same item again in this process: keep a `static SKIP: OnceLock<Mutex<HashSet<String>>>` of item ids to leave out of `missing_items`' result for the rest of the run (cleared by a restart), and test that a second call after the 404 moves on.
+
+- [ ] **Step 4: Supervised loop** in `runner.rs`, beside `closed_stats_loop`: build `HttpItemDetailSource::new(http, WFM_API_V2)` (the constant already imported from `fetch.rs`); `Ok(Some(_))` sleeps `TAX_PACE_S`, `Ok(None)` sleeps `TAX_IDLE_S`, `Err` logs and sleeps `ERROR_PAUSE`. Supervise it as `Collector:TradeTax` in `start`, cloning `http` as the other loops do.
+
+- [ ] **Step 5: Use the table (test first).** In `price_source.rs` add a test that `get_interesting_items` with `wtb.trading_tax_cap = 500_000` over a source built `.with_trade_tax(|id| map.get(id).copied())` from a map holding only `("dear", 1_000_000)` drops `dear` and keeps an item absent from the map (fail open). Then in `StatsPriceSource::load` load `let taxes = trade_tax::load_all(conn).await?;` and pass `.with_trade_tax(|id| taxes.get(id).copied())` in place of the cache lookup. In `commands/market.rs` `market_price_sources`, load the same map once and fill `ItemLookup.trade_tax` from it (`taxes.get(id).copied().unwrap_or(0)`). `CacheTradableItem.trade_tax` is no longer read by either.
+
+- [ ] **Step 6: Full gate**, then two commits (`feat(collector): fetch each item's trade tax from warframe.market once`, `fix(trader): read trade tax from the fetched table so the tax cap works`). Do not push.
+
+---
+
 ## Self-Review (done while writing)
 
 - **Spec coverage:** P1 → Task 1 Steps 1, 5; P2 → Task 2 (loop, lane, stale order, failed retry, pass log, retention, import button); P3 → Task 1 `aggregate`/`load_fresh`; P4 → Task 3 `blend`; P5 → Task 3 guard + Step 6 tag; P6 → Task 3 Steps 4–6b; P7 → Task 3 Steps 1, 5, 7 and Task 4 Step 6; P8 → Task 4; P9 → nothing built, by design; P10 → tests in Tasks 1–4; P11 → Task 5.
