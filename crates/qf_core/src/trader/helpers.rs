@@ -235,11 +235,18 @@ pub fn orders_to_delete(settings: &Settings, just_started: bool, my_orders: &Ord
 /// How long a buy order must stay uncovered before the sweep deletes it (spec §25 P14).
 pub const ORPHAN_GRACE: chrono::Duration = chrono::Duration::minutes(30);
 
+/// Whether a finished cycle may sweep orphans (spec §25 P14): a cycle that was cut short, that processed
+/// nothing, or that produced no buy candidate at all (a broken price source, not a trading decision) does not.
+pub fn should_sweep(interrupted: bool, entries: &[ItemEntry]) -> bool {
+    !interrupted && entries.iter().any(|e| e.operations.has("Buy"))
+}
+
 /// Ids of cached buy orders that no `Buy`/`WishList` entry of this cycle covers (spec §25 P14).
 pub fn orphan_buy_orders(settings: &Settings, entries: &[ItemEntry], my_orders: &OrderList<Order>) -> Vec<String> {
     if !settings.live_scraper.has_trade_mode(TradeMode::Buy) {
-        return Vec::new(); // `orders_to_delete` already removes every buy order in that configuration
+        return Vec::new(); // spec §25 P14: the rule applies only while Buy mode is enabled
     }
+    let general = &settings.live_scraper.items.general;
     let covered: HashSet<(String, String)> = entries
         .iter()
         .filter(|e| e.operations.has("Buy") || e.operations.has("WishList"))
@@ -250,8 +257,10 @@ pub fn orphan_buy_orders(settings: &Settings, entries: &[ItemEntry], my_orders: 
         .iter()
         .filter(|o| {
             let sub_type = SubTypeExt::to_entity(&o.subtype);
+            // Either blacklist means "leave this item's buy side alone" (spec §25 P14).
             !covered.contains(&(o.item_id.clone(), key_of(&sub_type)))
-                && !settings.live_scraper.items.general.is_item_blacklisted(&o.item_id, &sub_type, &TradeMode::Buy)
+                && !general.is_item_blacklisted(&o.item_id, &sub_type, &TradeMode::Buy)
+                && !general.is_item_blacklisted(&o.item_id, &sub_type, &TradeMode::WishList)
         })
         .map(|o| o.id.clone())
         .collect()
@@ -524,17 +533,30 @@ mod tests {
         settings.live_scraper.items.general.blacklist = vec![
             BlackListItemSetting { wfm_id: "i9".into(), sub_type: None, disabled_for: vec![TradeMode::Buy] },
             BlackListItemSetting { wfm_id: "i8".into(), sub_type: None, disabled_for: vec![TradeMode::Sell] },
+            BlackListItemSetting { wfm_id: "i7".into(), sub_type: None, disabled_for: vec![TradeMode::WishList] },
         ];
         let entries = vec![candidate("i5", Some(ranked(10)), "Buy")];
         let book = OrderList::new(vec![
             ranked_buy_order("rank10", "i5", 10),
             ranked_buy_order("rank0", "i5", 0),
             order("blacklisted", OrderType::Buy, "i9"),
+            order("wish_blacklisted", OrderType::Buy, "i7"),
             order("other_mode", OrderType::Buy, "i8"),
         ]);
         let mut orphans = orphan_buy_orders(&settings, &entries, &book);
         orphans.sort();
         assert_eq!(orphans, vec!["other_mode".to_string(), "rank0".to_string()]);
+    }
+
+    #[test]
+    fn should_sweep_only_after_a_complete_cycle_with_buy_candidates() {
+        let sell = candidate("i1", None, "Sell");
+        let wish = candidate("i2", None, "WishList");
+        let buy = candidate("i3", None, "Buy");
+        assert!(!should_sweep(false, &[]), "an idle cycle never sweeps");
+        assert!(!should_sweep(false, &[sell.clone(), wish.clone()]), "no buy candidate is a broken price source, not a decision");
+        assert!(should_sweep(false, &[sell, buy.clone()]), "one buy candidate is enough");
+        assert!(!should_sweep(true, &[buy]), "a cycle cut short never sweeps");
     }
 
     #[test]

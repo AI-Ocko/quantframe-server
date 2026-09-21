@@ -236,7 +236,7 @@ impl ItemTrader {
             }
         }
 
-        if !interrupted && total > 0 {
+        if should_sweep(interrupted, &interesting_items) {
             self.sweep_orphans(ctx, &interesting_items, Utc::now()).await;
         }
         Ok(total)
