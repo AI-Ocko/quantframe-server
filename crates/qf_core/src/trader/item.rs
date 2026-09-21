@@ -1,12 +1,13 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
+use chrono::{DateTime, Utc};
 use entity::{dto::PriceHistory, enums::stock_status::StockStatus};
 use serde_json::json;
 use utils::{error, get_location, info, warning, Error, LoggerOptions};
@@ -32,11 +33,40 @@ fn comp(suffix: &str) -> String {
 pub struct ItemTrader {
     running: Arc<AtomicBool>,
     just_started: Arc<AtomicBool>,
+    /// When each currently orphaned buy order was first seen uncovered; one per trader run (spec §25 P14).
+    orphan_first_seen: Mutex<HashMap<String, DateTime<Utc>>>,
 }
 
 impl ItemTrader {
     pub fn new(running: Arc<AtomicBool>, just_started: Arc<AtomicBool>) -> Self {
-        Self { running, just_started }
+        Self { running, just_started, orphan_first_seen: Mutex::new(HashMap::new()) }
+    }
+
+    /// Deletes buy orders no candidate or wish-list entry has covered for `ORPHAN_GRACE` (spec §25 P14).
+    async fn sweep_orphans(&self, ctx: &TradeContext, entries: &[ItemEntry], now: DateTime<Utc>) {
+        let orphans = orphan_buy_orders(&ctx.settings, entries, &ctx.orders.cache_orders());
+        // The guard is a temporary of this statement only: it must not be held across the delete below.
+        let due = due_orphans(
+            &mut self.orphan_first_seen.lock().unwrap_or_else(|p| p.into_inner()),
+            &orphans,
+            now,
+            ORPHAN_GRACE,
+        );
+        let meta = WriteMeta { sub_type: String::new(), reason: "NotCandidate".into() };
+        for id in due {
+            match ctx.orders.delete(&id, &meta).await {
+                Ok(_) => info(
+                    comp("Orphan"),
+                    format!("Deleted buy order {}: its item is no longer a candidate", id),
+                    &LoggerOptions::default(),
+                ),
+                Err(e) => error(
+                    comp("Orphan"),
+                    &format!("Failed to delete {}: {}", id, e.message),
+                    &LoggerOptions::default().set_file(LOG_FILE),
+                ),
+            }
+        }
     }
 
     fn send_event(&self, key: &str, values: Option<serde_json::Value>) {
@@ -103,10 +133,12 @@ impl ItemTrader {
 
         interesting_items.sort_by(|a, b| b.priority.cmp(&a.priority));
         let total = interesting_items.len();
+        let mut interrupted = false;
 
         for item_entry in interesting_items.iter_mut() {
             if self.should_stop(ctx) {
                 warning(comp("ProcessItem"), "Trader is not running or user is banned, stopping processing.", &LoggerOptions::default());
+                interrupted = true;
                 break;
             }
             let item_info = match ctx.cache.tradable_item().get_by(&item_entry.wfm_url) {
@@ -202,6 +234,10 @@ impl ItemTrader {
                     );
                 }
             }
+        }
+
+        if !interrupted && total > 0 {
+            self.sweep_orphans(ctx, &interesting_items, Utc::now()).await;
         }
         Ok(total)
     }
@@ -875,5 +911,39 @@ mod tests {
         progress_wish_list(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true)).await.unwrap();
         let last = ctx.orders.dry_log().last().unwrap().clone();
         assert_eq!((last.action.as_str(), last.price), ("create", Some(16)));
+    }
+
+    fn trader() -> ItemTrader {
+        ItemTrader::new(Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)))
+    }
+
+    #[tokio::test]
+    async fn an_orphaned_buy_order_is_deleted_once_the_grace_has_passed() {
+        let (_dir, ctx) = ctx_with(true, |_| {}).await;
+        seed_order(&ctx, OrderType::Buy, 17, route_for(true, true)).await;
+        let trader = trader();
+        let t0 = Utc::now();
+
+        trader.sweep_orphans(&ctx, &[], t0).await;
+        assert!(ctx.orders.dry_log().iter().all(|row| row.action != "delete"), "nothing is deleted inside the grace");
+
+        trader.sweep_orphans(&ctx, &[], t0 + chrono::Duration::minutes(31)).await;
+        let last = ctx.orders.dry_log().last().unwrap().clone();
+        assert_eq!((last.action.as_str(), last.side.as_str(), last.reason.as_str()), ("delete", "buy", "NotCandidate"));
+        assert!(ctx.orders.cache_orders().buy_orders.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_buy_order_a_candidate_covers_is_never_swept() {
+        let (_dir, ctx) = ctx_with(true, |_| {}).await;
+        seed_order(&ctx, OrderType::Buy, 17, route_for(true, true)).await;
+        let trader = trader();
+        let t0 = Utc::now();
+        let entries = vec![entry("Buy", None, None)];
+        for minutes in [0, 31, 61] {
+            trader.sweep_orphans(&ctx, &entries, t0 + chrono::Duration::minutes(minutes)).await;
+        }
+        assert!(ctx.orders.dry_log().iter().all(|row| row.action != "delete"), "a covered order is left alone");
+        assert_eq!(ctx.orders.cache_orders().buy_orders.len(), 1);
     }
 }

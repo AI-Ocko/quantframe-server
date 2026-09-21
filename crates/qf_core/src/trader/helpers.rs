@@ -1,4 +1,9 @@
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
+
+use chrono::{DateTime, Utc};
 
 use entity::dto::{add_price_history, PriceHistory};
 use entity::stock_item::StockItemPaginationQueryDto;
@@ -227,6 +232,47 @@ pub fn orders_to_delete(settings: &Settings, just_started: bool, my_orders: &Ord
     }
 }
 
+/// How long a buy order must stay uncovered before the sweep deletes it (spec §25 P14).
+pub const ORPHAN_GRACE: chrono::Duration = chrono::Duration::minutes(30);
+
+/// Ids of cached buy orders that no `Buy`/`WishList` entry of this cycle covers (spec §25 P14).
+pub fn orphan_buy_orders(settings: &Settings, entries: &[ItemEntry], my_orders: &OrderList<Order>) -> Vec<String> {
+    if !settings.live_scraper.has_trade_mode(TradeMode::Buy) {
+        return Vec::new(); // `orders_to_delete` already removes every buy order in that configuration
+    }
+    let covered: HashSet<(String, String)> = entries
+        .iter()
+        .filter(|e| e.operations.has("Buy") || e.operations.has("WishList"))
+        .map(|e| (e.wfm_id.clone(), key_of(&e.sub_type)))
+        .collect();
+    my_orders
+        .buy_orders
+        .iter()
+        .filter(|o| {
+            let sub_type = SubTypeExt::to_entity(&o.subtype);
+            !covered.contains(&(o.item_id.clone(), key_of(&sub_type)))
+                && !settings.live_scraper.items.general.is_item_blacklisted(&o.item_id, &sub_type, &TradeMode::Buy)
+        })
+        .map(|o| o.id.clone())
+        .collect()
+}
+
+/// Updates `first_seen` and returns the orphans that have been orphans for at least `grace` (spec §25 P14).
+pub fn due_orphans(
+    first_seen: &mut HashMap<String, DateTime<Utc>>,
+    orphans: &[String],
+    now: DateTime<Utc>,
+    grace: chrono::Duration,
+) -> Vec<String> {
+    let current: HashSet<&String> = orphans.iter().collect();
+    first_seen.retain(|id, _| current.contains(id));
+    orphans
+        .iter()
+        .filter(|id| now - *first_seen.entry((*id).clone()).or_insert(now) >= grace)
+        .cloned()
+        .collect()
+}
+
 pub async fn load_orders(
     component: &str,
     orders: &TradeOrders,
@@ -374,6 +420,8 @@ pub fn should_apply_max_price_drop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::BlackListItemSetting;
+    use utils::{Properties, SubType};
     use wf_market::types::SubType as WFSubType;
 
     fn order(id: &str, order_type: OrderType, item: &str) -> Order {
@@ -428,5 +476,91 @@ mod tests {
         assert_eq!(orders_to_delete(&settings, false, &book), vec!["b1".to_string()]);
         settings.live_scraper.general.trade_modes = vec![TradeMode::Buy, TradeMode::Sell, TradeMode::WishList];
         assert!(orders_to_delete(&settings, false, &book).is_empty());
+    }
+
+    fn ranked(rank: i64) -> SubType {
+        SubType { rank: Some(rank), ..Default::default() }
+    }
+
+    fn candidate(item: &str, sub_type: Option<SubType>, operation: &str) -> ItemEntry {
+        ItemEntry::new(
+            None,
+            None,
+            format!("{}_slug", item),
+            item,
+            sub_type,
+            0,
+            1,
+            0,
+            vec![operation.into()],
+            "closed",
+            Properties::default(),
+        )
+    }
+
+    fn ranked_buy_order(id: &str, item: &str, rank: i64) -> Order {
+        Order { subtype: WFSubType { rank: Some(rank), ..Default::default() }, ..order(id, OrderType::Buy, item) }
+    }
+
+    #[test]
+    fn orphan_buy_orders_returns_only_buy_orders_no_entry_covers() {
+        let settings = Settings::default();
+        let entries = vec![candidate("i1", None, "Buy"), candidate("i2", None, "WishList"), candidate("i3", None, "Sell")];
+        let book = OrderList::new(vec![
+            order("b1", OrderType::Buy, "i1"),
+            order("b2", OrderType::Buy, "i2"),
+            order("b3", OrderType::Buy, "i3"),
+            order("b4", OrderType::Buy, "i4"),
+            order("s1", OrderType::Sell, "i4"),
+        ]);
+        let mut orphans = orphan_buy_orders(&settings, &entries, &book);
+        orphans.sort();
+        assert_eq!(orphans, vec!["b3".to_string(), "b4".to_string()]);
+    }
+
+    #[test]
+    fn orphan_buy_orders_matches_the_sub_type_and_skips_blacklisted_items() {
+        let mut settings = Settings::default();
+        settings.live_scraper.items.general.blacklist = vec![
+            BlackListItemSetting { wfm_id: "i9".into(), sub_type: None, disabled_for: vec![TradeMode::Buy] },
+            BlackListItemSetting { wfm_id: "i8".into(), sub_type: None, disabled_for: vec![TradeMode::Sell] },
+        ];
+        let entries = vec![candidate("i5", Some(ranked(10)), "Buy")];
+        let book = OrderList::new(vec![
+            ranked_buy_order("rank10", "i5", 10),
+            ranked_buy_order("rank0", "i5", 0),
+            order("blacklisted", OrderType::Buy, "i9"),
+            order("other_mode", OrderType::Buy, "i8"),
+        ]);
+        let mut orphans = orphan_buy_orders(&settings, &entries, &book);
+        orphans.sort();
+        assert_eq!(orphans, vec!["other_mode".to_string(), "rank0".to_string()]);
+    }
+
+    #[test]
+    fn orphan_buy_orders_is_empty_without_the_buy_trade_mode() {
+        let mut settings = Settings::default();
+        settings.live_scraper.general.trade_modes = vec![TradeMode::Sell];
+        let book = OrderList::new(vec![order("b1", OrderType::Buy, "i1")]);
+        assert!(orphan_buy_orders(&settings, &[], &book).is_empty());
+    }
+
+    #[test]
+    fn due_orphans_waits_out_the_grace_and_forgets_covered_orders() {
+        let t0 = DateTime::parse_from_rfc3339("2026-09-20T12:00:00Z").unwrap().with_timezone(&Utc);
+        let grace = chrono::Duration::minutes(30);
+        let ids = vec!["b1".to_string()];
+        let mut first_seen = HashMap::new();
+
+        assert!(due_orphans(&mut first_seen, &ids, t0, grace).is_empty(), "nothing is due on the first sight");
+        assert_eq!(first_seen.get("b1"), Some(&t0), "the first sight is recorded");
+        assert!(due_orphans(&mut first_seen, &ids, t0 + chrono::Duration::minutes(29), grace).is_empty());
+        assert_eq!(due_orphans(&mut first_seen, &ids, t0 + chrono::Duration::minutes(30), grace), vec!["b1".to_string()]);
+
+        assert!(due_orphans(&mut first_seen, &[], t0 + chrono::Duration::minutes(10), grace).is_empty());
+        assert!(first_seen.is_empty(), "an order that is covered again is forgotten");
+        assert!(due_orphans(&mut first_seen, &ids, t0 + chrono::Duration::minutes(20), grace).is_empty());
+        assert!(due_orphans(&mut first_seen, &ids, t0 + chrono::Duration::minutes(45), grace).is_empty(), "the clock restarted");
+        assert_eq!(due_orphans(&mut first_seen, &ids, t0 + chrono::Duration::minutes(50), grace), vec!["b1".to_string()]);
     }
 }
