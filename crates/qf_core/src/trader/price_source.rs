@@ -14,7 +14,7 @@ use crate::collector::closed;
 use crate::collector::orders::sub_type_key;
 use crate::collector::stats::{ItemStats, StatsConfig};
 use crate::collector::{db_err, stmt};
-use crate::enums::{PriceSourceMode, TradeMode};
+use crate::enums::{PriceSourceMode, ProfitBasis, TradeMode};
 use crate::trader::blend::{blend, Effective};
 use crate::utils::modules::states;
 
@@ -159,8 +159,7 @@ impl StatsPriceSource {
     }
 
     pub async fn load(conn: &DatabaseConnection, cache: &CacheState) -> Result<Self, Error> {
-        let (mode, guard_pct) = source_settings();
-        let rows = effective_stats(conn, mode, guard_pct, Utc::now()).await?;
+        let rows = effective_stats(conn, source_settings(), Utc::now()).await?;
         let tradable = cache.tradable_item();
         Ok(Self::from_effective(rows, |id| tradable.get_by(id).ok().map(|item| item.wfm_url))
             .with_trade_tax(|id| tradable.get_by(id).ok().map(|item| item.trade_tax))
@@ -168,21 +167,33 @@ impl StatsPriceSource {
     }
 }
 
-/// `(mode, guard_pct)` from the live settings; inferred with the guard off when the app state is not up yet.
-pub fn source_settings() -> (PriceSourceMode, i64) {
+/// How the trader reads prices, from the live settings (spec §25 P7, P16).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SourceSettings {
+    pub mode: PriceSourceMode,
+    pub guard_pct: i64,
+    pub profit_basis: ProfitBasis,
+}
+
+/// The live settings; inferred, with the guard off and the spread basis, when the app state is not up yet.
+pub fn source_settings() -> SourceSettings {
     states::try_app_state()
-        .map(|app| (app.settings.live_scraper.general.price_source, app.settings.live_scraper.general.fast_drop_guard_pct))
-        .unwrap_or((PriceSourceMode::Inferred, -1))
+        .map(|app| SourceSettings {
+            mode: app.settings.live_scraper.general.price_source,
+            guard_pct: app.settings.live_scraper.general.fast_drop_guard_pct,
+            profit_basis: app.settings.live_scraper.general.profit_basis,
+        })
+        .unwrap_or(SourceSettings { mode: PriceSourceMode::Inferred, guard_pct: -1, profit_basis: ProfitBasis::Spread })
 }
 
 /// The one loader every consumer shares (spec §25 P7).
-pub async fn effective_stats(conn: &DatabaseConnection, mode: PriceSourceMode, guard_pct: i64, now: DateTime<Utc>) -> Result<Vec<Effective>, Error> {
+pub async fn effective_stats(conn: &DatabaseConnection, settings: SourceSettings, now: DateTime<Utc>) -> Result<Vec<Effective>, Error> {
     let inferred = all_item_stats(conn).await?;
-    let closed = match mode {
+    let closed = match settings.mode {
         PriceSourceMode::Inferred => Vec::new(),
         PriceSourceMode::Closed => closed::load_fresh(conn, now, StatsConfig::default().warm_min_trades).await?,
     };
-    Ok(blend(inferred, closed, mode, guard_pct, now))
+    Ok(blend(inferred, closed, settings.mode, settings.guard_pct, settings.profit_basis, now))
 }
 
 impl PriceSource for StatsPriceSource {

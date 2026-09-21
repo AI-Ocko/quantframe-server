@@ -8,7 +8,7 @@ use crate::collector::backfill::{self, BackfillStatus};
 use crate::collector::closed::{self, RefreshStatus};
 use crate::collector::market::{self, Movers, OverviewRow, Warmup};
 use crate::collector::stats::StatsConfig;
-use crate::enums::PriceSourceMode;
+use crate::enums::{PriceSourceMode, ProfitBasis};
 use crate::trader::compare::{self, CandidateCounts, ItemLookup, PriceSourceRow};
 use crate::trader::price_source::{all_item_stats, effective_stats, source_settings};
 use crate::utils::modules::states;
@@ -18,6 +18,7 @@ use crate::DATABASE;
 pub struct PriceSources {
     pub mode: PriceSourceMode,
     pub guard_pct: i64,
+    pub profit_basis: ProfitBasis,
     pub refresh: RefreshStatus,
     pub candidates: CandidateCounts,
     pub rows: Vec<PriceSourceRow>,
@@ -34,8 +35,7 @@ fn name_of() -> Result<impl Fn(&str) -> Option<(String, String)>, Error> {
 }
 
 pub async fn market_overview() -> Result<Vec<OverviewRow>, Error> {
-    let (mode, guard_pct) = source_settings();
-    let stats: Vec<_> = effective_stats(database()?, mode, guard_pct, Utc::now()).await?.into_iter().map(|e| e.stats).collect();
+    let stats: Vec<_> = effective_stats(database()?, source_settings(), Utc::now()).await?.into_iter().map(|e| e.stats).collect();
     Ok(market::overview(stats, name_of()?))
 }
 
@@ -45,8 +45,7 @@ pub async fn market_movers(min_volume: f64) -> Result<Movers, Error> {
 
 /// Only keys the collector knows: `tracked`, the history histogram and the projection stay on its own universe (spec §25 P12).
 pub async fn market_warmup() -> Result<Warmup, Error> {
-    let (mode, guard_pct) = source_settings();
-    let stats: Vec<_> = effective_stats(database()?, mode, guard_pct, Utc::now()).await?.into_iter().filter(|e| e.inferred).map(|e| e.stats).collect();
+    let stats: Vec<_> = effective_stats(database()?, source_settings(), Utc::now()).await?.into_iter().filter(|e| e.inferred).map(|e| e.stats).collect();
     Ok(market::warmup(&stats, Utc::now().date_naive()))
 }
 
@@ -70,14 +69,15 @@ pub async fn market_backfill_status() -> Result<BackfillStatus, Error> {
 pub async fn market_price_sources() -> Result<PriceSources, Error> {
     let conn = database()?;
     let now = Utc::now();
-    let (mode, guard_pct) = source_settings();
+    let source = source_settings();
     let settings = states::app_state()?.settings.live_scraper.items.clone();
     let tradable = states::cache_client()?.tradable_item();
     let (rows, candidates) = compare::compare(
         all_item_stats(conn).await?,
         closed::load_fresh(conn, now, StatsConfig::default().warm_min_trades).await?,
         &settings,
-        guard_pct,
+        source.guard_pct,
+        source.profit_basis,
         now,
         |id| {
             tradable.get_by(id).ok().map(|item| ItemLookup {
@@ -89,5 +89,5 @@ pub async fn market_price_sources() -> Result<PriceSources, Error> {
         },
         &closed::fetch_times(conn).await?,
     );
-    Ok(PriceSources { mode, guard_pct, refresh: closed::refresh_status(conn, now).await?, candidates, rows })
+    Ok(PriceSources { mode: source.mode, guard_pct: source.guard_pct, profit_basis: source.profit_basis, refresh: closed::refresh_status(conn, now).await?, candidates, rows })
 }

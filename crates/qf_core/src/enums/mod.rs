@@ -12,3 +12,6 @@ pub use trade_item_type::*;
 
 pub mod price_source_mode;
 pub use price_source_mode::*;
+
+pub mod profit_basis;
+pub use profit_basis::*;

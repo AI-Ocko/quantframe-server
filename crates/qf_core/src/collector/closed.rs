@@ -40,6 +40,8 @@ pub struct ClosedStats {
     pub min_price: Option<i64>,
     pub max_price: Option<i64>,
     pub week_price_shift: Option<f64>,
+    /// Upstream's profit: the mean daily `max_price − min_price` over the window's complete days (spec §25 P16).
+    pub range_profit: Option<f64>,
     pub days: usize,
     pub trades: i64,
     pub warm: bool,
@@ -81,6 +83,8 @@ pub fn aggregate(rows: Vec<ClosedRow>, today: NaiveDate, warm_min_trades: usize)
                 (Some(a), Some(b)) if a.day != b.day => Some(b.median.unwrap_or(0.0) - a.median.unwrap_or(0.0)),
                 _ => None,
             };
+            // spec §25 P16: upstream's profit, the mean daily high-minus-low of closed trades.
+            let ranges: Vec<f64> = days.iter().filter_map(|r| Some((r.max_price? - r.min_price?) as f64)).collect();
             ClosedStats {
                 item_id,
                 sub_type,
@@ -91,6 +95,7 @@ pub fn aggregate(rows: Vec<ClosedRow>, today: NaiveDate, warm_min_trades: usize)
                 min_price: days.iter().filter_map(|r| r.min_price).min(),
                 max_price: days.iter().filter_map(|r| r.max_price).max(),
                 week_price_shift,
+                range_profit: (!ranges.is_empty()).then(|| ranges.iter().sum::<f64>() / ranges.len() as f64),
                 days: days.len(),
                 trades,
                 warm: days.len() >= WARM_MIN_DAYS && trades >= warm_min_trades as i64,
@@ -420,6 +425,19 @@ mod tests {
         let late = by_id(load_fresh(&conn, now, 10).await.unwrap());
         assert_eq!((late["item4"].days, late["item4"].trades), (7, 64), "09-11 is the first day of item4's window");
         assert_eq!((late["item1"].days, late["item1"].trades), (7, 28), "09-11 is outside item1's window");
+    }
+
+    #[test]
+    fn aggregate_averages_the_daily_range_over_days_with_both_prices() {
+        let ranged = |d: &str, min: Option<i64>, max: Option<i64>| ClosedRow { min_price: min, max_price: max, ..row(d, 10, 65.0, 65.0) };
+        let stats = aggregate(
+            vec![ranged("2026-09-17", Some(60), Some(70)), ranged("2026-09-18", Some(64), Some(66)), ranged("2026-09-19", Some(62), None)],
+            day("2026-09-20"),
+            10,
+        );
+        assert_eq!(stats[0].range_profit, Some(6.0), "mean of 10 and 2; the day without a max price is ignored");
+        let bare = aggregate(vec![ranged("2026-09-18", None, Some(66)), ranged("2026-09-19", Some(62), None)], day("2026-09-20"), 10);
+        assert_eq!(bare[0].range_profit, None, "no day carries both prices");
     }
 
     #[test]

@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::app::ItemSettings;
 use crate::collector::closed::ClosedStats;
 use crate::collector::stats::ItemStats;
-use crate::enums::PriceSourceMode;
+use crate::enums::{PriceSourceMode, ProfitBasis};
 use crate::trader::blend::blend;
 use crate::trader::price_source::{get_interesting_items, StatsPriceSource};
 
@@ -25,6 +25,8 @@ pub struct PriceSourceRow {
     pub closed_days: Option<usize>,
     pub week_price_shift: Option<f64>,
     pub profit: Option<f64>,
+    /// Upstream's profit for this key, whatever the current basis (spec §25 P16).
+    pub closed_range_profit: Option<f64>,
     pub warm_inferred: bool,
     pub warm_closed: bool,
     pub candidate_inferred: bool,
@@ -53,18 +55,19 @@ pub fn compare(
     closed: Vec<ClosedStats>,
     settings: &ItemSettings,
     guard_pct: i64,
+    profit_basis: ProfitBasis,
     now: DateTime<Utc>,
     lookup: impl Fn(&str) -> Option<ItemLookup>,
     fetched_at: &HashMap<String, String>,
 ) -> (Vec<PriceSourceRow>, CandidateCounts) {
     let candidates = |mode: PriceSourceMode| -> HashSet<String> {
-        let source = StatsPriceSource::from_effective(blend(inferred.clone(), closed.clone(), mode, guard_pct, now), |id| lookup(id).map(|l| l.wfm_url))
+        let source = StatsPriceSource::from_effective(blend(inferred.clone(), closed.clone(), mode, guard_pct, profit_basis, now), |id| lookup(id).map(|l| l.wfm_url))
             .with_trade_tax(|id| lookup(id).map(|l| l.trade_tax))
             .with_max_rank(|id| lookup(id).and_then(|l| l.max_rank));
         get_interesting_items(settings, &source).into_iter().map(|i| i.uuid).collect()
     };
     let (as_inferred, as_closed) = (candidates(PriceSourceMode::Inferred), candidates(PriceSourceMode::Closed));
-    let guarded: HashSet<(String, String)> = blend(inferred.clone(), closed.clone(), PriceSourceMode::Closed, guard_pct, now)
+    let guarded: HashSet<(String, String)> = blend(inferred.clone(), closed.clone(), PriceSourceMode::Closed, guard_pct, profit_basis, now)
         .into_iter()
         .filter(|e| e.guarded)
         .map(|e| (e.stats.item_id, e.stats.sub_type))
@@ -94,6 +97,7 @@ pub fn compare(
                 closed_days: c.as_ref().map(|c| c.days),
                 week_price_shift: c.as_ref().and_then(|c| c.week_price_shift),
                 profit: i.as_ref().and_then(|i| i.profit),
+                closed_range_profit: c.as_ref().and_then(|c| c.range_profit),
                 warm_inferred: i.as_ref().is_some_and(|i| i.warm),
                 // The trader treats a key the collector does not know as cold (spec §25 P12), so the tab must too.
                 warm_closed: c.as_ref().is_some_and(|c| c.warm) && i.is_some(),
@@ -123,7 +127,7 @@ mod tests {
         ItemStats { item_id: id.into(), sub_type: String::new(), volume, avg_price: Some(moving_avg), moving_avg: Some(moving_avg), profit: Some(20.0), min_price: Some(1), max_price: Some(2), median: Some(moving_avg), history_days: 5, warm: false, updated_at: "2026-09-20T07:55:00Z".into() }
     }
     fn closed(id: &str, volume: f64, moving_avg: f64) -> ClosedStats {
-        ClosedStats { item_id: id.into(), sub_type: String::new(), volume, moving_avg: Some(moving_avg), median: Some(moving_avg), avg_price: Some(moving_avg), min_price: Some(1), max_price: Some(2), week_price_shift: Some(1.0), days: 7, trades: (volume * 7.0) as i64, warm: true }
+        ClosedStats { item_id: id.into(), sub_type: String::new(), volume, moving_avg: Some(moving_avg), median: Some(moving_avg), avg_price: Some(moving_avg), min_price: Some(1), max_price: Some(2), week_price_shift: Some(1.0), range_profit: Some(30.0), days: 7, trades: (volume * 7.0) as i64, warm: true }
     }
 
     #[test]
@@ -137,6 +141,7 @@ mod tests {
             vec![closed("undercounted", 30.0, 66.0), closed("busy", 60.0, 48.0), closed("closed_only", 25.0, 10.0), ranked_closed],
             &settings,
             10,
+            ProfitBasis::Spread,
             parse_ts("2026-09-20T08:00:00Z").unwrap(),
             |id| (id != "untradable").then(|| ItemLookup { name: format!("Name {id}"), wfm_url: format!("{id}_slug"), trade_tax: 0, max_rank: (id == "ranked").then_some(5) }),
             &HashMap::from([("busy".to_string(), "2026-09-20T01:00:00Z".to_string())]),
@@ -154,5 +159,33 @@ mod tests {
         let r = row("ranked");
         assert_eq!((r.candidate_inferred, r.candidate_closed), (false, false), "rank 0 of a rank-5 item is no candidate in either mode (spec §25 P13)");
         assert_eq!(counts, CandidateCounts { inferred: 1, closed: 2, both: 1 });
+    }
+
+    #[test]
+    fn the_profit_basis_decides_closed_candidacy_for_a_thin_spread_with_a_wide_daily_range() {
+        // A thin spread (5, under the default threshold of 10) but a 30-plat daily range: upstream buys it, the spread basis does not.
+        let thin = ItemStats { profit: Some(5.0), ..inferred("thin", 40.0, 50.0) };
+        let wide = ClosedStats { range_profit: Some(30.0), ..closed("thin", 40.0, 50.0) };
+        let run = |basis| {
+            compare(
+                vec![thin.clone()],
+                vec![wide.clone()],
+                &ItemSettings::default(),
+                10,
+                basis,
+                parse_ts("2026-09-20T08:00:00Z").unwrap(),
+                |id| Some(ItemLookup { name: format!("Name {id}"), wfm_url: format!("{id}_slug"), trade_tax: 0, max_rank: None }),
+                &HashMap::new(),
+            )
+        };
+        let (spread_rows, spread_counts) = run(ProfitBasis::Spread);
+        assert_eq!((spread_rows[0].candidate_inferred, spread_rows[0].candidate_closed), (false, false), "a 5-plat spread passes no profit filter");
+        assert_eq!(spread_counts, CandidateCounts::default());
+        assert_eq!(spread_rows[0].closed_range_profit, Some(30.0), "the tab shows the range whatever the basis");
+
+        let (range_rows, range_counts) = run(ProfitBasis::Range);
+        assert_eq!((range_rows[0].candidate_inferred, range_rows[0].candidate_closed), (false, true), "the range basis moves closed mode only");
+        assert_eq!(range_counts, CandidateCounts { inferred: 0, closed: 1, both: 0 });
+        assert_eq!(range_rows[0].profit, Some(5.0), "the spread column keeps reporting the spread");
     }
 }
