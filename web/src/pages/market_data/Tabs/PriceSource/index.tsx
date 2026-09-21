@@ -41,7 +41,7 @@ export function PriceSourcePanel({ isActive }: { isActive?: boolean }) {
   return (
     <>
       <Text size="sm" mt="md">
-        {t("mode", { mode: t(`modes.${data.mode}`), guard: data.guard_pct })}
+        {t("mode", { mode: t(`modes.${data.mode}`), basis: t(`bases.${data.profit_basis}`), guard: data.guard_pct })}
       </Text>
       <Text size="sm" c="dimmed">
         {t("refresh", data.refresh)}
@@ -96,6 +96,7 @@ export function PriceSourcePanel({ isActive }: { isActive?: boolean }) {
           { accessor: "closed_moving_avg", title: t("columns.closed_moving_avg"), sortable: true, render: (r) => num(r.closed_moving_avg, 1) },
           { accessor: "week_price_shift", title: t("columns.week_price_shift"), sortable: true, render: (r) => num(r.week_price_shift, 1) },
           { accessor: "profit", title: t("columns.profit"), sortable: true, render: (r) => num(r.profit, 0) },
+          { accessor: "closed_range_profit", title: t("columns.closed_range_profit"), sortable: true, render: (r) => num(r.closed_range_profit, 1) },
           { accessor: "closed_days", title: t("columns.closed_days"), sortable: true },
           { accessor: "warm_inferred", title: t("columns.warm_inferred"), sortable: true, render: (r) => yesNo(r.warm_inferred) },
           { accessor: "warm_closed", title: t("columns.warm_closed"), sortable: true, render: (r) => yesNo(r.warm_closed) },

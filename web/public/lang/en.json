@@ -1316,6 +1316,14 @@
                     "closed": "Closed trades (warframe.market)"
                   }
                 },
+                "profit_basis": {
+                  "label": "Profit basis",
+                  "tooltip": "What the profit threshold is compared with. Spread: the live gap between the best buy and sell orders. Daily range: the average daily high minus low of closed trades, which is what the desktop Quantframe app uses. Daily range applies only with Price source set to Closed trades.",
+                  "options": {
+                    "spread": "Live spread",
+                    "range": "Daily range (desktop app)"
+                  }
+                },
                 "fast_drop_guard_pct": {
                   "label": "Fast-drop guard (%)",
                   "tooltip": "Closed mode only. When the collector's 48-hour average is this far below the closed 7-day average, the lower figure is used. -1 turns it off."
@@ -2137,8 +2145,9 @@
         },
         "price_source": {
           "title": "Price source",
-          "mode": "Trader is using: {{mode}} · fast-drop guard {{guard}} %",
+          "mode": "Trader is using: {{mode}} · profit from {{basis}} · fast-drop guard {{guard}} %",
           "modes": { "inferred": "inferred statistics", "closed": "closed-trade statistics" },
+          "bases": { "spread": "the live buy/sell spread", "range": "the daily closed price range" },
           "refresh": "Closed statistics: {{ok}} of {{active}} items fetched, {{missing}} missing, {{failed}} failed, {{stale}} waiting for today's refresh",
           "candidates": { "inferred": "Buy candidates (inferred)", "closed": "Buy candidates (closed)", "both": "In both" },
           "search": "Search",
@@ -2152,7 +2161,8 @@
             "inferred_moving_avg": "Moving avg (inferred)",
             "closed_moving_avg": "Moving avg (closed)",
             "week_price_shift": "Week shift",
-            "profit": "Profit",
+            "profit": "Profit (spread)",
+            "closed_range_profit": "Profit (daily range)",
             "closed_days": "Closed days",
             "warm_inferred": "Warm (inferred)",
             "warm_closed": "Warm (closed)",

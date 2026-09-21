@@ -110,6 +110,7 @@ export namespace TauriTypes {
     delete_conflicting_orders: boolean;
     price_source: "inferred" | "closed";
     fast_drop_guard_pct: number;
+    profit_basis: "spread" | "range";
   }
   export interface WFInventorySettings {
     inv_path: string;
@@ -1286,6 +1287,7 @@ export namespace TauriTypes {
     closed_days: number | null;
     week_price_shift: number | null;
     profit: number | null;
+    closed_range_profit: number | null;
     warm_inferred: boolean;
     warm_closed: boolean;
     candidate_inferred: boolean;
@@ -1296,6 +1298,7 @@ export namespace TauriTypes {
   export interface MarketPriceSources {
     mode: "inferred" | "closed";
     guard_pct: number;
+    profit_basis: "spread" | "range";
     refresh: { active: number; ok: number; missing: number; failed: number; stale: number; oldest_fetched_at: string | null };
     candidates: { inferred: number; closed: number; both: number };
     rows: MarketPriceSourceRow[];

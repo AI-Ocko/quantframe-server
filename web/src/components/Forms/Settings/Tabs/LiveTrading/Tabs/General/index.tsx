@@ -233,6 +233,18 @@ export const GeneralPanel = ({ form, setHideTab, setHideButtons }: GeneralPanelP
                 onChange={(value) => form.setFieldValue(getFieldPath("general.price_source"), value ?? "inferred")}
               />
             </Tooltip>
+            <Tooltip label={useTranslateFormFields("profit_basis.tooltip")}>
+              <Select
+                label={useTranslateFormFields("profit_basis.label")}
+                allowDeselect={false}
+                data={[
+                  { value: "spread", label: useTranslateFormFields("profit_basis.options.spread") },
+                  { value: "range", label: useTranslateFormFields("profit_basis.options.range") },
+                ]}
+                value={form.values.live_scraper.general.profit_basis}
+                onChange={(value) => form.setFieldValue(getFieldPath("general.profit_basis"), value ?? "spread")}
+              />
+            </Tooltip>
             <Tooltip label={useTranslateFormFields("fast_drop_guard_pct.tooltip")}>
               <NumberInput
                 label={useTranslateFormFields("fast_drop_guard_pct.label")}
