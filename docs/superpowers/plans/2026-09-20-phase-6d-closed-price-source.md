@@ -1765,6 +1765,55 @@ pub fn due_orphans(first_seen: &mut HashMap<String, DateTime<Utc>>, orphans: &[S
 
 ---
 
+### Task 9: Upstream's range-based profit as a selectable basis
+
+Added 2026-09-21 (spec §25 P16). Default `spread` leaves every trader input unchanged.
+
+**Files:**
+- Create: `crates/qf_core/src/enums/profit_basis.rs`
+- Modify: `crates/qf_core/src/enums/mod.rs`, `crates/qf_core/src/app/types/settings/live_scraper_general_settings.rs`, `crates/qf_core/src/collector/closed.rs`, `crates/qf_core/src/trader/blend.rs`, `crates/qf_core/src/trader/price_source.rs`, `crates/qf_core/src/trader/compare.rs`, `crates/qf_core/src/commands/market.rs`, `web/src/types/tauri.type.ts`, `web/src/pages/market_data/Tabs/PriceSource/index.tsx`, `web/src/components/Forms/Settings/Tabs/LiveTrading/Tabs/General/index.tsx`, `web/public/lang/en.json`
+
+**Interfaces (produces):**
+
+```rust
+// enums/profit_basis.rs — same shape as price_source_mode.rs
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProfitBasis { #[default] Spread, Range }
+
+// settings: LiveScraperGeneralSettings gains  #[serde(default)] pub profit_basis: ProfitBasis   (Default: Spread)
+// closed.rs: ClosedStats gains  pub range_profit: Option<f64>
+// blend.rs
+pub fn blend(inferred: Vec<ItemStats>, closed: Vec<ClosedStats>, mode: PriceSourceMode, guard_pct: i64, profit_basis: ProfitBasis, now: DateTime<Utc>) -> Vec<Effective>;
+// price_source.rs
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SourceSettings { pub mode: PriceSourceMode, pub guard_pct: i64, pub profit_basis: ProfitBasis }
+pub fn source_settings() -> SourceSettings;   // Inferred, -1, Spread when the app state is missing
+pub async fn effective_stats(conn: &DatabaseConnection, settings: SourceSettings, now: DateTime<Utc>) -> Result<Vec<Effective>, Error>;
+// compare.rs
+pub fn compare(inferred, closed, settings: &ItemSettings, guard_pct: i64, profit_basis: ProfitBasis, now, lookup, fetched_at) -> (Vec<PriceSourceRow>, CandidateCounts);
+pub struct PriceSourceRow { /* existing */ pub closed_range_profit: Option<f64> }
+// commands/market.rs: PriceSources gains  pub profit_basis: ProfitBasis
+```
+
+- [ ] **Step 1: `range_profit` in `aggregate` (test first).** In `closed.rs`'s tests add a case: days with `(min, max)` of `(60, 70)`, `(64, 66)` and one day whose `max_price` is `None` give `range_profit == Some(6.0)` (mean of 10 and 2; the incomplete day is ignored), and a week where no day has both gives `None`. Land the field with `range_profit: None` first so the RED is an assertion, then compute it: over the window's rows, `filter_map(|r| Some((r.max_price? - r.min_price?) as f64))`, mean, `None` when empty. Add `range_profit` to every `ClosedStats { .. }` literal in the crate (`grep -rn "ClosedStats {" crates/`): the `closed(..)` helpers in `blend.rs` and `compare.rs` tests take `range_profit: Some(30.0)` unless a test needs otherwise.
+
+- [ ] **Step 2: the enum and the setting.** Create `enums/profit_basis.rs` as above, export it from `enums/mod.rs`, add the field (with `#[serde(default)]`) and its `Default` value to `LiveScraperGeneralSettings`, and extend the existing settings test: the pre-6d JSON body loads with `ProfitBasis::Spread`, and `Range` serializes as `"range"`.
+
+- [ ] **Step 3: `blend` (tests first).** Add the `profit_basis` parameter (before `now`). In `merge`, `profit` becomes: `match (profit_basis, c.range_profit) { (ProfitBasis::Range, Some(r)) => Some(r), _ => inferred.as_ref().and_then(|i| i.profit) }` — read `c.range_profit` before `c`'s fields are moved. Tests: with `Spread` the existing closed-mode test still sees the inferred profit (12.0); with `Range` it sees 30.0; `Range` in mode `Inferred` is still the identity; `Range` with `range_profit: None` keeps the inferred profit; a closed-only key under `Range` gets `Some(30.0)` where `Spread` gives `None`. Update every existing `blend(..)` call in tests to pass `ProfitBasis::Spread` so they prove what they proved before.
+
+- [ ] **Step 4: `price_source.rs`.** Introduce `SourceSettings`, make `source_settings()` return it, change `effective_stats` to take it, update `load` and the three call sites in `commands/market.rs`. No filter changes.
+
+- [ ] **Step 5: `compare` and the RPC (test first).** `compare` takes `profit_basis` and passes it to the closed-mode `blend` calls (the inferred-mode call passes it too; it is ignored there). `PriceSourceRow.closed_range_profit` = the key's `range_profit`. Extend the compare test: a key whose inferred profit is 5 (below the default threshold of 10) and whose `range_profit` is 30 has `candidate_closed == false` under `Spread` and `true` under `Range`, while `candidate_inferred` is `false` under both. `market_price_sources` passes the current basis and returns it as `profit_basis`.
+
+- [ ] **Step 6: web.** `tauri.type.ts`: `profit_basis: "spread" | "range"` on the general settings interface and on `MarketPriceSources`; `closed_range_profit: number | null` on `MarketPriceSourceRow`. Price source tab: a sortable column `closed_range_profit` directly after `profit`, rendered with `num(r.closed_range_profit, 1)`; the existing `profit` column's title becomes `t("columns.profit")` unchanged in code but its en.json string changes (Step 7); the header `mode` line also receives `basis: t(`bases.${data.profit_basis}`)`. General settings tab: a third control in the same `Group` as the price source select, a `Select` for `general.profit_basis` with options `spread` / `range`, same pattern as the price source select, `allowDeselect={false}`.
+
+- [ ] **Step 7: `en.json`, targeted text edits only** (a Python script with exact anchors; never parse-and-rewrite). (a) In `pages.market_data.tabs.price_source`: change the `"mode"` string to `"Trader is using: {{mode}} · profit from {{basis}} · fast-drop guard {{guard}} %"`; after the `"modes"` line insert `"bases": { "spread": "the live buy/sell spread", "range": "the daily closed price range" },`; in `columns` change `"profit": "Profit"` to `"profit": "Profit (spread)"` and insert after it `"closed_range_profit": "Profit (daily range)",`. (b) In `components.forms.settings.tabs.live_scraper.general.fields`, directly before `"fast_drop_guard_pct": {`, insert a `"profit_basis"` block with `label` "Profit basis", `tooltip` "What the profit threshold is compared with. Spread: the live gap between the best buy and sell orders. Daily range: the average daily high minus low of closed trades, which is what the desktop Quantframe app uses. Daily range applies only with Price source set to Closed trades.", and `options` `spread` "Live spread" / `range` "Daily range (desktop app)". Confirm the file parses and `git diff --stat` shows only these lines.
+
+- [ ] **Step 8: Full gate**, then **commit** as two commits (`feat(trader): offer upstream's daily-range profit as a selectable basis`, `feat(web): show and select the profit basis`). Do not push.
+
+---
+
 ## Self-Review (done while writing)
 
 - **Spec coverage:** P1 → Task 1 Steps 1, 5; P2 → Task 2 (loop, lane, stale order, failed retry, pass log, retention, import button); P3 → Task 1 `aggregate`/`load_fresh`; P4 → Task 3 `blend`; P5 → Task 3 guard + Step 6 tag; P6 → Task 3 Steps 4–6b; P7 → Task 3 Steps 1, 5, 7 and Task 4 Step 6; P8 → Task 4; P9 → nothing built, by design; P10 → tests in Tasks 1–4; P11 → Task 5.
