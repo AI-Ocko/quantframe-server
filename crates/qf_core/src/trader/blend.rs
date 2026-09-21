@@ -44,8 +44,9 @@ pub fn blend(inferred: Vec<ItemStats>, closed: Vec<ClosedStats>, mode: PriceSour
 fn merge(inferred: Option<ItemStats>, c: ClosedStats, guard_pct: i64, profit_basis: ProfitBasis, now: DateTime<Utc>) -> Effective {
     let known = inferred.is_some();
     // spec §25 P16: upstream's profit is the mean daily closed range; read it before `c` is moved apart.
+    // A key the collector has never seen can never be warm (P12), so the range must not win it a candidate slot.
     let profit = match (profit_basis, c.range_profit) {
-        (ProfitBasis::Range, Some(range)) => Some(range),
+        (ProfitBasis::Range, Some(range)) if known => Some(range),
         _ => inferred.as_ref().and_then(|i| i.profit),
     };
     // spec §25 P5: the collector sees a falling market within minutes; the closed average is a week old by construction.
@@ -138,7 +139,7 @@ mod tests {
 
         let closed_only = |basis| blend(Vec::new(), vec![closed("only_closed", 30.0, 66.0)], PriceSourceMode::Closed, 10, basis, now()).remove(0);
         assert_eq!(closed_only(ProfitBasis::Spread).stats.profit, None, "no inferred row, no spread profit");
-        assert_eq!(closed_only(ProfitBasis::Range).stats.profit, Some(30.0), "a closed-only key still has a range");
+        assert_eq!(closed_only(ProfitBasis::Range).stats.profit, None, "a key the collector has never seen can never be warm, so the range must not win it a candidate slot");
     }
 
     #[test]

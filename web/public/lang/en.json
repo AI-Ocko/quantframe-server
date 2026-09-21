@@ -2104,7 +2104,7 @@
             "volume": "Trades / day",
             "median": "Median (7 d)",
             "moving_avg": "Moving avg",
-            "profit": "Spread",
+            "profit": "Profit",
             "min_price": "Min",
             "max_price": "Max",
             "history_days": "History (d)",
