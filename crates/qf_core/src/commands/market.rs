@@ -8,6 +8,7 @@ use crate::collector::backfill::{self, BackfillStatus};
 use crate::collector::closed::{self, RefreshStatus};
 use crate::collector::market::{self, Movers, OverviewRow, Warmup};
 use crate::collector::stats::StatsConfig;
+use crate::collector::trade_tax;
 use crate::enums::{PriceSourceMode, ProfitBasis};
 use crate::trader::compare::{self, CandidateCounts, ItemLookup, PriceSourceRow};
 use crate::trader::price_source::{all_item_stats, effective_stats, source_settings};
@@ -72,6 +73,8 @@ pub async fn market_price_sources() -> Result<PriceSources, Error> {
     let source = source_settings();
     let settings = states::app_state()?.settings.live_scraper.items.clone();
     let tradable = states::cache_client()?.tradable_item();
+    // spec §25 P18: the tax comes from the collector's table; the cache's `trade_tax` is always 0.
+    let taxes = trade_tax::load_all(conn).await?;
     let (rows, candidates) = compare::compare(
         all_item_stats(conn).await?,
         closed::load_fresh(conn, now, StatsConfig::default().warm_min_trades).await?,
@@ -84,7 +87,7 @@ pub async fn market_price_sources() -> Result<PriceSources, Error> {
                 max_rank: item.sub_type.as_ref().and_then(|s| s.max_rank),
                 name: item.name,
                 wfm_url: item.wfm_url,
-                trade_tax: item.trade_tax,
+                trade_tax: taxes.get(id).copied().unwrap_or(0),
             })
         },
         &closed::fetch_times(conn).await?,

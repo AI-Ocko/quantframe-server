@@ -13,6 +13,7 @@ use crate::cache::client::CacheState;
 use crate::collector::closed;
 use crate::collector::orders::sub_type_key;
 use crate::collector::stats::{ItemStats, StatsConfig};
+use crate::collector::trade_tax;
 use crate::collector::{db_err, stmt};
 use crate::enums::{PriceSourceMode, ProfitBasis, TradeMode};
 use crate::trader::blend::{blend, Effective};
@@ -142,7 +143,7 @@ impl StatsPriceSource {
         Self { items, has_shift }
     }
 
-    /// Fills `trading_tax` from the tradable cache; items the lookup does not know keep 0.
+    /// Fills `trading_tax` from the fetched tax table (spec §25 P18); items the lookup does not know keep 0.
     pub fn with_trade_tax(mut self, tax_of: impl Fn(&str) -> Option<i64>) -> Self {
         for info in self.items.values_mut() {
             info.trading_tax = tax_of(&info.wfm_id).unwrap_or(0);
@@ -160,9 +161,11 @@ impl StatsPriceSource {
 
     pub async fn load(conn: &DatabaseConnection, cache: &CacheState) -> Result<Self, Error> {
         let rows = effective_stats(conn, source_settings(), Utc::now()).await?;
+        // spec §25 P18: the tax comes from the collector's table; the cache's `trade_tax` is always 0.
+        let taxes = trade_tax::load_all(conn).await?;
         let tradable = cache.tradable_item();
         Ok(Self::from_effective(rows, |id| tradable.get_by(id).ok().map(|item| item.wfm_url))
-            .with_trade_tax(|id| tradable.get_by(id).ok().map(|item| item.trade_tax))
+            .with_trade_tax(|id| taxes.get(id).copied())
             .with_max_rank(|id| tradable.get_by(id).ok().and_then(|item| item.sub_type.and_then(|s| s.max_rank))))
     }
 }
@@ -377,6 +380,16 @@ mod tests {
         assert_eq!(get_interesting_items(&settings, &prices).len(), 2, "the cap is disabled by default");
         settings.wtb.trading_tax_cap = 500_000;
         assert_eq!(get_interesting_items(&settings, &prices).into_iter().map(|i| i.wfm_id).collect::<Vec<_>>(), vec!["cheap"]);
+    }
+
+    /// spec §25 P18: an item the fetched table does not know yet has no tax and passes the cap.
+    #[test]
+    fn an_item_with_no_fetched_tax_yet_passes_the_cap() {
+        let taxes = HashMap::from([("dear".to_string(), 1_000_000_i64)]);
+        let prices = source(vec![stats("dear", "", 50.0, 50.0, 100.0), stats("unfetched", "", 50.0, 50.0, 100.0)]).with_trade_tax(|id| taxes.get(id).copied());
+        let mut settings = ItemSettings::default();
+        settings.wtb.trading_tax_cap = 500_000;
+        assert_eq!(get_interesting_items(&settings, &prices).into_iter().map(|i| i.wfm_id).collect::<Vec<_>>(), vec!["unfetched"], "fail open, never closed");
     }
 
     #[test]
