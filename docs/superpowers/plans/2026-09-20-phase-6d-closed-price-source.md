@@ -1814,6 +1814,34 @@ pub struct PriceSourceRow { /* existing */ pub closed_range_profit: Option<f64> 
 
 ---
 
+### Task 10: The buy-candidate limit as a setting
+
+Added 2026-09-21 (spec §25 P17). Default 150 leaves the candidate list unchanged.
+
+**Files:**
+- Modify: `crates/qf_core/src/app/types/settings/item_wtb_settings.rs`, `crates/qf_core/src/trader/price_source.rs`, `web/src/types/tauri.type.ts`, `web/src/components/Forms/Settings/Tabs/LiveTrading/Tabs/Item/Accordion/WTB/index.tsx`, `web/public/lang/en.json`
+
+**Interfaces (produces):** `ItemWtbSettings` gains `#[serde(default = "default_max_buy_candidates")] pub max_buy_candidates: i64` (default 150, the value of `price_source::MAX_BUY_CANDIDATES`; disabled at `-1`). `get_interesting_items`' signature is unchanged.
+
+- [ ] **Step 1: Failing tests** in `price_source.rs`'s test module, next to `buy_candidates_are_capped_and_need_buy_mode` (which seeds 200 passing items): with default settings `get_interesting_items` returns 150 (unchanged); with `wtb.max_buy_candidates = -1` it returns all 200; with `= 20` it returns the 20 highest-volume ones, in volume order. In `item_wtb_settings.rs` add a test that a JSON body without the key deserializes with 150 (build the body from `serde_json::to_value(ItemWtbSettings::default())` with the key removed). Show a behavioural RED: land the field first and leave `truncate(MAX_BUY_CANDIDATES)` in place, so the `-1` and `20` cases fail as assertions.
+
+- [ ] **Step 2: Implement.** In `get_interesting_items` replace `items.truncate(MAX_BUY_CANDIDATES);` with:
+
+```rust
+    // spec §25 P17: the limit is a setting; -1 lifts it, as the desktop app has none.
+    if !is_disabled(wtb.max_buy_candidates) {
+        items.truncate(wtb.max_buy_candidates.max(0) as usize);
+    }
+```
+
+  Update the doc comment above the function (`at most wtb.max_buy_candidates`). Add the field, `fn default_max_buy_candidates() -> i64 { crate::trader::price_source::MAX_BUY_CANDIDATES as i64 }` (or the literal 150 if that import creates a cycle the compiler rejects) and its `Default` value. If `ItemSettings::get_query_id` lists every WTB threshold, add `max_buy_candidates` to it in the same style.
+
+- [ ] **Step 3: Web.** `tauri.type.ts`: `max_buy_candidates: number;` on the WTB settings interface (the one with `volume_threshold`). WTB form: a `NumberInput` for it built exactly like the neighbouring threshold inputs in that file (same props pattern, `min={-1}`), placed after the volume threshold input. `en.json`, targeted insertion only: inside the WTB fields block that holds `"volume_threshold": {`, insert a `"max_buy_candidates"` block in the same shape as its neighbours (copy the key set a neighbour uses: `label`, `placeholder`, `error`, `tooltip` as applicable) with label "Max Buy Candidates", placeholder "Max Buy Candidates", error "Invalid max buy candidates", tooltip "How many buy candidates the trader works per cycle, busiest first. -1 removes the limit, as in the desktop app. Each candidate costs an order-book fetch and an order rewrite per cycle.". Confirm the file parses and the diff is one contiguous block.
+
+- [ ] **Step 4: Full gate**, then one commit `feat(trader): make the buy-candidate limit a setting`. Do not push.
+
+---
+
 ## Self-Review (done while writing)
 
 - **Spec coverage:** P1 → Task 1 Steps 1, 5; P2 → Task 2 (loop, lane, stale order, failed retry, pass log, retention, import button); P3 → Task 1 `aggregate`/`load_fresh`; P4 → Task 3 `blend`; P5 → Task 3 guard + Step 6 tag; P6 → Task 3 Steps 4–6b; P7 → Task 3 Steps 1, 5, 7 and Task 4 Step 6; P8 → Task 4; P9 → nothing built, by design; P10 → tests in Tasks 1–4; P11 → Task 5.
