@@ -31,6 +31,14 @@ export const WTBItemAccordion = ({ form }: WTBItemAccordionProps) => {
           {...form.getInputProps(getFieldPath("volume_threshold"))}
         />
         <NumberInput
+          label={useTranslateFormFields("max_buy_candidates.label")}
+          min={-1}
+          placeholder={useTranslateFormFields("max_buy_candidates.placeholder")}
+          rightSection={<TooltipIcon label={useTranslateFormFields("max_buy_candidates.tooltip")} />}
+          radius="md"
+          {...form.getInputProps(getFieldPath("max_buy_candidates"))}
+        />
+        <NumberInput
           label={useTranslateFormFields("profit_threshold.label")}
           min={-1}
           max={999}

@@ -10,7 +10,7 @@ pub struct ItemSettings {
 impl ItemSettings {
     pub fn get_query_id(&self) -> String {
         format!(
-            "volume_threshold:{};profit_threshold:{};avg_price_cap:{};trading_tax_cap:{};max_total_price_cap:{};price_shift_threshold:{};buy_quantity:{};min_wtb_profit_margin:{};min_sma:{};min_profit:{}",
+            "volume_threshold:{};profit_threshold:{};avg_price_cap:{};trading_tax_cap:{};max_total_price_cap:{};price_shift_threshold:{};buy_quantity:{};min_wtb_profit_margin:{};max_buy_candidates:{};min_sma:{};min_profit:{}",
             self.wtb.volume_threshold,
             self.wtb.profit_threshold,
             self.wtb.avg_price_cap,
@@ -19,6 +19,7 @@ impl ItemSettings {
             self.wtb.price_shift_threshold,
             self.wtb.buy_quantity,
             self.wtb.min_wtb_profit_margin,
+            self.wtb.max_buy_candidates,
             self.wts.min_sma,
             self.wts.min_profit
         )

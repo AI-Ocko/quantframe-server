@@ -155,6 +155,7 @@ export namespace TauriTypes {
   }
   export interface ItemWtsSettings {
     volume_threshold: number;
+    max_buy_candidates: number;
     profit_threshold: number;
     avg_price_cap: number;
     trading_tax_cap: number;

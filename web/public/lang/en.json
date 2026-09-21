@@ -1389,6 +1389,12 @@
                     "tooltip": "Minimum volume to consider for trading",
                     "link": "https://quantframe.app/features/live-trading/settings/item/wtb#volume-threshold"
                   },
+                  "max_buy_candidates": {
+                    "label": "Max Buy Candidates",
+                    "placeholder": "Max Buy Candidates",
+                    "error": "Invalid max buy candidates",
+                    "tooltip": "How many buy candidates the trader works per cycle, busiest first. -1 removes the limit, as in the desktop app. Each candidate costs an order-book fetch and an order rewrite per cycle."
+                  },
                   "profit_threshold": {
                     "label": "Profit Threshold",
                     "placeholder": "Profit Threshold",

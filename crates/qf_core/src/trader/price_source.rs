@@ -240,7 +240,7 @@ pub async fn all_item_stats(conn: &DatabaseConnection) -> Result<Vec<ItemStats>,
 }
 
 /// Port of upstream `helpers::get_interesting_items` (amendment C2): the volume, profit and
-/// average-price filters apply; by volume descending, at most `MAX_BUY_CANDIDATES`.
+/// average-price filters apply; by volume descending, at most `wtb.max_buy_candidates`.
 pub fn get_interesting_items(settings: &ItemSettings, prices: &dyn PriceSource) -> Vec<ItemPriceInfo> {
     let wtb = &settings.wtb;
     let mut items: Vec<ItemPriceInfo> = prices
@@ -264,7 +264,10 @@ pub fn get_interesting_items(settings: &ItemSettings, prices: &dyn PriceSource) 
             .unwrap_or(Ordering::Equal)
             .then_with(|| a.uuid.cmp(&b.uuid))
     });
-    items.truncate(MAX_BUY_CANDIDATES);
+    // spec §25 P17: the limit is a setting; -1 lifts it, as the desktop app has none.
+    if !is_disabled(wtb.max_buy_candidates) {
+        items.truncate(wtb.max_buy_candidates.max(0) as usize);
+    }
     items
 }
 
@@ -399,5 +402,25 @@ mod tests {
         assert_eq!(buy_candidate_ids(&settings, &prices).len(), MAX_BUY_CANDIDATES);
         settings.live_scraper.general.trade_modes.retain(|m| *m != TradeMode::Buy);
         assert!(buy_candidate_ids(&settings, &prices).is_empty());
+    }
+
+    #[test]
+    fn the_buy_candidate_limit_is_a_setting() {
+        let rows = (0..200).map(|n| stats(&format!("i{n:03}"), "", 100.0 + n as f64, 50.0, 10.0)).collect();
+        let prices = source(rows);
+        let mut settings = ItemSettings::default();
+        assert_eq!(settings.wtb.max_buy_candidates, 150, "the default is the old constant");
+        assert_eq!(get_interesting_items(&settings, &prices).len(), MAX_BUY_CANDIDATES, "the default leaves the list as it was");
+
+        settings.wtb.max_buy_candidates = -1;
+        assert_eq!(get_interesting_items(&settings, &prices).len(), 200, "-1 lifts the limit");
+
+        settings.wtb.max_buy_candidates = 20;
+        let ids: Vec<String> = get_interesting_items(&settings, &prices).into_iter().map(|i| i.wfm_id).collect();
+        let busiest: Vec<String> = (180..200).rev().map(|n| format!("i{n:03}")).collect();
+        assert_eq!(ids, busiest, "a finite limit keeps the highest-volume items, in volume order");
+
+        settings.wtb.max_buy_candidates = 0;
+        assert!(get_interesting_items(&settings, &prices).is_empty(), "0 yields no candidates");
     }
 }
