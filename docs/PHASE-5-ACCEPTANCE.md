@@ -61,3 +61,16 @@ All five checks were confirmed by the user in the browser. The trader stayed in 
 ## The flip (to be appended on or after 2026-09-22)
 
 Not done yet. Follow `docs/GO-LIVE-RUNBOOK.md` and record the outcome here.
+
+## The flip (2026-09-23)
+
+- **When:** 2026-09-23 03:53:57 UTC (2026-09-22 20:53 Pacific). The user pressed Start with global Dry-run off after about 30 h of closed-mode dry run on the final settings; the runbook's 48 h figure was the controller's conservative number and was waived by the user. The trader set the warframe.market status to `ingame` at 03:53:57.
+- **Build and settings:** ockohome `8256177` (main `2bc2cf9`). Price source `closed`, profit basis `range`, `max_buy_candidates` −1 at the flip (lowered to 120 at 04:15 UTC, see below), `trading_tax_cap` −1, `max_total_price_cap` −1, `avg_price_cap` 600, Auto Delete off (existing orders adopted), Delete buy orders on stop off.
+- **First cycle:** 202 items, every one `Route: Live`. First live order write at 03:53:59 (an update of the adopted Aeolak Receiver Blueprint sell order); first live order **created** at 03:55:40, id `6ab34d8090780835bc8dca1a`.
+- **First hour (03:54–04:54 UTC), from the server log and the helper journal:** 23 cycles of about 2.5 min; 82 buy orders created, 11 sell listings created, 1 648 updates, 45 price-rule deletes, 32 orphan-sweep deletes, 74 fast-drop-guard firings; **25 real trades applied automatically** from `EE.log` (13 purchases for 1 229 p, 12 sales for 1 163 p), none parked for review; 0 errors, 0 `CRITICAL`, no `Trader stopped`. One failed write: a `Not found` on PATCH of the Blind Rage buy order at 04:00:04, because the helper-detected purchase had closed that order 75 s earlier; benign, one failure, reset by the next success.
+- **What the hour showed that dry-run could not:**
+  1. **warframe.market's per-account order cap binds.** With no candidate limit, 105 of 202 candidates were skipped per cycle with `has reached the order limit`, and bought stock could not be listed for sale (Blind Rage waited 35 min for a slot). The user set `max_buy_candidates` to 120 at 04:15 UTC; the orphan sweep removed the 29 dropped bids at about 04:47, and skips fell to 0–11 per cycle. **Runbook rule added below:** keep the candidate limit about 30 below the account's order cap so sales always have a slot.
+  2. **Orphan sweep, live:** 3 stale adopted orders deleted at 04:30 (Akbolto Prime Set 73 p, Gara Prime Set 55 p, Equilibrium 30 p; the other six of the nine judged stale had already been closed by trades or price rules), then the 29 dropped bids at 04:47. 0 failures.
+  3. **Defect: set folding ignores a part's quantity in the set** (`helper_link/trades/sets.rs::fold_sets`). A 51 p purchase of a Kogake Prime Set arrived as Blueprint ×1, Gauntlet ×2, Boot ×2; the fold took one of each part and recorded the second Gauntlet and Boot as separate stock, which the trader then tried to list. warframe.market's item detail carries `quantityInSet` (gauntlet: 2), which the set cache does not read. The user deleted the two rows by hand; the fix (fold with per-part quantities) is pending the user's go-ahead. Recording only, no trading impact.
+- **Manual cleanup:** the two Kogake part rows (user). No orders were removed by hand.
+- **Rollback used:** none.
