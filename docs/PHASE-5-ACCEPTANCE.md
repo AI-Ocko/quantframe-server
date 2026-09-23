@@ -74,3 +74,11 @@ Not done yet. Follow `docs/GO-LIVE-RUNBOOK.md` and record the outcome here.
   3. **Defect: set folding ignores a part's quantity in the set** (`helper_link/trades/sets.rs::fold_sets`). A 51 p purchase of a Kogake Prime Set arrived as Blueprint ×1, Gauntlet ×2, Boot ×2; the fold took one of each part and recorded the second Gauntlet and Boot as separate stock, which the trader then tried to list. warframe.market's item detail carries `quantityInSet` (gauntlet: 2), which the set cache does not read. The two rows are for the user to delete by hand; the fix (fold with per-part quantities) is pending the user's go-ahead. Recording only, no trading impact.
 - **Manual cleanup:** the two Kogake part rows, to be deleted by the user. No orders were removed by hand.
 - **Rollback used:** none.
+
+## Set-fold fix (2026-09-23, spec §25 P19)
+
+- **Cause:** `sets::fold_sets` assumed every part is needed once per set; a Kogake Prime Set purchase (Blueprint ×1, Gauntlet ×2, Boot ×2) left a phantom Gauntlet and Boot in stock. warframe.market's part detail carries `quantityInSet`, which the set cache now fetches once per part and stores in `sets_v2.json`; the fold divides by it.
+- **Branch:** `fix-set-fold-quantities` (`693c934`, from main `8fbcf95`), one commit in `sets.rs` plus a test literal. Opus review: no Critical or Important; the Kogake shapes, an absent blueprint, duplicated part lines, a zero quantity and the quantity-1 identity all traced by hand; four hygiene minors deferred (keep fetching after a failed part; the root's implicit quantity 1; `.max(1)` written twice; a float `quantityInSet` is an error, so that root never folds).
+- **Gate at `693c934`:** `utils` 15, `qf_core` 259, `qf-server` 4+3 (+15 integration), RPC 89/89, `pnpm build` clean, warnings unchanged.
+- **Deploy:** user-run at 2026-09-23 05:21 UTC, empty deletion preview, server recompiled, container healthy; the live trader was restarted by the user at 05:23:07 UTC.
+- **Live acceptance: pending.** The next purchase of a set that needs two of a part must record one stock row at the trade's platinum and no leftovers, with an `info` line naming the parts and quantities the first time that set is cached. The stale `cache/sets.json` on ockohome is inert.
