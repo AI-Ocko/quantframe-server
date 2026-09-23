@@ -6,18 +6,25 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde::Deserialize;
-use utils::{warning, LoggerOptions};
+use serde::{Deserialize, Serialize};
+use utils::{info, warning, LoggerOptions};
 
 use super::resolve::ItemIndex;
 use super::ResolvedItem;
 use crate::market::limiter::{self, Lane};
 
-pub const SETS_FILE: &str = "sets.json";
+pub const SETS_FILE: &str = "sets_v2.json";
 pub const WFM_ITEM_URL: &str = "https://api.warframe.market/v2/item";
 
-/// Part slugs per set-root slug, without the root itself.
-pub type PartsMap = HashMap<String, Vec<String>>;
+/// One part of a set and how many of it the set needs (amendment P19).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetPart {
+    pub slug: String,
+    pub quantity: i64,
+}
+
+/// Parts per set-root slug.
+pub type PartsMap = HashMap<String, Vec<SetPart>>;
 
 #[async_trait]
 pub trait SetSource: Send + Sync {
@@ -53,21 +60,21 @@ pub fn set_candidates(items: &[ResolvedItem], index: &ItemIndex) -> Vec<String> 
 pub fn fold_sets(mut items: Vec<ResolvedItem>, candidates: &[String], parts: &PartsMap, index: &ItemIndex) -> Vec<ResolvedItem> {
     for root in candidates {
         let (Some(part_slugs), Some(root_item)) = (parts.get(root), index.by_slug(root)) else { continue };
-        let part_slugs: Vec<&String> = part_slugs.iter().filter(|p| *p != root).collect();
+        let part_slugs: Vec<&SetPart> = part_slugs.iter().filter(|p| p.slug != *root).collect();
         if part_slugs.is_empty() {
             continue;
         }
         let sets = part_slugs
             .iter()
-            .map(|slug| items.iter().filter(|i| &i.slug == *slug).map(|i| i.quantity).sum::<i64>())
+            .map(|part| items.iter().filter(|i| i.slug == part.slug).map(|i| i.quantity).sum::<i64>() / part.quantity.max(1))
             .min()
             .unwrap_or(0);
         if sets <= 0 {
             continue;
         }
-        for slug in &part_slugs {
-            let mut remaining = sets;
-            for item in items.iter_mut().filter(|i| &i.slug == *slug) {
+        for part in &part_slugs {
+            let mut remaining = part.quantity.max(1) * sets;
+            for item in items.iter_mut().filter(|i| i.slug == part.slug) {
                 let take = remaining.min(item.quantity);
                 item.quantity -= take;
                 remaining -= take;
@@ -93,6 +100,8 @@ pub fn fold_sets(mut items: Vec<ResolvedItem>, candidates: &[String], parts: &Pa
 struct ItemDetail {
     #[serde(default)]
     set_parts: Vec<String>,
+    #[serde(default)]
+    quantity_in_set: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -112,7 +121,28 @@ pub fn parse_set_parts(json: &str, index: &ItemIndex) -> Result<Vec<String>, Str
         .collect()
 }
 
-/// Memory, then `QF_DATA_DIR/cache/sets.json`, then one WFM fetch per unknown root.
+/// `GET /v2/item/{slug}` carries `quantityInSet` on each part. Absent or non-positive means one.
+pub fn parse_quantity_in_set(json: &str) -> Result<i64, String> {
+    let detail: ItemDetailResponse = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    Ok(detail.data.quantity_in_set.filter(|q| *q >= 1).unwrap_or(1))
+}
+
+/// Pairs each of the root's part slugs with its fetched quantity. Any part whose quantity could not
+/// be fetched fails the whole root, so an incomplete set is never folded as complete.
+fn assemble(root_parts: Vec<String>, quantities: &HashMap<String, Result<i64, String>>) -> Result<Vec<SetPart>, String> {
+    root_parts
+        .into_iter()
+        .map(|slug| {
+            let quantity = match quantities.get(&slug) {
+                Some(quantity) => *quantity.as_ref().map_err(String::clone)?,
+                None => 1,
+            };
+            Ok(SetPart { slug, quantity })
+        })
+        .collect()
+}
+
+/// Memory, then `QF_DATA_DIR/cache/sets_v2.json`, then one WFM fetch per unknown root.
 pub struct SetCache {
     file: PathBuf,
     parts: Mutex<PartsMap>,
@@ -131,7 +161,7 @@ impl SetCache {
         let snapshot = self.parts.lock().unwrap().clone();
         match serde_json::to_string(&snapshot) {
             Ok(text) => {
-                // Write beside the file and rename over it, like Queue::pop, so a crash never leaves a truncated sets.json.
+                // Write beside the file and rename over it, like Queue::pop, so a crash never leaves a truncated sets_v2.json.
                 let mut temp = self.file.clone().into_os_string();
                 temp.push(".tmp");
                 let temp = std::path::PathBuf::from(temp);
@@ -145,20 +175,23 @@ impl SetCache {
 
     /// Caches a freshly fetched list unless it is empty. An empty list would disable folding for
     /// that root forever, so it is dropped and the next trade retries the fetch. `true` when stored.
-    fn remember(&self, root: &str, parts: Vec<String>) -> bool {
+    fn remember(&self, root: &str, parts: Vec<SetPart>) -> bool {
         if parts.is_empty() {
             warning("HelperLink:Sets", format!("WFM listed no set parts for {root}; not cached"), &LoggerOptions::default());
             return false;
         }
+        let listed: Vec<String> = parts.iter().map(|p| format!("{} x{}", p.slug, p.quantity)).collect();
+        info("HelperLink:Sets", format!("Cached set parts for {root}: {}", listed.join(", ")), &LoggerOptions::default());
         self.parts.lock().unwrap().insert(root.to_string(), parts);
         true
     }
 
-    async fn fetch(&self, root: &str, index: &ItemIndex) -> Result<Vec<String>, String> {
+    /// One `GET /v2/item/{slug}` through the hot lane.
+    async fn get(&self, slug: &str) -> Result<String, String> {
         limiter::global().acquire(Lane::Hot).await;
         let response = self
             .http
-            .get(format!("{WFM_ITEM_URL}/{root}"))
+            .get(format!("{WFM_ITEM_URL}/{slug}"))
             .header("Language", "en")
             .header("Platform", "pc")
             .send()
@@ -167,8 +200,16 @@ impl SetCache {
         if response.status().as_u16() == 429 {
             limiter::global().report_429();
         }
-        let body = response.error_for_status().map_err(|e| e.to_string())?.text().await.map_err(|e| e.to_string())?;
-        parse_set_parts(&body, index)
+        response.error_for_status().map_err(|e| e.to_string())?.text().await.map_err(|e| e.to_string())
+    }
+
+    async fn fetch(&self, root: &str, index: &ItemIndex) -> Result<Vec<SetPart>, String> {
+        let root_parts = parse_set_parts(&self.get(root).await?, index)?;
+        let mut quantities = HashMap::new();
+        for slug in root_parts.iter().filter(|s| *s != root) {
+            quantities.insert(slug.clone(), self.get(slug).await.and_then(|body| parse_quantity_in_set(&body)));
+        }
+        assemble(root_parts, &quantities)
     }
 }
 
@@ -202,7 +243,19 @@ pub fn cache() -> &'static SetCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::helper_link::trades::resolve::tests::index;
+    use crate::helper_link::trades::resolve::tests::{item, items};
+
+    /// The shared test items plus a Kogake Prime set, whose gauntlet and boot are needed twice.
+    fn index() -> ItemIndex {
+        let mut all = items();
+        all.extend([
+            item("Kogake Prime Set", "kogake_prime_set", None, &["set", "prime"]),
+            item("Kogake Prime Blueprint", "kogake_prime_blueprint", None, &["component"]),
+            item("Kogake Prime Gauntlet", "kogake_prime_gauntlet", None, &["component"]),
+            item("Kogake Prime Boot", "kogake_prime_boot", None, &["component"]),
+        ]);
+        ItemIndex::from_items(all)
+    }
 
     fn part(slug: &str, quantity: i64) -> ResolvedItem {
         let index = index();
@@ -219,11 +272,83 @@ mod tests {
         }
     }
 
+    fn one(slug: &str) -> SetPart {
+        SetPart { slug: slug.into(), quantity: 1 }
+    }
+
     fn wolf_parts() -> PartsMap {
         PartsMap::from([(
             "wolf_sledge_set".to_string(),
-            vec!["wolf_sledge_blueprint".into(), "wolf_sledge_motor".into(), "wolf_sledge_head".into(), "wolf_sledge_handle".into()],
+            vec![one("wolf_sledge_blueprint"), one("wolf_sledge_motor"), one("wolf_sledge_head"), one("wolf_sledge_handle")],
         )])
+    }
+
+    fn kogake_parts() -> PartsMap {
+        PartsMap::from([(
+            "kogake_prime_set".to_string(),
+            vec![
+                SetPart { slug: "kogake_prime_blueprint".into(), quantity: 1 },
+                SetPart { slug: "kogake_prime_gauntlet".into(), quantity: 2 },
+                SetPart { slug: "kogake_prime_boot".into(), quantity: 2 },
+            ],
+        )])
+    }
+
+    fn fold_kogake(items: Vec<ResolvedItem>) -> Vec<(String, i64, String)> {
+        let index = index();
+        let mut folded: Vec<(String, i64, String)> =
+            fold_sets(items, &["kogake_prime_set".into()], &kogake_parts(), &index).iter().map(|i| (i.slug.clone(), i.quantity, i.matched_by.clone())).collect();
+        folded.sort();
+        folded
+    }
+
+    #[test]
+    fn a_part_needed_twice_takes_two_per_set() {
+        let folded = fold_kogake(vec![part("kogake_prime_blueprint", 1), part("kogake_prime_gauntlet", 2), part("kogake_prime_boot", 2)]);
+        assert_eq!(folded, vec![("kogake_prime_set".to_string(), 1, "set".to_string())], "the whole purchase is one set");
+    }
+
+    #[test]
+    fn only_what_the_set_did_not_need_is_left_over() {
+        let folded = fold_kogake(vec![part("kogake_prime_gauntlet", 3), part("kogake_prime_boot", 2), part("kogake_prime_blueprint", 1)]);
+        assert_eq!(
+            folded,
+            vec![("kogake_prime_gauntlet".to_string(), 1, "name".to_string()), ("kogake_prime_set".to_string(), 1, "set".to_string())]
+        );
+    }
+
+    #[test]
+    fn one_gauntlet_is_not_a_set() {
+        let items = vec![part("kogake_prime_blueprint", 1), part("kogake_prime_gauntlet", 1), part("kogake_prime_boot", 2)];
+        let index = index();
+        assert_eq!(fold_sets(items.clone(), &["kogake_prime_set".into()], &kogake_parts(), &index), items, "a part short of its quantity folds nothing");
+    }
+
+    #[test]
+    fn two_kogake_sets_need_four_gauntlets() {
+        let folded = fold_kogake(vec![part("kogake_prime_blueprint", 2), part("kogake_prime_gauntlet", 4), part("kogake_prime_boot", 4)]);
+        assert_eq!(folded, vec![("kogake_prime_set".to_string(), 2, "set".to_string())]);
+    }
+
+    #[test]
+    fn quantity_in_set_defaults_to_one() {
+        assert_eq!(parse_quantity_in_set(r#"{"data":{"quantityInSet":2}}"#).unwrap(), 2);
+        assert_eq!(parse_quantity_in_set(r#"{"data":{"slug":"x"}}"#).unwrap(), 1, "absent means one");
+        assert_eq!(parse_quantity_in_set(r#"{"data":{"quantityInSet":0}}"#).unwrap(), 1, "non-positive means one");
+        assert!(parse_quantity_in_set("nope").is_err());
+        assert!(parse_quantity_in_set("{}").is_err(), "no data is a failure, not a default");
+    }
+
+    #[test]
+    fn a_failed_part_quantity_fails_the_whole_root() {
+        let slugs = vec!["kogake_prime_set".to_string(), "kogake_prime_gauntlet".to_string(), "kogake_prime_boot".to_string()];
+        let ok = HashMap::from([("kogake_prime_gauntlet".to_string(), Ok(2)), ("kogake_prime_boot".to_string(), Ok(2))]);
+        assert_eq!(
+            assemble(slugs.clone(), &ok).unwrap(),
+            vec![one("kogake_prime_set"), SetPart { slug: "kogake_prime_gauntlet".into(), quantity: 2 }, SetPart { slug: "kogake_prime_boot".into(), quantity: 2 }]
+        );
+        let failed = HashMap::from([("kogake_prime_gauntlet".to_string(), Err("timed out".to_string())), ("kogake_prime_boot".to_string(), Ok(2))]);
+        assert_eq!(assemble(slugs, &failed).unwrap_err(), "timed out", "the root stays uncached and is retried");
     }
 
     #[test]
@@ -277,11 +402,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = SetCache::new(dir.path());
         assert!(!cache.remember("wolf_sledge_set", Vec::new()), "an empty list is dropped");
-        assert!(cache.remember("mesa_prime_set", vec!["mesa_prime_blueprint".into()]));
+        assert!(cache.remember("mesa_prime_set", vec![one("mesa_prime_blueprint")]));
         assert!(!cache.parts.lock().unwrap().contains_key("wolf_sledge_set"));
         cache.save();
         let on_disk: PartsMap = serde_json::from_str(&std::fs::read_to_string(dir.path().join(SETS_FILE)).unwrap()).unwrap();
-        assert!(!on_disk.contains_key("wolf_sledge_set"), "the empty root never reaches sets.json");
+        assert!(!on_disk.contains_key("wolf_sledge_set"), "the empty root never reaches sets_v2.json");
         assert!(on_disk.contains_key("mesa_prime_set"));
     }
 
@@ -289,7 +414,7 @@ mod tests {
     fn save_leaves_no_temp_file_behind() {
         let dir = tempfile::tempdir().unwrap();
         let cache = SetCache::new(dir.path());
-        cache.parts.lock().unwrap().insert("wolf_sledge_set".into(), vec!["wolf_sledge_handle".into()]);
+        cache.parts.lock().unwrap().insert("wolf_sledge_set".into(), vec![one("wolf_sledge_handle")]);
         cache.save();
         cache.save();
         assert!(dir.path().join(SETS_FILE).is_file());

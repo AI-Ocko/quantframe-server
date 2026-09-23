@@ -356,7 +356,7 @@ pub(crate) mod tests {
 
     use crate::helper_link::trades::events::tests::sale_trade;
     use crate::helper_link::trades::resolve::tests::items;
-    use crate::helper_link::trades::sets::PartsMap;
+    use crate::helper_link::trades::sets::{PartsMap, SetPart};
     use crate::trader::store::tests::db;
 
     #[derive(Default)]
@@ -375,7 +375,9 @@ pub(crate) mod tests {
             auto_trade,
             parts: PartsMap::from([(
                 "wolf_sledge_set".to_string(),
-                vec!["wolf_sledge_blueprint".into(), "wolf_sledge_motor".into(), "wolf_sledge_head".into(), "wolf_sledge_handle".into()],
+                ["wolf_sledge_blueprint", "wolf_sledge_motor", "wolf_sledge_head", "wolf_sledge_handle"]
+                    .map(|slug| SetPart { slug: slug.into(), quantity: 1 })
+                    .to_vec(),
             )]),
             ..Default::default()
         }
