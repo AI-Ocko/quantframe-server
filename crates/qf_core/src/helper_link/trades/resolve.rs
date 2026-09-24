@@ -129,10 +129,10 @@ pub fn classify(trade: &RawTrade) -> Result<Classified, String> {
 }
 
 fn resolved(raw: &RawItem, item: &CacheTradableItem, matched_by: &str) -> ResolvedItem {
-    let sub_type = raw.rank.map(|rank| {
-        let capped = item.sub_type.as_ref().and_then(|s| s.max_rank).map_or(rank, |max| rank.min(max));
-        SubType::rank(capped)
-    });
+    // P20: the in-game log never names a variant, so take the item's first listed one.
+    let variant = item.sub_type.as_ref().and_then(|s| s.variants.as_ref()).and_then(|v| v.first()).cloned();
+    let rank = raw.rank.map(|rank| item.sub_type.as_ref().and_then(|s| s.max_rank).map_or(rank, |max| rank.min(max)));
+    let sub_type = (rank.is_some() || variant.is_some()).then(|| SubType { rank, variant, ..Default::default() });
     ResolvedItem {
         name: raw.name.clone(),
         slug: item.wfm_url.clone(),
@@ -199,6 +199,18 @@ pub(crate) mod tests {
             bulk_tradable: false,
             sub_type: max_rank.map(|max| CacheSubType { max_rank: Some(max), variants: None, amber_stars: None, cyan_stars: None }),
             variant_to_unique_name: HashMap::new(),
+        }
+    }
+
+    fn item_with_variants(name: &str, slug: &str, max_rank: Option<i64>, tags: &[&str], variants: &[&str]) -> CacheTradableItem {
+        CacheTradableItem {
+            sub_type: Some(CacheSubType {
+                max_rank,
+                variants: Some(variants.iter().map(|v| v.to_string()).collect()),
+                amber_stars: None,
+                cyan_stars: None,
+            }),
+            ..item(name, slug, max_rank, tags)
         }
     }
 
@@ -293,5 +305,38 @@ pub(crate) mod tests {
         assert_eq!(resolved.resolution.direction, Some(Direction::Purchase));
         assert_eq!(resolved.resolution.platinum, 30);
         assert_eq!(resolved.resolution.items.len(), 1);
+    }
+
+    fn variant_index() -> ItemIndex {
+        let mut all = items();
+        all.push(item_with_variants("Archon Vitality", "archon_vitality", Some(10), &["mod", "archon"], &["regular", "atragraph"]));
+        all.push(item_with_variants("Lith A1 Relic", "lith_a1_relic", None, &["relic"], &["intact", "exceptional", "flawless", "radiant"]));
+        ItemIndex::from_items(all)
+    }
+
+    #[test]
+    fn items_with_variants_resolve_to_the_first_listed_variant() {
+        let index = variant_index();
+        let overrides = Overrides::default();
+        let sub_type = |r: RawItem| resolve_item(&r, &index, &overrides).unwrap().sub_type;
+        let archon = SubType { rank: Some(10), variant: Some("regular".into()), ..Default::default() };
+        assert_eq!(sub_type(raw("Archon Vitality", 1, Some(10))), Some(archon.clone()));
+        assert_eq!(sub_type(raw("Archon Vitality", 1, Some(12))), Some(archon), "rank capped, variant kept");
+        assert_eq!(sub_type(raw("Lith A1 Relic", 3, None)), Some(SubType { variant: Some("intact".into()), ..Default::default() }));
+        assert_eq!(sub_type(raw("Adaptation", 1, Some(10))), Some(SubType::rank(10)), "no variants: unchanged");
+        assert_eq!(sub_type(raw("wolf sledge HANDLE", 1, None)), None, "no rank, no variants: unchanged");
+    }
+
+    #[test]
+    fn resolve_trade_carries_the_default_variant() {
+        let trade = RawTrade {
+            player_name: "P".into(),
+            ee_timestamp: "1".into(),
+            offered: vec![raw("Platinum", 60, None)],
+            received: vec![raw("Archon Vitality", 1, Some(10))],
+        };
+        let resolved = resolve_trade(&trade, &variant_index(), &Overrides::default()).unwrap();
+        assert!(resolved.unresolved.is_empty());
+        assert_eq!(resolved.resolution.items[0].sub_type, Some(SubType { rank: Some(10), variant: Some("regular".into()), ..Default::default() }));
     }
 }
