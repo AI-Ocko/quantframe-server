@@ -43,15 +43,15 @@ pub enum Outcome {
     TransportError,
 }
 
-/// 429 → RateLimited; ≥ 400 carrying `cf-mitigated: challenge` or an HTML body → Challenge;
-/// any other ≥ 500 → TransportError; everything else (a JSON 4xx included) → Ok.
+/// 429 → RateLimited; ≥ 400 carrying `cf-mitigated: challenge`, or a 403/503 with an HTML body →
+/// Challenge; any other ≥ 500 → TransportError (Cloudflare's 502/520–526 origin-error pages are
+/// HTML too, and one of those must not open the breaker); everything else (any other 4xx) → Ok.
 pub fn outcome_of(status: u16, headers: &reqwest::header::HeaderMap) -> Outcome {
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
     if status == 429 {
         Outcome::RateLimited
-    } else if status >= 400
-        && (header("cf-mitigated").eq_ignore_ascii_case("challenge")
-            || header("content-type").to_ascii_lowercase().starts_with("text/html"))
+    } else if (status >= 400 && header("cf-mitigated").eq_ignore_ascii_case("challenge"))
+        || (matches!(status, 403 | 503) && header("content-type").to_ascii_lowercase().starts_with("text/html"))
     {
         Outcome::Challenge
     } else if status >= 500 {
@@ -563,6 +563,10 @@ mod tests {
         assert_eq!(outcome_of(429, &html), Outcome::RateLimited);
         assert_eq!(outcome_of(500, &json), Outcome::TransportError);
         assert_eq!(outcome_of(502, &HeaderMap::new()), Outcome::TransportError);
+        assert_eq!(outcome_of(502, &html), Outcome::TransportError, "a Cloudflare origin-error page is not a challenge");
+        assert_eq!(outcome_of(520, &html), Outcome::TransportError);
+        assert_eq!(outcome_of(400, &html), Outcome::Ok);
+        assert_eq!(outcome_of(502, &cf), Outcome::Challenge);
     }
 
     #[tokio::test(start_paused = true)]

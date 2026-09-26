@@ -243,6 +243,8 @@ pub async fn refresh_once(
             Err(e) => Err(e),
         },
         Err(FetchError::NotFound) => Ok("missing"),
+        // spec P21: a block is no attempt, so the item stays stale and is not `failed`.
+        Err(FetchError::Blocked | FetchError::RateLimited) => return Ok(Some(stale.len())),
         Err(e) => Err(Error::new(C, e.to_string(), get_location!())),
     };
     let outcome = outcome.unwrap_or_else(|e| {
@@ -514,6 +516,18 @@ mod tests {
         let dead = scripted(vec![("slug1", vec![Err(FetchError::Transient("1".into())), Err(FetchError::Transient("2".into())), Err(FetchError::Transient("3".into()))])]);
         refresh_once(&conn, &dead, &limiter, &HashSet::from(["item1".to_string()]), later).await.unwrap();
         assert_eq!(refresh_status(&conn, later).await.unwrap().failed, 1);
+    }
+
+    #[tokio::test]
+    async fn blocked_closed_fetch_writes_no_state() {
+        let (_dir, conn) = setup().await;
+        let now = parse_ts("2026-09-20T16:00:00Z").unwrap();
+        for blocked in [FetchError::Blocked, FetchError::RateLimited] {
+            let source = scripted(vec![("slug1", vec![Err(blocked)])]);
+            assert_eq!(refresh_once(&conn, &source, &Limiter::new(1000), &HashSet::new(), now).await.unwrap(), Some(2));
+            let status = refresh_status(&conn, now).await.unwrap();
+            assert_eq!((status.ok, status.failed, status.stale), (0, 0, 2), "item1 is still stale, and not failed");
+        }
     }
 
     #[tokio::test]

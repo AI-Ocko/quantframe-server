@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use utils::{get_location, info, warning, Error, LoggerOptions};
 
 use crate::cache::types::{CacheTradableItem, SubType};
-use crate::market::limiter::{self, Lane, Outcome};
+use crate::market::limiter::{self, outcome_of, Lane, Outcome};
 
 pub const WFM_ITEMS_URL: &str = "https://api.warframe.market/v2/items";
 pub const LAST_GOOD_FILE: &str = "wfm_items.json";
@@ -94,10 +94,11 @@ pub async fn load_items_from(
             .header("Platform", "pc")
             .send()
             .await
-            .map_err(|e| e.to_string())?;
-        if response.status().as_u16() == 429 {
-            limiter::global().report(Outcome::RateLimited);
-        }
+            .map_err(|e| {
+                limiter::global().report(Outcome::TransportError);
+                e.to_string()
+            })?;
+        limiter::global().report(outcome_of(response.status().as_u16(), response.headers()));
         let body = response
             .error_for_status()
             .map_err(|e| e.to_string())?

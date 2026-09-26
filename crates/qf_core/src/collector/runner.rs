@@ -181,6 +181,11 @@ impl Collector {
                     Some(format!("{}: not found, inactive until the next item refresh", target.slug)),
                 );
             }
+            // spec P21: a block is no attempt. Putting the attempt time back makes the item due
+            // again as soon as the breaker lets the next request through.
+            Err(FetchError::Blocked | FetchError::RateLimited) => {
+                store::restore_attempt(&self.conn, &target.item_id, target.last_attempt_at.as_deref()).await?;
+            }
             Err(e) => {
                 store::record_error(&self.conn, &target.item_id).await?;
                 self.health.record(Utc::now(), lane, false, Some(format!("{}: {}", target.slug, e)));
@@ -408,6 +413,7 @@ mod tests {
     use crate::collector::fetch::tests::ScriptedSource;
     use crate::collector::orders::parse_orders_response;
     use crate::collector::store::tests::setup;
+    use service::sea_orm::ConnectionTrait;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     const SMALL: &str = include_str!("../../tests/fixtures/orders_small.json");
@@ -468,6 +474,23 @@ mod tests {
         let cold = c.health.lane_health(Lane::Cold, Utc::now());
         assert_eq!(cold.errors_last_hour, 2);
         assert_eq!(c.health.snapshot(Utc::now(), Default::default(), fast_limiter().snapshot()).last_error.as_deref(), Some("slug2: c"));
+    }
+
+    #[tokio::test]
+    async fn blocked_sweep_does_not_count_an_item_error() {
+        let (_dir, conn) = setup().await;
+        for blocked in [FetchError::Blocked, FetchError::RateLimited] {
+            let c = collector(conn.clone(), vec![Err(blocked)]);
+            assert_eq!(c.cold_step().await.unwrap(), Some("item1".to_string()));
+            let row = conn
+                .query_one(crate::collector::stmt("SELECT consecutive_errors, last_attempt_at FROM sweep_state WHERE item_id = 'item1'", vec![]))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.try_get::<i64>("", "consecutive_errors").unwrap(), 0);
+            assert_eq!(row.try_get::<Option<String>>("", "last_attempt_at").unwrap(), None, "item1 is due again once the breaker closes");
+            assert_eq!(c.health.lane_health(Lane::Cold, Utc::now()).errors_last_hour, 0);
+        }
     }
 
     #[tokio::test(start_paused = true)]

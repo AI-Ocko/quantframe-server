@@ -11,7 +11,7 @@ use utils::{info, warning, LoggerOptions};
 
 use super::resolve::ItemIndex;
 use super::ResolvedItem;
-use crate::market::limiter::{self, Lane, Outcome};
+use crate::market::limiter::{self, outcome_of, Lane, Outcome};
 
 pub const SETS_FILE: &str = "sets_v2.json";
 pub const WFM_ITEM_URL: &str = "https://api.warframe.market/v2/item";
@@ -196,10 +196,11 @@ impl SetCache {
             .header("Platform", "pc")
             .send()
             .await
-            .map_err(|e| e.to_string())?;
-        if response.status().as_u16() == 429 {
-            limiter::global().report(Outcome::RateLimited);
-        }
+            .map_err(|e| {
+                limiter::global().report(Outcome::TransportError);
+                e.to_string()
+            })?;
+        limiter::global().report(outcome_of(response.status().as_u16(), response.headers()));
         response.error_for_status().map_err(|e| e.to_string())?.text().await.map_err(|e| e.to_string())
     }
 

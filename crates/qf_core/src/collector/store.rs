@@ -143,6 +143,13 @@ pub async fn mark_attempt(conn: &DatabaseConnection, item_id: &str, at: DateTime
         .map(|_| ())
 }
 
+/// Puts back the `last_attempt_at` an attempt that never counted overwrote.
+pub async fn restore_attempt(conn: &DatabaseConnection, item_id: &str, previous: Option<&str>) -> Result<(), Error> {
+    exec(conn, "Collector:RestoreAttempt", "UPDATE sweep_state SET last_attempt_at = ? WHERE item_id = ?", vec![previous.map(str::to_string).into(), item_id.into()])
+        .await
+        .map(|_| ())
+}
+
 pub async fn record_error(conn: &DatabaseConnection, item_id: &str) -> Result<(), Error> {
     exec(conn, "Collector:RecordError", "UPDATE sweep_state SET consecutive_errors = consecutive_errors + 1 WHERE item_id = ?", vec![item_id.into()])
         .await

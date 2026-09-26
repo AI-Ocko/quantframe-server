@@ -11,7 +11,7 @@ use service::sea_orm::{ConnectionTrait, DatabaseConnection, TransactionTrait};
 use tokio::task::JoinHandle;
 use utils::{get_location, info, warning, Error, LoggerOptions};
 
-use super::fetch::{FetchError, MAX_RETRIES};
+use super::fetch::{get_body, FetchError, MAX_RETRIES};
 use super::orders::sub_type_key;
 use super::{db_err, stmt, ts};
 use crate::market::limiter::{Lane, Limiter, Outcome};
@@ -120,21 +120,7 @@ impl StatisticsSource for HttpStatisticsSource {
     fn fetch<'a>(&'a self, slug: &'a str) -> StatsFuture<'a> {
         Box::pin(async move {
             let url = format!("{}/items/{}/statistics", self.base_url, slug);
-            let response = self
-                .http
-                .get(&url)
-                .header("Platform", "pc")
-                .header("Language", "en")
-                .send()
-                .await
-                .map_err(|e| FetchError::Transient(e.to_string()))?;
-            match response.status().as_u16() {
-                200 => {}
-                404 => return Err(FetchError::NotFound),
-                429 => return Err(FetchError::RateLimited),
-                code => return Err(FetchError::Transient(format!("HTTP {code} for {url}"))),
-            }
-            response.text().await.map_err(|e| FetchError::Transient(e.to_string()))
+            get_body(self.http.get(&url).header("Platform", "pc").header("Language", "en")).await
         })
     }
 }
@@ -192,18 +178,18 @@ fn jitter() -> Duration {
     Duration::from_millis(if cfg!(test) { 0 } else { millis })
 }
 
-/// Takes a limiter token for every attempt and retries everything but a 404 at most twice with jitter.
+/// Takes a limiter token for every attempt, reports its outcome to the breaker, and retries like
+/// `fetch::fetch_with_retries`: a 404, a block or a 429 is final.
 pub(crate) async fn fetch_with_retries(source: &dyn StatisticsSource, limiter: &Limiter, lane: Lane, slug: &str) -> Result<String, FetchError> {
     let mut retries = 0;
     loop {
         limiter.acquire(lane).await;
-        match source.fetch(slug).await {
+        let result = source.fetch(slug).await;
+        limiter.report(result.as_ref().err().map_or(Outcome::Ok, FetchError::outcome));
+        match result {
             Ok(body) => return Ok(body),
-            Err(FetchError::NotFound) => return Err(FetchError::NotFound),
+            Err(error @ (FetchError::NotFound | FetchError::Blocked | FetchError::RateLimited)) => return Err(error),
             Err(error) => {
-                if error == FetchError::RateLimited {
-                    limiter.report(Outcome::RateLimited);
-                }
                 if retries >= MAX_RETRIES {
                     return Err(error);
                 }
@@ -376,6 +362,30 @@ mod tests {
         fn fetch<'a>(&'a self, slug: &'a str) -> StatsFuture<'a> {
             let next = self.0.lock().unwrap().get_mut(slug).and_then(|q| q.pop_front()).unwrap_or(Err(FetchError::Transient("unscripted".into())));
             Box::pin(async move { next })
+        }
+    }
+
+    /// A probing breaker closes only on an `Ok` report, so each fetch must have reported one.
+    #[tokio::test(start_paused = true)]
+    async fn ok_and_not_found_report_ok() {
+        use crate::collector::fetch::tests::ScriptedSource;
+        use crate::market::limiter::Outcome;
+        let probing_limiter = || {
+            let limiter = Limiter::new(1000);
+            limiter.report(Outcome::Challenge);
+            limiter
+        };
+        for result in [Ok(vec![]), Err(FetchError::NotFound)] {
+            let limiter = probing_limiter();
+            let source = ScriptedSource::new(vec![result]);
+            let _ = crate::collector::fetch::fetch_with_retries(&source, &limiter, Lane::Cold, "x").await;
+            assert_eq!(limiter.snapshot().breaker.state, "closed");
+        }
+        for result in [Ok(SMALL.to_string()), Err(FetchError::NotFound)] {
+            let limiter = probing_limiter();
+            let source = Scripted(std::sync::Mutex::new(std::collections::HashMap::from([("x".to_string(), std::collections::VecDeque::from([result]))])));
+            let _ = fetch_with_retries(&source, &limiter, Lane::Cold, "x").await;
+            assert_eq!(limiter.snapshot().breaker.state, "closed");
         }
     }
 

@@ -9,7 +9,7 @@ use utils::{get_location, warning, Error, LoggerOptions};
 
 use super::backfill::{fetch_with_retries, StatisticsSource, StatsFuture};
 use super::closed::pick;
-use super::fetch::FetchError;
+use super::fetch::{get_body, FetchError};
 use super::{db_err, stmt, ts};
 use crate::market::limiter::{Lane, Limiter};
 
@@ -83,21 +83,7 @@ impl StatisticsSource for HttpItemDetailSource {
     fn fetch<'a>(&'a self, slug: &'a str) -> StatsFuture<'a> {
         Box::pin(async move {
             let url = format!("{}/item/{}", self.base_url, slug);
-            let response = self
-                .http
-                .get(&url)
-                .header("Platform", "pc")
-                .header("Language", "en")
-                .send()
-                .await
-                .map_err(|e| FetchError::Transient(e.to_string()))?;
-            match response.status().as_u16() {
-                200 => {}
-                404 => return Err(FetchError::NotFound),
-                429 => return Err(FetchError::RateLimited),
-                code => return Err(FetchError::Transient(format!("HTTP {code} for {url}"))),
-            }
-            response.text().await.map_err(|e| FetchError::Transient(e.to_string()))
+            get_body(self.http.get(&url).header("Platform", "pc").header("Language", "en")).await
         })
     }
 }
@@ -149,7 +135,9 @@ pub(crate) async fn fetch_once_with(
             }
         },
         Err(FetchError::NotFound) => Some(for_the_run()),
-        // An outage or a rate-limit storm must not strand items until a restart, so a transient
+        // spec P21: a block is no attempt; the next pick waits for the breaker.
+        Err(FetchError::Blocked | FetchError::RateLimited) => None,
+        // An outage must not strand items until a restart, so a transient
         // failure only costs an hour, as it does in the closed-statistics loop.
         Err(e) => {
             warning(C, format!("{slug}: {e}"), &LoggerOptions::default());
@@ -286,6 +274,17 @@ mod tests {
             None,
             "the 404 item is never picked again in this process"
         );
+    }
+
+    #[tokio::test]
+    async fn blocked_tax_fetch_sets_nothing_aside() {
+        let (_dir, conn) = setup().await;
+        let deferred = fresh_deferred();
+        for blocked in [FetchError::Blocked, FetchError::RateLimited] {
+            let source = scripted(vec![("slug1", vec![Err(blocked)])]);
+            assert_eq!(fetch_once_with(&deferred, &conn, &source, &Limiter::new(1000), &HashSet::new(), now()).await.unwrap(), Some(2));
+            assert!(deferred.lock().unwrap().is_empty(), "a blocked fetch is no attempt");
+        }
     }
 
     #[tokio::test]
