@@ -214,4 +214,51 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(*recorder.responses.lock().unwrap(), vec![(403, true)]);
     }
+
+    fn websocket(addr: std::net::SocketAddr) -> crate::types::websocket::WsClientBuilder {
+        let version = ApiVersion::Custom(String::new(), format!("ws://{}/socket", addr));
+        crate::types::websocket::WsClientBuilder::new(version, "token".into(), "device".into())
+    }
+
+    #[tokio::test]
+    async fn a_closed_gate_keeps_the_websocket_from_connecting() {
+        let _serial = SERIAL.lock().await;
+        let recorder = recorder();
+        reset(&recorder);
+        *recorder.refuse.lock().unwrap() = Some("breaker open".to_string());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let _ws = websocket(addr).build().await.unwrap();
+
+        let accepted = tokio::time::timeout(std::time::Duration::from_millis(200), listener.accept()).await;
+        assert!(accepted.is_err(), "the closed gate let the websocket connect");
+        assert_eq!(*recorder.acquired.lock().unwrap(), 1);
+        assert!(recorder.responses.lock().unwrap().is_empty());
+        assert_eq!(*recorder.transport_errors.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_websocket_challenge_reaches_the_gate_flagged() {
+        let _serial = SERIAL.lock().await;
+        let recorder = recorder();
+        reset(&recorder);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            socket
+                .write_all(b"HTTP/1.1 403 Forbidden\r\ncontent-type: text/html; charset=UTF-8\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let _ws = websocket(addr).build().await.unwrap();
+
+        assert_eq!(*recorder.acquired.lock().unwrap(), 1);
+        assert_eq!(*recorder.responses.lock().unwrap(), vec![(403, true)]);
+        assert_eq!(*recorder.transport_errors.lock().unwrap(), 0);
+    }
 }

@@ -3,17 +3,32 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
+use tokio_tungstenite::tungstenite::{Error as TungsteniteError, Message, Utf8Bytes};
 
 use crate::enums::ApiVersion;
 use crate::{
     errors::WsError,
     types::websocket::{MessageSender, Route, Router, WsClient, WsMessage},
 };
+
+/// quantframe-server patch (PATCHES.md, change 6): the wait before reconnect attempt `n`,
+/// 5 s x 2^n capped at 300 s.
+pub fn ws_backoff(n: u32) -> Duration {
+    Duration::from_secs(5u64.saturating_mul(2u64.saturating_pow(n)).min(300))
+}
+
+/// The attempt counter once a connection has ended: a connection that lasted 60 s resets it.
+fn attempt_after_connection(n: u32, lasted: Duration) -> u32 {
+    if lasted >= Duration::from_secs(60) {
+        0
+    } else {
+        n
+    }
+}
 
 // WebSocket client builder
 pub struct WsClientBuilder {
@@ -75,7 +90,8 @@ impl WsClientBuilder {
         let should_stop = Arc::new(AtomicBool::new(false));
 
         tokio::spawn({
-            let retry_interval = Duration::from_secs(5);
+            // Failed connects, refusals and short connections since the last 60 s connection.
+            let mut attempt: u32 = 0;
             let should_stop_spawn = Arc::clone(&should_stop);
             let sender_holder = Arc::clone(&sender_holder);
             let router = Arc::clone(&router);
@@ -97,8 +113,23 @@ impl WsClientBuilder {
                     }
                     headers.append("User-Agent", "wf-market-rs".parse().unwrap());
 
+                    let gate = crate::gate::installed();
+                    if let Some(gate) = gate {
+                        if let Err(text) = gate.acquire().await {
+                            let delay = ws_backoff(attempt);
+                            attempt = attempt.saturating_add(1);
+                            eprintln!("WebSocket connect skipped: {} (retry in {} seconds)", text, delay.as_secs());
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                    }
+
                     match connect_async(request).await {
                         Ok((ws_stream, _)) => {
+                            if let Some(gate) = gate {
+                                gate.on_response(101, false);
+                            }
+                            let connected_at = Instant::now();
                             let ws_error = Arc::new(Mutex::new(None));
                             let ws_error_write = Arc::clone(&ws_error);
                             let ws_error_read = Arc::clone(&ws_error);
@@ -224,6 +255,9 @@ impl WsClientBuilder {
 
                             // Wait for both tasks
                             let _ = tokio::join!(read_task, write_task);
+                            attempt = attempt_after_connection(attempt, connected_at.elapsed());
+                            let delay = ws_backoff(attempt);
+                            attempt = attempt.saturating_add(1);
                             // Send a message to the sender to indicate disconnection
                             let reason = if should_stop_spawn.load(Ordering::Relaxed) {
                                 "Manual disconnect"
@@ -231,27 +265,38 @@ impl WsClientBuilder {
                                 &format!(
                                     "Connection lost: {:?} will retry in {} seconds",
                                     ws_error.lock().unwrap(),
-                                    retry_interval.as_secs()
+                                    delay.as_secs()
                                 )
                             };
                             WsClient::send_ws_message(
                                 &router,
                                 &WsMessage::disconnect(
                                     reason,
-                                    retry_interval.as_secs(),
+                                    delay.as_secs(),
                                     self.version.clone(),
                                 ),
                                 &sender,
                             )
                             .unwrap();
-                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            tokio::time::sleep(delay).await;
                         }
 
                         Err(err) => {
                             eprintln!("WebSocket connection failed: {}", err);
+                            if let Some(gate) = gate {
+                                match &err {
+                                    TungsteniteError::Http(resp) => {
+                                        let status = resp.status().as_u16();
+                                        gate.on_response(status, crate::gate::is_challenge(status, resp.headers()));
+                                    }
+                                    _ => gate.on_transport_error(),
+                                }
+                            }
+                            let delay = ws_backoff(attempt);
+                            attempt = attempt.saturating_add(1);
                             // Send connection failed message to the router
                             let failed_message = WsMessage::reconnect(
-                                retry_interval.as_secs(),
+                                delay.as_secs(),
                                 err,
                                 self.version.clone(),
                             )
@@ -268,7 +313,7 @@ impl WsClientBuilder {
                                 eprintln!("Failed to route connection failed message: {:?}", e);
                             }
 
-                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            tokio::time::sleep(delay).await;
                         }
                     }
                 }
@@ -282,5 +327,25 @@ impl WsClientBuilder {
             abort_handle: Arc::clone(&abort_handle_holder),
             should_stop: Arc::clone(&should_stop),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ws_backoff_doubles_from_5s_up_to_300s() {
+        let secs: Vec<u64> = (0..=7).map(|n| ws_backoff(n).as_secs()).collect();
+        assert_eq!(secs, vec![5, 10, 20, 40, 80, 160, 300, 300]);
+        assert_eq!(ws_backoff(u32::MAX), Duration::from_secs(300));
+    }
+
+    #[test]
+    fn backoff_resets_after_a_60s_connection() {
+        assert_eq!(attempt_after_connection(4, Duration::from_secs(60)), 0);
+        assert_eq!(attempt_after_connection(4, Duration::from_secs(3600)), 0);
+        assert_eq!(attempt_after_connection(4, Duration::from_secs(59)), 4);
+        assert_eq!(attempt_after_connection(0, Duration::from_secs(1)), 0);
     }
 }
