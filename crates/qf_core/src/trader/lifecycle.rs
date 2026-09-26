@@ -26,12 +26,19 @@ pub struct Checklist {
     pub warframe_running: bool,
     /// `live_scraper.general.auto_delete` is off. Only a live start needs it (amendment H1).
     pub auto_delete_off: bool,
+    /// The market breaker is closed: requests to warframe.market are not being refused (amendment P21).
+    pub market_reachable: bool,
 }
 
 impl Checklist {
-    /// The five items every start needs. `auto_delete` is judged by `ready_for`.
+    /// The six items every start needs. `auto_delete` is judged by `ready_for`.
     pub fn ready(&self) -> bool {
-        self.token_valid && self.ws_connected && self.game_data_loaded && self.helper_connected && self.warframe_running
+        self.token_valid
+            && self.ws_connected
+            && self.game_data_loaded
+            && self.helper_connected
+            && self.warframe_running
+            && self.market_reachable
     }
 
     /// Ready for a start in the given mode: a live start also needs `auto_delete` off (amendment H1).
@@ -52,6 +59,8 @@ pub enum StopReason {
     TraderCritical(String),
     OrderFailures(u32),
     TraderPanic(String),
+    /// The market breaker is open or probing; carries when it may close (amendment P21).
+    MarketBlocked(String),
 }
 
 impl StopReason {
@@ -66,6 +75,7 @@ impl StopReason {
             StopReason::TraderCritical(message) => format!("Trader error: {}", message),
             StopReason::OrderFailures(count) => format!("{} consecutive order failures", count),
             StopReason::TraderPanic(message) => format!("Trader panicked: {}", message),
+            StopReason::MarketBlocked(until) => format!("warframe.market is blocking requests (until {})", until),
         }
     }
 }
@@ -78,11 +88,17 @@ pub struct TriggerInput {
     /// `None` when no heartbeat has arrived since the server started.
     pub helper_seconds_since: Option<i64>,
     pub warframe_running: bool,
+    /// The market breaker is open or probing (amendment P21).
+    pub market_blocked: bool,
+    /// When the breaker may close, for the stop reason.
+    pub market_until: String,
 }
 
 /// First matching stop trigger while trading. Engine exits are handled by the controller.
 pub fn stop_trigger(input: &TriggerInput) -> Option<StopReason> {
-    if !input.signed_in {
+    if input.market_blocked {
+        Some(StopReason::MarketBlocked(input.market_until.clone()))
+    } else if !input.signed_in {
         Some(StopReason::SignedOut)
     } else if input.unauthorized {
         Some(StopReason::Unauthorized)
@@ -108,11 +124,13 @@ mod tests {
             ws_down_for_s: None,
             helper_seconds_since: Some(5),
             warframe_running: true,
+            market_blocked: false,
+            market_until: String::new(),
         }
     }
 
     fn all() -> Checklist {
-        Checklist { token_valid: true, ws_connected: true, game_data_loaded: true, helper_connected: true, warframe_running: true, auto_delete_off: true }
+        Checklist { token_valid: true, ws_connected: true, game_data_loaded: true, helper_connected: true, warframe_running: true, auto_delete_off: true, market_reachable: true }
     }
 
     #[test]
@@ -151,6 +169,34 @@ mod tests {
         assert_eq!(stop_trigger(&TriggerInput { helper_seconds_since: Some(60), ..healthy() }), None, "a heartbeat 60 s old is allowed");
         assert_eq!(stop_trigger(&TriggerInput { helper_seconds_since: Some(61), warframe_running: false, ..healthy() }), Some(StopReason::HelperSilent));
         assert_eq!(stop_trigger(&TriggerInput { warframe_running: false, ..healthy() }), Some(StopReason::WarframeClosed));
+    }
+
+    #[test]
+    fn ready_needs_market_reachable() {
+        let blocked = Checklist { market_reachable: false, ..all() };
+        assert!(!blocked.ready());
+        assert!(!blocked.ready_for(true));
+        assert!(!blocked.ready_for(false));
+    }
+
+    #[test]
+    fn market_blocked_is_the_first_trigger() {
+        let everything_wrong = TriggerInput {
+            signed_in: false,
+            unauthorized: true,
+            ws_down_for_s: Some(99),
+            helper_seconds_since: None,
+            warframe_running: false,
+            market_blocked: true,
+            market_until: "14:05 UTC".into(),
+        };
+        let reason = stop_trigger(&everything_wrong);
+        assert_eq!(reason, Some(StopReason::MarketBlocked("14:05 UTC".into())));
+        assert_eq!(reason.unwrap().describe(), "warframe.market is blocking requests (until 14:05 UTC)");
+        assert_eq!(
+            serde_json::to_value(StopReason::MarketBlocked("14:05 UTC".into())).unwrap(),
+            serde_json::json!({"kind": "market_blocked", "detail": "14:05 UTC"})
+        );
     }
 
     #[test]

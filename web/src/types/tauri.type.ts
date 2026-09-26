@@ -1075,6 +1075,7 @@ export namespace TauriTypes {
     helper_connected: boolean;
     warframe_running: boolean;
     auto_delete_off: boolean;
+    market_reachable: boolean;
   }
   export interface TraderHelperSnapshot {
     connected: boolean;

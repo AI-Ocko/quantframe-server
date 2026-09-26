@@ -21,8 +21,11 @@ impl Gate for TraderLaneGate {
     }
 }
 
+/// Leads every refusal text, so the trader can tell a refused call from a failed one.
+pub const UNREACHABLE: &str = "warframe.market unreachable";
+
 fn refusal(open: &BreakerOpen) -> String {
-    format!("warframe.market unreachable: breaker open until {} UTC", open.until.format("%H:%M"))
+    format!("{}: breaker open until {} UTC", UNREACHABLE, open.until.format("%H:%M"))
 }
 
 /// `outcome_of` with the challenge flag standing in for `cf-mitigated: challenge`: wf-market's

@@ -32,6 +32,8 @@ pub trait Platform: Send + Sync {
     fn game_data_loaded(&self) -> bool;
     /// `live_scraper.general.auto_delete` (amendment H1).
     fn auto_delete(&self) -> bool;
+    /// `Some(until)` while the market breaker is open or probing (amendment P21).
+    fn market_block(&self) -> Option<String>;
     fn spawn_engine(&self, dry_run: bool, running: Arc<AtomicBool>) -> JoinHandle<EngineExit>;
     fn set_status(&self, status: &'static str) -> BoxFuture<'_, Result<(), Error>>;
     fn delete_live_buy_orders(&self) -> BoxFuture<'_, Result<usize, Error>>;
@@ -90,6 +92,7 @@ impl TraderController {
             helper_connected: helper.connected,
             warframe_running: helper.warframe_running,
             auto_delete_off: !self.platform.auto_delete(),
+            market_reachable: self.platform.market_block().is_none(),
         }
     }
 
@@ -151,20 +154,29 @@ impl TraderController {
 
         running.flag.store(false, Ordering::SeqCst);
         let exit = running.handle.await;
+        let block = self.platform.market_block();
         let reason = reason.unwrap_or_else(|| match exit {
             Ok(EngineExit::Critical(message)) => StopReason::TraderCritical(message),
             Ok(EngineExit::OrderFailures(count)) => StopReason::OrderFailures(count),
             Ok(EngineExit::Stopped) => StopReason::UserStop,
+            Ok(EngineExit::MarketBlocked) => {
+                StopReason::MarketBlocked(block.clone().unwrap_or_else(|| "the breaker closes".into()))
+            }
             Err(join_error) => StopReason::TraderPanic(join_error.to_string()),
         });
 
         if let Err(e) = self.platform.set_status("invisible").await {
             error("Trader:Stop", format!("Could not set status invisible: {}", e.message), &LoggerOptions::default());
         }
+        let blocked = block.is_some() || matches!(reason, StopReason::MarketBlocked(_));
         if inner.options.delete_buy_orders_on_stop && !running.dry_run {
-            match self.platform.delete_live_buy_orders().await {
-                Ok(count) => info("Trader:Stop", format!("Deleted {} buy orders", count), &LoggerOptions::default()),
-                Err(e) => error("Trader:Stop", format!("Could not delete buy orders: {}", e.message), &LoggerOptions::default()),
+            if blocked {
+                info("Trader:Stop", "Buy orders left in place: warframe.market unreachable", &LoggerOptions::default());
+            } else {
+                match self.platform.delete_live_buy_orders().await {
+                    Ok(count) => info("Trader:Stop", format!("Deleted {} buy orders", count), &LoggerOptions::default()),
+                    Err(e) => error("Trader:Stop", format!("Could not delete buy orders: {}", e.message), &LoggerOptions::default()),
+                }
             }
         }
         let description = reason.describe();
@@ -206,12 +218,15 @@ impl TraderController {
         if running.handle.is_finished() {
             return self.finish(&mut inner, None, now).await;
         }
+        let block = self.platform.market_block();
         let trigger = stop_trigger(&TriggerInput {
             signed_in: session.signed_in,
             unauthorized: session.unauthorized,
             ws_down_for_s: session.ws_down_for_s,
             helper_seconds_since: helper.seconds_since_heartbeat,
             warframe_running: helper.warframe_running,
+            market_blocked: block.is_some(),
+            market_until: block.unwrap_or_default(),
         });
         match trigger {
             Some(reason) => self.finish(&mut inner, Some(reason), now).await,
@@ -276,6 +291,7 @@ mod tests {
         helper: StdMutex<HelperSnapshot>,
         loaded: AtomicBool,
         auto_delete: AtomicBool,
+        market_block: StdMutex<Option<String>>,
         exit: StdMutex<Option<EngineExit>>,
         statuses: StdMutex<Vec<&'static str>>,
         deletes: AtomicUsize,
@@ -297,6 +313,9 @@ mod tests {
         }
         fn auto_delete(&self) -> bool {
             self.auto_delete.load(Ordering::SeqCst)
+        }
+        fn market_block(&self) -> Option<String> {
+            self.market_block.lock().unwrap().clone()
         }
         fn spawn_engine(&self, _dry_run: bool, running: Arc<AtomicBool>) -> JoinHandle<EngineExit> {
             let exit = self.exit.lock().unwrap().clone();
@@ -488,6 +507,30 @@ mod tests {
             controller.tick(now()).await.unwrap(),
             Some(StopReason::TraderCritical("Trader:Item: bad request".into()))
         );
+    }
+
+    #[tokio::test]
+    async fn finish_skips_buy_order_deletes_while_blocked() {
+        let (_dir, fake, controller) = ready_controller().await;
+        controller.set_options(Some(false), Some(true)).await.unwrap();
+        controller.start(now()).await.unwrap();
+        *fake.market_block.lock().unwrap() = Some("14:05 UTC".into());
+        // Every other trigger fires too; the breaker is checked first.
+        fake.helper.lock().unwrap().warframe_running = false;
+        let expected = StopReason::MarketBlocked("14:05 UTC".into());
+        assert_eq!(controller.tick(now()).await.unwrap(), Some(expected.clone()));
+        assert_eq!(fake.deletes.load(Ordering::SeqCst), 0, "buy orders are left in place");
+        assert_eq!(*fake.statuses.lock().unwrap(), vec!["ingame", "invisible"]);
+        assert_eq!(*fake.stopped.lock().unwrap(), vec![(expected, false)]);
+        let status = controller.status(now()).await;
+        assert_eq!(status.state, LifecycleState::Offline);
+        assert!(!status.checklist.market_reachable);
+        assert!(controller.start(now()).await.is_err(), "no restart while blocked");
+        // The breaker closing does not restart the trader; the user presses Start.
+        *fake.market_block.lock().unwrap() = None;
+        fake.helper.lock().unwrap().warframe_running = true;
+        assert_eq!(controller.tick(now()).await.unwrap(), None);
+        assert_eq!(controller.status(now()).await.state, LifecycleState::Ready);
     }
 
     #[tokio::test]

@@ -38,6 +38,7 @@ export function TraderPanel() {
     ["game_data_loaded", status.checklist.game_data_loaded, true],
     ["helper_connected", status.checklist.helper_connected, true],
     ["warframe_running", status.checklist.warframe_running, true],
+    ["market_reachable", status.checklist.market_reachable, true],
     ["auto_delete_off", status.checklist.auto_delete_off, !status.options.dry_run],
   ];
   const failure = start.error ?? stop.error ?? options.error;
@@ -103,6 +104,9 @@ export function TraderPanel() {
             onChange={(e) => options.mutate({ deleteBuyOrdersOnStop: e.currentTarget.checked })}
           />
         </Group>
+        {!active && !status.checklist.market_reachable && (
+          <Alert color="orange">{t("market_blocked")}</Alert>
+        )}
         <Text size="sm" c="dimmed" h={22}>
           {status.options.last_stop_reason
             ? t("last_stop", { reason: status.options.last_stop_reason, at: status.options.last_stop_at ?? "" })

@@ -20,9 +20,17 @@ use super::session::{self, SessionSnapshot};
 use super::TradeContext;
 use crate::collector::ts;
 use crate::helper_link::presence::{self, HelperSnapshot};
+use crate::market::limiter;
 use crate::types::UIEvent;
 use crate::utils::modules::states;
 use crate::send_event;
+
+/// `until` (RFC 3339) as "HH:MM UTC", the way the gate's refusal words it.
+fn until_text(until: Option<&str>) -> String {
+    until
+        .and_then(|u| DateTime::parse_from_rfc3339(u).ok())
+        .map_or_else(|| "the breaker closes".into(), |u| u.with_timezone(&Utc).format("%H:%M UTC").to_string())
+}
 
 pub struct LivePlatform {
     conn: DatabaseConnection,
@@ -56,6 +64,12 @@ impl Platform for LivePlatform {
         states::try_app_state().is_some_and(|app| app.settings.live_scraper.general.auto_delete)
     }
 
+    /// Open or probing both count: a probe is one request the trader must not race (amendment P21).
+    fn market_block(&self) -> Option<String> {
+        let breaker = limiter::global().snapshot().breaker;
+        (breaker.state != "closed").then(|| until_text(breaker.until.as_deref()))
+    }
+
     fn spawn_engine(&self, dry_run: bool, running: Arc<AtomicBool>) -> JoinHandle<EngineExit> {
         let conn = self.conn.clone();
         tokio::spawn(async move {
@@ -73,7 +87,10 @@ impl Platform for LivePlatform {
                     }
                 }
             };
-            engine::run_loop(running, just_started, orders, check, engine::CYCLE_PAUSE, engine::IDLE_PAUSE).await
+            engine::run_loop(running, just_started, orders, check, engine::CYCLE_PAUSE, engine::IDLE_PAUSE, || {
+                limiter::global().snapshot().breaker.state != "closed"
+            })
+            .await
         })
     }
 

@@ -19,6 +19,8 @@ pub enum EngineExit {
     Stopped,
     Critical(String),
     OrderFailures(u32),
+    /// The market breaker is open or probing, or a call was refused by it (amendment P21).
+    MarketBlocked,
 }
 
 /// Upstream classification: these wf-market error types stop the trader; everything else is a warning.
@@ -29,8 +31,18 @@ pub fn classify(error: &Error) -> LogLevel {
     }
 }
 
+/// The gate's fail-fast refusal, wherever `from_wfm` put its text.
+fn is_market_refusal(error: &Error) -> bool {
+    let unreachable = crate::market::gate::UNREACHABLE;
+    error.message.contains(unreachable)
+        || error.cause.contains(unreachable)
+        || error.properties.properties.as_ref().is_some_and(|p| p.to_string().contains(unreachable))
+}
+
 /// Runs `check` cycles until `running` is cleared, a critical error occurs, or order calls keep failing.
 /// `check` returns how many items the cycle processed; an empty cycle sleeps `idle_pause` instead of `pause`.
+/// `blocked` reads the market breaker: while it is open or probing the loop exits `MarketBlocked`,
+/// checked before order failures are counted (amendment P21).
 pub async fn run_loop<F, Fut>(
     running: Arc<AtomicBool>,
     just_started: Arc<AtomicBool>,
@@ -38,6 +50,7 @@ pub async fn run_loop<F, Fut>(
     mut check: F,
     pause: Duration,
     idle_pause: Duration,
+    blocked: impl Fn() -> bool,
 ) -> EngineExit
 where
     F: FnMut() -> Fut,
@@ -45,9 +58,15 @@ where
 {
     just_started.store(true, Ordering::SeqCst);
     while running.load(Ordering::SeqCst) {
+        if blocked() {
+            running.store(false, Ordering::SeqCst);
+            return EngineExit::MarketBlocked;
+        }
         let mut processed = None;
+        let mut refused = false;
         match check().await {
             Ok(n) => processed = Some(n),
+            Err(e) if is_market_refusal(&e) => refused = true,
             Err(mut e) => {
                 e.log_level = classify(&e);
                 let _ = e.log(LOG_FILE);
@@ -56,6 +75,10 @@ where
                     return EngineExit::Critical(format!("{}: {}", e.component, e.message));
                 }
             }
+        }
+        if refused || blocked() {
+            running.store(false, Ordering::SeqCst);
+            return EngineExit::MarketBlocked;
         }
         let failures = orders.consecutive_failures();
         if failures >= MAX_CONSECUTIVE_FAILURES {
@@ -128,7 +151,7 @@ mod tests {
                 }
             }
         };
-        let exit = run_loop(running, just_started, orders, check, CYCLE_PAUSE, IDLE_PAUSE).await;
+        let exit = run_loop(running, just_started, orders, check, CYCLE_PAUSE, IDLE_PAUSE, || false).await;
         assert_eq!(exit, EngineExit::Stopped);
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert_eq!(*seen.lock().unwrap(), vec![true, false, false]);
@@ -138,7 +161,7 @@ mod tests {
     async fn critical_error_stops_the_loop() {
         let running = Arc::new(AtomicBool::new(true));
         let orders = Arc::new(TradeOrders::new(None, None, true));
-        let exit = run_loop(running.clone(), Arc::new(AtomicBool::new(false)), orders, || async { Err(wfm_error("BadRequest")) }, CYCLE_PAUSE, IDLE_PAUSE).await;
+        let exit = run_loop(running.clone(), Arc::new(AtomicBool::new(false)), orders, || async { Err(wfm_error("BadRequest")) }, CYCLE_PAUSE, IDLE_PAUSE, || false).await;
         assert_eq!(exit, EngineExit::Critical("Test: boom".into()));
         assert!(!running.load(Ordering::SeqCst));
     }
@@ -150,8 +173,44 @@ mod tests {
             let params = CreateOrderParams::new_with_subtype("item1", OrderType::Buy, 10, 1, true, None, WFSubType::default());
             let _ = orders.create(params, Route::Live, &WriteMeta::default()).await;
         }
-        let exit = run_loop(Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)), orders, || async { Ok(1) }, CYCLE_PAUSE, IDLE_PAUSE).await;
+        let exit = run_loop(Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)), orders, || async { Ok(1) }, CYCLE_PAUSE, IDLE_PAUSE, || false).await;
         assert_eq!(exit, EngineExit::OrderFailures(MAX_CONSECUTIVE_FAILURES));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_loop_exits_market_blocked_before_counting_failures() {
+        let failing_orders = || async {
+            let orders = Arc::new(TradeOrders::new(None, None, false));
+            for _ in 0..MAX_CONSECUTIVE_FAILURES {
+                let params = CreateOrderParams::new_with_subtype("item1", OrderType::Buy, 10, 1, true, None, WFSubType::default());
+                let _ = orders.create(params, Route::Live, &WriteMeta::default()).await;
+            }
+            orders
+        };
+
+        // Blocked at the top of a cycle: no cycle runs.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let check = {
+            let calls = calls.clone();
+            move || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { Ok(1) }
+            }
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let exit = run_loop(running.clone(), Arc::new(AtomicBool::new(false)), failing_orders().await, check, CYCLE_PAUSE, IDLE_PAUSE, || true).await;
+        assert_eq!(exit, EngineExit::MarketBlocked);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(!running.load(Ordering::SeqCst));
+
+        // The gate's fail-fast error while the breaker reads closed: still MarketBlocked, not OrderFailures.
+        let gate_error = || async {
+            let mut e = wfm_error("RequestError");
+            e.properties = Properties::from(json!({"type": "RequestError", "error": {"content": "warframe.market unreachable: breaker open until 14:05 UTC"}}));
+            Err(e)
+        };
+        let exit = run_loop(Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)), failing_orders().await, gate_error, CYCLE_PAUSE, IDLE_PAUSE, || false).await;
+        assert_eq!(exit, EngineExit::MarketBlocked);
     }
 
     #[tokio::test(start_paused = true)]
@@ -175,7 +234,7 @@ mod tests {
                 }
             }
         };
-        let exit = run_loop(running, Arc::new(AtomicBool::new(false)), orders, check, CYCLE_PAUSE, IDLE_PAUSE).await;
+        let exit = run_loop(running, Arc::new(AtomicBool::new(false)), orders, check, CYCLE_PAUSE, IDLE_PAUSE, || false).await;
         assert_eq!(exit, EngineExit::Stopped);
         let stamps = stamps.lock().unwrap().clone();
         // cycle 0 (empty) -> 30 s -> cycle 1 (busy) -> 1 s -> cycle 2
@@ -195,6 +254,7 @@ mod tests {
             || async { Ok(0) },
             CYCLE_PAUSE,
             IDLE_PAUSE,
+            || false,
         ));
         tokio::time::sleep(Duration::from_millis(1500)).await; // inside the first idle pause
         let before = tokio::time::Instant::now();

@@ -2388,13 +2388,15 @@
           "game_data_loaded": "Item list loaded",
           "helper_connected": "qf-helper connected (heartbeat in the last 30 s)",
           "warframe_running": "Warframe running on the gaming PC",
-          "auto_delete_off": "auto_delete is off (on, it deletes every non-blacklisted order on a live start)"
+          "auto_delete_off": "auto_delete is off (on, it deletes every non-blacklisted order on a live start)",
+          "market_reachable": "warframe.market reachable (not blocking requests)"
         },
         "options": {
           "dry_run": "Dry-run",
           "delete_buy_orders_on_stop": "Delete buy orders on stop"
         },
         "last_stop": "Last stop: {{reason}} ({{at}})",
+        "market_blocked": "warframe.market is blocking requests; buy orders were left in place. Press Start once it is reachable again.",
         "helper_line": "Last heartbeat from {{device}} (qf-helper {{version}}) {{seconds}} s ago",
         "helper_none": "No qf-helper heartbeat since the server started",
         "dry_run_log": {
