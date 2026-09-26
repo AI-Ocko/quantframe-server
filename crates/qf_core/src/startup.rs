@@ -54,6 +54,11 @@ pub async fn start(cfg: CoreConfig) -> Result<CoreHandles, Error> {
     };
     crypto::init_key(key);
     crate::market::gate::install();
+    // The saved budget applies before the first warframe.market request (load_items, /me); AppState::new
+    // reloads the settings and the rate is applied again from them below. A failed read keeps the default.
+    if let Ok(settings) = crate::app::Settings::load() {
+        crate::market::limiter::global().set_rate_per_second(settings.live_scraper.general.market_requests_per_second);
+    }
 
     let http = crate::market::http_client(std::time::Duration::from_secs(30));
     let items = game_data::load_items(&paths::get().cache_dir(), &http).await?;
