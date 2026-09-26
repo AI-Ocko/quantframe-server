@@ -38,6 +38,19 @@ pub(crate) fn installed() -> Option<&'static Arc<dyn Gate>> {
     GATE.get()
 }
 
+static USER_AGENT: OnceLock<&'static str> = OnceLock::new();
+
+/// Sets the User-Agent every REST call and websocket connect sends. Returns `false` if one was
+/// already set. Without it the crate sends its upstream `wf-market-rs...` agents.
+pub fn set_user_agent(agent: &'static str) -> bool {
+    USER_AGENT.set(agent).is_ok()
+}
+
+/// The User-Agent set with `set_user_agent`, if any.
+pub fn user_agent() -> Option<&'static str> {
+    USER_AGENT.get().copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,12 +94,14 @@ mod tests {
 
     static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     static RECORDER: OnceLock<Arc<Recorder>> = OnceLock::new();
+    const TEST_AGENT: &str = "gate-test/1 (+https://example.invalid)";
 
     fn recorder() -> Arc<Recorder> {
         RECORDER
             .get_or_init(|| {
                 let r = Arc::new(Recorder::default());
                 assert!(install_gate(r.clone()));
+                assert!(set_user_agent(TEST_AGENT));
                 r
             })
             .clone()
@@ -113,19 +128,22 @@ mod tests {
         reset(&recorder);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
+        let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buf = [0u8; 4096];
-            let _ = socket.read(&mut buf).await;
+            let n = socket.read(&mut buf).await.unwrap();
             socket
                 .write_all(b"HTTP/1.1 429 Too Many Requests\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
                 .await
                 .unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_lowercase()
         });
 
         let result = probe(addr).await;
 
         assert!(matches!(result, Err(ApiError::TooManyRequests(_))));
+        let request = server.await.unwrap();
+        assert!(request.contains(&format!("user-agent: {}", TEST_AGENT)), "{request}");
         assert_eq!(*recorder.acquired.lock().unwrap(), 1);
         assert_eq!(*recorder.responses.lock().unwrap(), vec![(429, false)]);
         assert_eq!(*recorder.transport_errors.lock().unwrap(), 0);
@@ -245,17 +263,20 @@ mod tests {
         reset(&recorder);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
+        let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buf = [0u8; 4096];
-            let _ = socket.read(&mut buf).await;
+            let n = socket.read(&mut buf).await.unwrap();
             socket
                 .write_all(b"HTTP/1.1 403 Forbidden\r\ncontent-type: text/html; charset=UTF-8\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
                 .await
                 .unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_lowercase()
         });
 
         let _ws = websocket(addr).build().await.unwrap();
+        let request = server.await.unwrap();
+        assert!(request.contains(&format!("user-agent: {}", TEST_AGENT)), "{request}");
 
         assert_eq!(*recorder.acquired.lock().unwrap(), 1);
         assert_eq!(*recorder.responses.lock().unwrap(), vec![(403, true)]);

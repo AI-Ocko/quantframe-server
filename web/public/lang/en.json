@@ -1324,6 +1324,10 @@
                     "range": "Daily range (desktop app)"
                   }
                 },
+                "market_requests_per_second": {
+                  "label": "Market requests per second",
+                  "tooltip": "Budget for all warframe.market requests (trader, collector, item refresh), 0.2 to 2.9; warframe.market allows 3. Applies on save. Lower it if the market breaker trips."
+                },
                 "fast_drop_guard_pct": {
                   "label": "Fast-drop guard (%)",
                   "tooltip": "Closed mode only. When the collector's 48-hour average is this far below the closed 7-day average, the lower figure is used. -1 turns it off."

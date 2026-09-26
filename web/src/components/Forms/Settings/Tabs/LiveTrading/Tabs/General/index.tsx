@@ -233,6 +233,17 @@ export const GeneralPanel = ({ form, setHideTab, setHideButtons }: GeneralPanelP
                 onChange={(value) => form.setFieldValue(getFieldPath("general.price_source"), value ?? "inferred")}
               />
             </Tooltip>
+            <Tooltip label={useTranslateFormFields("market_requests_per_second.tooltip")}>
+              <NumberInput
+                label={useTranslateFormFields("market_requests_per_second.label")}
+                step={0.1}
+                min={0.2}
+                max={2.9}
+                decimalScale={1}
+                value={form.values.live_scraper.general.market_requests_per_second}
+                onChange={(value) => form.setFieldValue(getFieldPath("general.market_requests_per_second"), value === "" ? 2.5 : Number(value))}
+              />
+            </Tooltip>
             <Tooltip label={useTranslateFormFields("profit_basis.tooltip")}>
               <Select
                 label={useTranslateFormFields("profit_basis.label")}

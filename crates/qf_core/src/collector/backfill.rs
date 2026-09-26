@@ -287,7 +287,7 @@ pub fn start(conn: DatabaseConnection, items: Vec<(String, String)>) -> Backfill
         status.clone()
     };
     tokio::spawn(watch(tokio::spawn(async move {
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().unwrap_or_default();
+        let http = crate::market::http_client(Duration::from_secs(30));
         let source = HttpStatisticsSource::new(http, WFM_API_V1);
         run(&conn, &source, crate::market::limiter::global(), items).await
     })));

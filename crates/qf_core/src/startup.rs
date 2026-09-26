@@ -55,16 +55,15 @@ pub async fn start(cfg: CoreConfig) -> Result<CoreHandles, Error> {
     crypto::init_key(key);
     crate::market::gate::install();
 
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| Error::new("Startup:Http", e.to_string(), utils::get_location!()))?;
+    let http = crate::market::http_client(std::time::Duration::from_secs(30));
     let items = game_data::load_items(&paths::get().cache_dir(), &http).await?;
     let cache = CacheState::new(paths::get().cache_dir());
     cache.load(items)?;
     states::init_cache_state(cache);
 
     states::init_app_state(AppState::new(false).await?);
+    crate::market::limiter::global()
+        .set_rate_per_second(states::app_state()?.settings.live_scraper.general.market_requests_per_second);
     {
         let cache = states::cache_client()?;
         let app = states::app_mutex().lock()?;

@@ -111,7 +111,7 @@ impl WsClientBuilder {
                     } else if version == &ApiVersion::V1 {
                         headers.append("cookie", format!("JWT={}", self.token).parse().unwrap());
                     }
-                    headers.append("User-Agent", "wf-market-rs".parse().unwrap());
+                    headers.append("User-Agent", crate::gate::user_agent().unwrap_or("wf-market-rs").parse().unwrap());
 
                     let gate = crate::gate::installed();
                     if let Some(gate) = gate {

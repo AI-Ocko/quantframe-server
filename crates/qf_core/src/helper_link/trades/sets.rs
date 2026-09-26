@@ -153,7 +153,7 @@ impl SetCache {
     pub fn new(cache_dir: &Path) -> Self {
         let file = cache_dir.join(SETS_FILE);
         let parts = std::fs::read_to_string(&file).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().expect("HTTP client");
+        let http = crate::market::http_client(Duration::from_secs(30));
         Self { file, parts: Mutex::new(parts), http }
     }
 

@@ -40,6 +40,7 @@ fn outcome(status: u16, challenge: bool) -> Outcome {
 
 pub fn install() {
     install_gate(Arc::new(TraderLaneGate));
+    wf_market::gate::set_user_agent(super::USER_AGENT);
 }
 
 #[cfg(test)]

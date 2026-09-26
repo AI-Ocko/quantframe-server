@@ -36,6 +36,7 @@ pub async fn app_update_settings(mut settings: Settings) -> Result<Settings, Err
     let mut app = app.lock()?;
     settings.notifications.custom_sounds = app.settings.notifications.custom_sounds.clone();
     app.update_settings(settings.clone())?;
+    crate::market::limiter::global().set_rate_per_second(settings.live_scraper.general.market_requests_per_second);
     Ok(settings.clone())
 }
 

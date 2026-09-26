@@ -247,17 +247,16 @@ impl<State: Clone + 'static> Client<State> {
         default_headers.insert("language", self.language.as_str().parse().unwrap());
         default_headers.insert("platform", self.platform.as_str().parse().unwrap());
         default_headers.insert("crossplay", self.crossplay.to_string().parse().unwrap());
-        default_headers.insert(
-            "User-Agent",
-            format!(
+        let user_agent = match crate::gate::user_agent() {
+            Some(agent) => agent.to_string(),
+            None => format!(
                 "wf-market-rs/{} ({}; {})",
                 env!("CARGO_PKG_VERSION"),
                 self.platform.as_str(),
                 self.language.as_str()
-            )
-            .parse()
-            .unwrap(),
-        );
+            ),
+        };
+        default_headers.insert("User-Agent", user_agent.parse().unwrap());
 
         // If the client is authenticated, add the token to the headers
         if self.token != "" {

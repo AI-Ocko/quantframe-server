@@ -15,10 +15,17 @@ pub struct LiveScraperGeneralSettings {
     pub fast_drop_guard_pct: i64,
     #[serde(default)]
     pub profit_basis: ProfitBasis,
+    /// Process-wide warframe.market request budget (spec P22), clamped to 0.2..=2.9 when applied.
+    #[serde(default = "default_market_rps")]
+    pub market_requests_per_second: f64,
 }
 
 fn default_fast_drop_guard_pct() -> i64 {
     10
+}
+
+fn default_market_rps() -> f64 {
+    crate::market::limiter::DEFAULT_RATE_PER_SECOND
 }
 
 impl Default for LiveScraperGeneralSettings {
@@ -34,6 +41,7 @@ impl Default for LiveScraperGeneralSettings {
             price_source: PriceSourceMode::Inferred,
             fast_drop_guard_pct: default_fast_drop_guard_pct(),
             profit_basis: ProfitBasis::Spread,
+            market_requests_per_second: default_market_rps(),
         }
     }
 }
@@ -50,5 +58,13 @@ mod tests {
         let json = serde_json::to_value(LiveScraperGeneralSettings { price_source: PriceSourceMode::Closed, profit_basis: ProfitBasis::Range, ..Default::default() }).unwrap();
         assert_eq!(json["price_source"], "closed");
         assert_eq!(json["profit_basis"], "range");
+    }
+
+    #[test]
+    fn pre_p22_settings_load_with_2_5() {
+        let old = r#"{"report_to_wfm":true,"auto_delete":false,"auto_trade":true,"stock_mode":"all","trade_modes":["buy"],"delete_conflicting_orders":false,"price_source":"closed"}"#;
+        let s: LiveScraperGeneralSettings = serde_json::from_str(old).unwrap();
+        assert_eq!(s.market_requests_per_second, 2.5);
+        assert_eq!(LiveScraperGeneralSettings::default().market_requests_per_second, 2.5);
     }
 }

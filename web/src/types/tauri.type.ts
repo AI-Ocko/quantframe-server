@@ -111,6 +111,7 @@ export namespace TauriTypes {
     price_source: "inferred" | "closed";
     fast_drop_guard_pct: number;
     profit_basis: "spread" | "range";
+    market_requests_per_second: number;
   }
   export interface WFInventorySettings {
     inv_path: string;

@@ -8,7 +8,7 @@ use std::time::{Duration as StdDuration, Instant};
 
 use chrono::{Duration, Utc};
 use service::sea_orm::DatabaseConnection;
-use utils::{error, get_location, info, warning, Error, LoggerOptions};
+use utils::{error, info, warning, Error, LoggerOptions};
 
 use super::backfill::{HttpStatisticsSource, WFM_API_V1};
 use super::closed;
@@ -367,10 +367,7 @@ pub async fn start(opts: CollectorStart) -> Result<(), Error> {
         warning("Collector", "QF_COLLECTOR=off; market data collection is disabled", &LoggerOptions::default());
         return Ok(());
     }
-    let http = reqwest::Client::builder()
-        .timeout(StdDuration::from_secs(30))
-        .build()
-        .map_err(|e| Error::new("Collector:Http", e.to_string(), get_location!()))?;
+    let http = crate::market::http_client(StdDuration::from_secs(30));
     let items = states::cache_client()?.tradable_item().get_items()?;
     let pairs: Vec<(String, String)> = items.iter().map(|i| (i.wfm_id.clone(), i.wfm_url.clone())).collect();
     store::sync_items(&opts.conn, &pairs).await?;

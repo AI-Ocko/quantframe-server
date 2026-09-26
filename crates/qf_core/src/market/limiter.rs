@@ -9,7 +9,9 @@ use tokio::sync::Notify;
 use tokio::time::Instant;
 use utils::{info, warning, LoggerOptions};
 
-pub const RATE_PER_SECOND: u32 = 3;
+/// `live_scraper.general.market_requests_per_second` (spec P22): the default and its clamp range.
+pub const DEFAULT_RATE_PER_SECOND: f64 = 2.5;
+const RATE_RANGE: std::ops::RangeInclusive<f64> = 0.2..=2.9;
 /// Breaker periods (spec P21); the last one repeats.
 const BREAKER_STEPS: [Duration; 3] =
     [Duration::from_secs(15 * 60), Duration::from_secs(60 * 60), Duration::from_secs(4 * 60 * 60)];
@@ -88,6 +90,7 @@ pub struct LimiterSnapshot {
     pub waiting: usize,
     pub paused_ms: u64,
     pub rate_limited_total: u64,
+    pub rate_per_second: f64,
     pub breaker: BreakerSnapshot,
 }
 
@@ -101,7 +104,10 @@ struct Open {
 }
 
 struct State {
-    next_slot: Option<Instant>,
+    rate_per_second: f64,
+    interval: Duration,
+    /// The next slot is `last_grant + interval`, so a rate change applies to it at once.
+    last_grant: Option<Instant>,
     waiting: [usize; 3],
     granted: [u64; 3],
     rate_limited_total: u64,
@@ -171,7 +177,6 @@ fn to_utc(at: Instant, now: Instant) -> DateTime<Utc> {
 }
 
 pub struct Limiter {
-    interval: Duration,
     state: Mutex<State>,
     notify: Notify,
 }
@@ -180,7 +185,7 @@ static GLOBAL: OnceLock<Limiter> = OnceLock::new();
 
 /// The process-wide limiter every warframe.market REST call goes through.
 pub fn global() -> &'static Limiter {
-    GLOBAL.get_or_init(|| Limiter::new(RATE_PER_SECOND))
+    GLOBAL.get_or_init(|| Limiter::new(DEFAULT_RATE_PER_SECOND))
 }
 
 /// Keeps a lane's waiting count right when an `acquire` future is dropped before it gets a slot.
@@ -200,11 +205,14 @@ impl Drop for Waiting<'_> {
 }
 
 impl Limiter {
-    pub fn new(rate_per_second: u32) -> Self {
+    /// Unclamped, so tests can run fast; `set_rate_per_second` is the clamped setting.
+    pub fn new(rate_per_second: impl Into<f64>) -> Self {
+        let rate_per_second = rate_per_second.into();
         Self {
-            interval: Duration::from_secs(1) / rate_per_second.max(1),
             state: Mutex::new(State {
-                next_slot: None,
+                rate_per_second,
+                interval: Duration::from_secs_f64(1.0 / rate_per_second),
+                last_grant: None,
                 waiting: [0; 3],
                 granted: [0; 3],
                 rate_limited_total: 0,
@@ -245,16 +253,17 @@ impl Limiter {
                 if s.waiting[..lane.index()].iter().any(|&n| n > 0) {
                     None
                 } else {
+                    let next_slot = s.last_grant.map_or(now, |at| at + s.interval);
                     let ready = match pass {
-                        Pass::Blocked { until, .. } => until.max(s.next_slot.unwrap_or(now)),
-                        _ => s.next_slot.unwrap_or(now),
+                        Pass::Blocked { until, .. } => until.max(next_slot),
+                        _ => next_slot,
                     };
                     if ready <= now {
                         if let (Pass::Probe, Some(open)) = (pass, s.breaker.as_mut()) {
                             open.probe = Some(now);
                             info(LOG, "Market breaker probing", &LoggerOptions::default());
                         }
-                        s.next_slot = Some(now + self.interval);
+                        s.last_grant = Some(now);
                         s.waiting[lane.index()] -= 1;
                         s.granted[lane.index()] += 1;
                         waiting.granted = true;
@@ -315,6 +324,16 @@ impl Limiter {
         self.notify.notify_waiters();
     }
 
+    /// Clamped to 0.2..=2.9; waiters recompute their slot at once.
+    pub fn set_rate_per_second(&self, rate: f64) {
+        {
+            let mut s = self.state.lock().unwrap();
+            s.rate_per_second = rate.clamp(*RATE_RANGE.start(), *RATE_RANGE.end());
+            s.interval = Duration::from_secs_f64(1.0 / s.rate_per_second);
+        }
+        self.notify.notify_waiters();
+    }
+
     pub fn snapshot(&self) -> LimiterSnapshot {
         let mut s = self.state.lock().unwrap();
         let now = Instant::now();
@@ -340,6 +359,7 @@ impl Limiter {
             waiting: s.waiting.iter().sum(),
             paused_ms: open.map_or(0, |o| o.until.saturating_duration_since(now).as_millis() as u64),
             rate_limited_total: s.rate_limited_total,
+            rate_per_second: s.rate_per_second,
             breaker,
         }
     }
@@ -363,6 +383,51 @@ mod tests {
         assert_eq!(granted_at[0], 0);
         assert!((333..=334).contains(&granted_at[1]), "{granted_at:?}");
         assert!((666..=668).contains(&granted_at[2]), "{granted_at:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn spacing_follows_set_rate() {
+        let limiter = Limiter::new(3);
+        limiter.set_rate_per_second(2.5);
+        let start = Instant::now();
+        let mut granted_at = Vec::new();
+        for _ in 0..3 {
+            limiter.acquire(Lane::Cold).await;
+            granted_at.push(start.elapsed().as_millis());
+        }
+        assert_eq!(granted_at, vec![0, 400, 800]);
+        assert_eq!(limiter.snapshot().rate_per_second, 2.5);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_live_rate_change_applies_to_the_next_slot() {
+        let limiter = Arc::new(Limiter::new(2));
+        limiter.acquire(Lane::Cold).await;
+        let start = Instant::now();
+        let waiter = {
+            let limiter = limiter.clone();
+            tokio::spawn(async move { limiter.acquire(Lane::Cold).await })
+        };
+        tokio::task::yield_now().await;
+        limiter.set_rate_per_second(0.5); // the waiter was due at 500 ms; now 2 s after the last grant
+        waiter.await.unwrap();
+        assert_eq!(start.elapsed().as_millis(), 2000);
+        limiter.set_rate_per_second(2.0);
+        let t = Instant::now();
+        limiter.acquire(Lane::Cold).await;
+        assert_eq!(t.elapsed().as_millis(), 500);
+    }
+
+    #[test]
+    fn rate_is_clamped() {
+        let limiter = Limiter::new(3);
+        limiter.set_rate_per_second(3.0);
+        assert_eq!(limiter.snapshot().rate_per_second, 2.9);
+        limiter.set_rate_per_second(0.0);
+        assert_eq!(limiter.snapshot().rate_per_second, 0.2);
+        limiter.set_rate_per_second(1.7);
+        assert_eq!(limiter.snapshot().rate_per_second, 1.7);
+        assert_eq!(global().snapshot().rate_per_second, DEFAULT_RATE_PER_SECOND);
     }
 
     #[tokio::test(start_paused = true)]
