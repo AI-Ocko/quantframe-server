@@ -25,12 +25,12 @@ fn refusal(open: &BreakerOpen) -> String {
     format!("warframe.market unreachable: breaker open until {} UTC", open.until.format("%H:%M"))
 }
 
-/// `outcome_of` with the challenge flag standing in for an HTML content type, so a flagged
-/// 403/503 is a Challenge and a flagged 502/52x origin-error page stays a TransportError.
+/// `outcome_of` with the challenge flag standing in for `cf-mitigated: challenge`: wf-market's
+/// `is_challenge` already applies the status rule, so every flagged response is a Challenge.
 fn outcome(status: u16, challenge: bool) -> Outcome {
     let mut headers = reqwest::header::HeaderMap::new();
     if challenge {
-        headers.insert(reqwest::header::CONTENT_TYPE, reqwest::header::HeaderValue::from_static("text/html"));
+        headers.insert("cf-mitigated", reqwest::header::HeaderValue::from_static("challenge"));
     }
     limiter::outcome_of(status, &headers)
 }
@@ -53,12 +53,11 @@ mod tests {
     #[test]
     fn the_challenge_flag_maps_onto_outcomes() {
         assert_eq!(outcome(200, false), Outcome::Ok);
-        assert_eq!(outcome(404, false), Outcome::Ok);
         assert_eq!(outcome(403, false), Outcome::Ok);
         assert_eq!(outcome(403, true), Outcome::Challenge);
-        assert_eq!(outcome(503, true), Outcome::Challenge);
-        assert_eq!(outcome(502, true), Outcome::TransportError);
-        assert_eq!(outcome(500, false), Outcome::TransportError);
+        assert_eq!(outcome(404, true), Outcome::Challenge);
+        assert_eq!(outcome(502, true), Outcome::Challenge);
+        assert_eq!(outcome(502, false), Outcome::TransportError);
         assert_eq!(outcome(429, false), Outcome::RateLimited);
     }
 }

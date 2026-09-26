@@ -342,7 +342,7 @@ impl<State: Clone + 'static> Client<State> {
                 let headers = resp.headers().clone();
                 let status = resp.status();
                 if let Some(gate) = crate::gate::installed() {
-                    gate.on_response(status.as_u16(), crate::gate::is_challenge(&headers));
+                    gate.on_response(status.as_u16(), crate::gate::is_challenge(status.as_u16(), &headers));
                 }
                 error.set_status_code(status.as_u16());
 
