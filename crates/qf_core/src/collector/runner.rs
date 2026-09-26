@@ -28,6 +28,11 @@ pub const HOT_INTERVAL_S: i64 = 300;
 const HOT_SET_REFRESH: StdDuration = StdDuration::from_secs(60);
 const IDLE: StdDuration = StdDuration::from_secs(1);
 const ERROR_PAUSE: StdDuration = StdDuration::from_secs(5);
+/// Spec P23: one cold-lane item every 5 s (~0.2 req/s) instead of back to back. There is no
+/// user-facing collector settings struct (`StatsConfig` is internal; `QF_COLLECTOR` is the only
+/// env knob), so this is a constant rather than a configurable field.
+pub const COLD_PACE_S: u64 = 5;
+const COLD_PACE: StdDuration = StdDuration::from_secs(COLD_PACE_S);
 const RESTART_DELAY: StdDuration = StdDuration::from_secs(5);
 const RESOLVE_EVERY: StdDuration = StdDuration::from_secs(5 * 60);
 const HOURLY_EVERY: StdDuration = StdDuration::from_secs(60 * 60);
@@ -243,16 +248,23 @@ async fn hot_loop(collector: Arc<Collector>) {
     }
 }
 
+/// How long `cold_loop` waits before its next `cold_step` (spec P23): `COLD_PACE` after a sweep,
+/// `IDLE` when nothing was due, `ERROR_PAUSE` after a real (non-fetch) error.
+fn cold_loop_pace(result: &Result<Option<String>, Error>) -> StdDuration {
+    match result {
+        Ok(Some(_)) => COLD_PACE,
+        Ok(None) => IDLE,
+        Err(_) => ERROR_PAUSE,
+    }
+}
+
 async fn cold_loop(collector: Arc<Collector>) {
     loop {
-        match collector.cold_step().await {
-            Ok(Some(_)) => {}
-            Ok(None) => tokio::time::sleep(IDLE).await,
-            Err(e) => {
-                log_error("Collector:Cold", &e);
-                tokio::time::sleep(ERROR_PAUSE).await;
-            }
+        let result = collector.cold_step().await;
+        if let Err(e) = &result {
+            log_error("Collector:Cold", e);
         }
+        tokio::time::sleep(cold_loop_pace(&result)).await;
     }
 }
 
@@ -488,6 +500,40 @@ mod tests {
             assert_eq!(row.try_get::<Option<String>>("", "last_attempt_at").unwrap(), None, "item1 is due again once the breaker closes");
             assert_eq!(c.health.lane_health(Lane::Cold, Utc::now()).errors_last_hour, 0);
         }
+    }
+
+    // `cold_loop` itself is an infinite loop over a real (file-backed) sqlite connection;
+    // driving it under `start_paused` time proved unreliable in practice (pausing time before
+    // the spawned task's db queries ever complete stalls it indefinitely: swept stayed at 0
+    // through 12 simulated seconds with the task neither finishing nor erroring). So the pacing
+    // decision is pulled into the pure `cold_loop_pace` helper below, tested directly, plus an
+    // integration-shaped test that drives the real `cold_step` and checks `cold_loop_pace` makes
+    // the same one-item-at-a-time call `cold_loop` would.
+
+    #[test]
+    fn cold_loop_pace_paces_success_idles_on_none_and_backs_off_on_error() {
+        assert_eq!(cold_loop_pace(&Ok(Some("item1".to_string()))), COLD_PACE, "paces after a sweep");
+        assert_eq!(cold_loop_pace(&Ok(None)), IDLE, "idles when nothing was due");
+        assert_eq!(cold_loop_pace(&Err(Error::new("Test", "boom", "test"))), ERROR_PAUSE, "backs off on a real error");
+    }
+
+    /// Spec P23: the cold lane sweeps one item per `COLD_PACE_S`, not back to back. Drives the
+    /// real `cold_step` three times (3 items due) and checks that `cold_loop` — which sleeps
+    /// `cold_loop_pace(&result)` after every step — would pace every single one of them, not
+    /// just the first.
+    #[tokio::test]
+    async fn cold_step_results_pace_one_item_at_a_time() {
+        let (_dir, conn) = setup().await;
+        store::sync_items(&conn, &[("item1".into(), "slug1".into()), ("item2".into(), "slug2".into()), ("item3".into(), "slug3".into())])
+            .await
+            .unwrap();
+        let c = collector(conn, vec![ok(), ok(), ok()]);
+        for _ in 0..3 {
+            let result = c.cold_step().await;
+            assert_eq!(cold_loop_pace(&result), COLD_PACE, "cold_loop sleeps COLD_PACE after each successful sweep");
+            assert!(result.unwrap().is_some());
+        }
+        assert_eq!(c.health.lane_health(Lane::Cold, Utc::now()).swept_last_hour, 3, "one item per sweep, three sweeps total");
     }
 
     #[tokio::test(start_paused = true)]
