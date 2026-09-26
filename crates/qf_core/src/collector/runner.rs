@@ -155,11 +155,30 @@ impl Collector {
         Ok(None)
     }
 
+    /// Records an order book the trader fetched live as a `trader` sweep (spec P23). Skips it
+    /// when another loop is sweeping the item right now.
+    pub async fn ingest_book(&self, item_id: &str, slug: &str, orders: &[V2Order], expected_interval_s: i64) -> Result<(), Error> {
+        let Some(_claim) = self.claim(item_id) else { return Ok(()) };
+        let target = SweepTarget { item_id: item_id.to_string(), slug: slug.to_string(), last_attempt_at: None };
+        self.record_sweep(&target, Lane::Trader, Ok(orders.to_vec()), Utc::now(), expected_interval_s).await
+    }
+
     async fn sweep(&self, target: &SweepTarget, lane: Lane, expected_interval_s: i64) -> Result<(), Error> {
         let started = Utc::now();
         store::mark_attempt(&self.conn, &target.item_id, started).await?;
-        let result: Result<Vec<V2Order>, FetchError> =
-            fetch_with_retries(self.source.as_ref(), self.limiter, lane, &target.slug).await;
+        let result = fetch_with_retries(self.source.as_ref(), self.limiter, lane, &target.slug).await;
+        self.record_sweep(target, lane, result, started, expected_interval_s).await
+    }
+
+    /// Writes one fetched order book, or its failure, to the sweep tables and the health counters.
+    pub async fn record_sweep(
+        &self,
+        target: &SweepTarget,
+        lane: Lane,
+        result: Result<Vec<V2Order>, FetchError>,
+        started: chrono::DateTime<Utc>,
+        expected_interval_s: i64,
+    ) -> Result<(), Error> {
         match result {
             Ok(orders) => {
                 store::apply_sweep(
@@ -534,6 +553,57 @@ mod tests {
             assert!(result.unwrap().is_some());
         }
         assert_eq!(c.health.lane_health(Lane::Cold, Utc::now()).swept_last_hour, 3, "one item per sweep, three sweeps total");
+    }
+
+    /// Each row as one JSON array string, so whole tables compare with `assert_eq!`.
+    async fn rows(conn: &DatabaseConnection, sql: &str) -> Vec<String> {
+        conn.query_all(crate::collector::stmt(sql, vec![])).await.unwrap().iter().map(|r| r.try_get("", "r").unwrap()).collect()
+    }
+
+    const LIVE_SET: &str =
+        "SELECT json_array(order_id, item_id, sub_type, side, platinum, quantity, user_id) AS r FROM last_seen_orders ORDER BY order_id";
+    const SUMMARIES: &str = "SELECT json_array(item_id, sub_type, min_sell, max_buy, sell_count, buy_count, sell_ingame, buy_ingame,
+                                               top_sells, top_buys) AS r FROM sweep_summary ORDER BY sub_type";
+    const STATE: &str = "SELECT json_array(item_id, expected_interval_s, consecutive_errors, last_swept_at IS NOT NULL,
+                                           last_attempt_at = last_swept_at) AS r FROM sweep_state ORDER BY item_id";
+
+    #[tokio::test]
+    async fn ingested_book_writes_the_same_rows_as_a_hot_sweep() {
+        let (_hot_dir, hot_conn) = setup().await;
+        let hot = collector(hot_conn.clone(), vec![ok()]);
+        hot.set_hot(HashSet::from(["item1".to_string()]));
+        assert_eq!(hot.hot_step().await.unwrap(), Some("item1".to_string()));
+
+        let (_dir, conn) = setup().await;
+        let c = collector(conn.clone(), vec![]);
+        let orders = ok().unwrap();
+        {
+            let _busy = c.claim("item1").unwrap();
+            c.ingest_book("item1", "slug1", &orders, HOT_INTERVAL_S).await.unwrap();
+            assert!(rows(&conn, LIVE_SET).await.is_empty(), "a book for an item being swept is skipped");
+        }
+        c.ingest_book("item1", "slug1", &orders, HOT_INTERVAL_S).await.unwrap();
+
+        for sql in [LIVE_SET, SUMMARIES, STATE] {
+            assert_eq!(rows(&conn, sql).await, rows(&hot_conn, sql).await, "{sql}");
+        }
+        assert!(!rows(&conn, LIVE_SET).await.is_empty());
+        assert_eq!(rows(&conn, "SELECT DISTINCT lane AS r FROM sweep_summary").await, vec!["trader".to_string()]);
+        assert_eq!(c.health.lane_health(Lane::Trader, Utc::now()).swept_last_hour, 1);
+        let snap = c.health.snapshot(Utc::now(), Default::default(), fast_limiter().snapshot());
+        assert_eq!(snap.trader.swept_last_hour, 1);
+        assert_eq!(snap.hot.swept_last_hour + snap.cold.swept_last_hour, 0);
+    }
+
+    #[tokio::test]
+    async fn hot_step_skips_an_item_the_trader_just_ingested() {
+        let (_dir, conn) = setup().await;
+        let source = Arc::new(ScriptedSource::new(vec![ok()]));
+        let c = Collector::new(conn, source.clone(), fast_limiter(), StatsConfig::default());
+        c.set_hot(HashSet::from(["item1".to_string()]));
+        c.ingest_book("item1", "slug1", &ok().unwrap(), 120).await.unwrap();
+        assert_eq!(c.hot_step().await.unwrap(), None, "the trader's book is fresh");
+        assert_eq!(source.calls.load(Ordering::SeqCst), 0, "no request for the ingested item");
     }
 
     #[tokio::test(start_paused = true)]

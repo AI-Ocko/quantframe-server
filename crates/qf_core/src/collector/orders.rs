@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use utils::{get_location, Error};
+use wf_market::{enums::StatusType, types::OrderWithUser};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,6 +82,34 @@ pub fn sub_type_key(
     parts.join(";")
 }
 
+/// The same order as the trader's wf-market client parsed it (spec P23).
+pub fn from_wfm(o: &OrderWithUser) -> V2Order {
+    let order = &o.order;
+    V2Order {
+        id: order.id.clone(),
+        side: order.order_type.to_string(),
+        platinum: order.platinum.into(),
+        quantity: order.quantity.into(),
+        rank: order.subtype.rank,
+        charges: order.subtype.charges,
+        subtype: order.subtype.subtype.clone(),
+        amber_stars: order.subtype.amber_stars,
+        cyan_stars: order.subtype.cyan_stars,
+        visible: order.visible,
+        item_id: order.item_id.clone(),
+        user: V2OrderUser {
+            id: o.user.id.clone(),
+            ingame_name: o.user.name.clone(),
+            status: match o.user.status {
+                StatusType::InGame => "ingame",
+                StatusType::Online => "online",
+                StatusType::Offline => "offline",
+            }
+            .to_string(),
+        },
+    }
+}
+
 #[derive(Deserialize)]
 struct OrdersResponse {
     data: Vec<V2Order>,
@@ -140,6 +169,18 @@ mod tests {
                 assert!(order.side == "sell" || order.side == "buy");
             }
         }
+    }
+
+    #[test]
+    fn from_wfm_matches_the_v2_parse_of_the_same_fixture() {
+        let v2 = parse_orders_response(SMALL).unwrap();
+        let mut json: serde_json::Value = serde_json::from_str(SMALL).unwrap();
+        // wf-market's `UserShort` requires `reputation` (the live API sends it); the fixture omits it.
+        for order in json["data"].as_array_mut().unwrap() {
+            order["user"]["reputation"] = 0.into();
+        }
+        let wfm: Vec<OrderWithUser> = serde_json::from_value(json["data"].take()).unwrap();
+        assert_eq!(wfm.iter().map(from_wfm).collect::<Vec<_>>(), v2);
     }
 
     #[test]

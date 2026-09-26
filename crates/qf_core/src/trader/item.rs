@@ -25,6 +25,9 @@ use crate::{cache::types::CacheTradableItem, enums::TradeMode, send_event, types
 
 static COMPONENT: &str = "Trader:Item:";
 static LOG_FILE: &str = "trader_item.log";
+/// The trader's cycle length handed to the sweep tables as `expected_interval_s` (spec P23). The
+/// engine does not measure its cycles, so this is a fixed hint above the P24 estimate of ~85 s.
+const CYCLE_HINT_S: i64 = 120;
 
 fn comp(suffix: &str) -> String {
     format!("{}{}", COMPONENT, suffix)
@@ -201,6 +204,19 @@ impl ItemTrader {
                 use_fake.then_some(order_path.as_path()),
             )
             .await?;
+            if !use_fake {
+                if let Some(collector) = crate::collector::runner::get() {
+                    let book: Vec<_> =
+                        orders.sell_orders.iter().chain(&orders.buy_orders).map(crate::collector::orders::from_wfm).collect();
+                    if let Err(e) = collector.ingest_book(&item_info.wfm_id, &item_info.wfm_url, &book, CYCLE_HINT_S).await {
+                        warning(
+                            comp("ProcessItem:Ingest"),
+                            format!("Could not record the order book of {}: {}", item_info.wfm_url, e.message),
+                            &LoggerOptions::default(),
+                        );
+                    }
+                }
+            }
 
             orders.filter_by_sub_type(wf_market::types::SubType::from_entity(item_entry.sub_type.clone()), false);
             orders.filter_username(&ctx.username, true);

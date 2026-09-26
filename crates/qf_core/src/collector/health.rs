@@ -21,6 +21,8 @@ pub struct CollectorHealth {
     pub started_at: Option<String>,
     pub hot: LaneHealth,
     pub cold: LaneHealth,
+    /// Order books the trader fetched and handed over (spec P23).
+    pub trader: LaneHealth,
     pub hot_items: usize,
     pub active_items: i64,
     pub inactive_items: i64,
@@ -45,6 +47,7 @@ struct Inner {
     events: VecDeque<Event>,
     last_ok_hot: Option<DateTime<Utc>>,
     last_ok_cold: Option<DateTime<Utc>>,
+    last_ok_trader: Option<DateTime<Utc>>,
     hot_items: usize,
     cold_pass_started_at: Option<DateTime<Utc>>,
     last_cold_pass_seconds: Option<i64>,
@@ -73,7 +76,8 @@ impl HealthTracker {
         if ok {
             match lane {
                 Lane::Hot => inner.last_ok_hot = Some(at),
-                _ => inner.last_ok_cold = Some(at),
+                Lane::Cold => inner.last_ok_cold = Some(at),
+                Lane::Trader => inner.last_ok_trader = Some(at),
             }
         }
         if let Some(error) = error {
@@ -115,7 +119,8 @@ impl HealthTracker {
         let (ok, failed): (Vec<&Event>, Vec<&Event>) = recent.partition(|e| e.ok);
         let last = match lane {
             Lane::Hot => inner.last_ok_hot,
-            _ => inner.last_ok_cold,
+            Lane::Cold => inner.last_ok_cold,
+            Lane::Trader => inner.last_ok_trader,
         };
         LaneHealth { swept_last_hour: ok.len(), errors_last_hour: failed.len(), last_sweep_at: last.map(ts) }
     }
@@ -123,12 +128,14 @@ impl HealthTracker {
     pub fn snapshot(&self, now: DateTime<Utc>, counts: ItemCounts, limiter: LimiterSnapshot) -> CollectorHealth {
         let hot = self.lane_health(Lane::Hot, now);
         let cold = self.lane_health(Lane::Cold, now);
+        let trader = self.lane_health(Lane::Trader, now);
         let inner = self.inner.lock().unwrap();
         CollectorHealth {
             running: inner.started_at.is_some(),
             started_at: inner.started_at.map(ts),
             hot,
             cold,
+            trader,
             hot_items: inner.hot_items,
             active_items: counts.active,
             inactive_items: counts.inactive,
