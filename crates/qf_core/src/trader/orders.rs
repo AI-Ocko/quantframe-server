@@ -267,6 +267,15 @@ impl TradeOrders {
         self.finish_live("Update", result).await
     }
 
+    /// Applies an update to the cached order without sending or logging anything (amendment P24).
+    pub fn update_local(&self, order_id: &str, params: UpdateOrderParams) {
+        if self.in_book(order_id) {
+            self.book.lock().unwrap().update(order_id, params);
+        } else if let Some(client) = &self.live {
+            client.order().cache_orders_mut().update(order_id, params);
+        }
+    }
+
     /// Deletes an order and reports whether it was a simulated or a real delete.
     pub async fn delete(&self, order_id: &str, meta: &WriteMeta) -> Result<Route, Error> {
         if self.in_book(order_id) {

@@ -302,6 +302,11 @@ pub async fn load_orders(
     Ok(live)
 }
 
+/// True when a PATCH with these values would change nothing (amendment P24); an invisible order always needs one.
+pub fn order_unchanged(o: &Order, price: u32, qty: u32, per_trade: Option<u32>) -> bool {
+    o.visible && o.platinum == price && o.quantity == qty && o.per_trade.map(u32::from) == per_trade
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn progress_order(
     component: &str,
@@ -343,6 +348,12 @@ pub async fn progress_order(
             .with_quantity(quantity as u32)
             .with_per_trade(per_trade.map(|pt| pt as u32))
             .with_properties(json!(properties.properties));
+        let cached = orders.cache_orders().get_by_id(&order_id);
+        if cached.is_some_and(|o| order_unchanged(&o, post_price, quantity as u32, params.per_trade)) {
+            orders.update_local(&order_id, params);
+            debug(format!("{}UpdateSkip", component), &format!("Order for item {} unchanged: {}", name, order_id), log_options);
+            return Ok(OperationSet::default());
+        }
         let order = orders.update(&order_id, params, &meta).await.map_err(|e| e.with_location(get_location!()))?;
         info(format!("{}UpdateSuccess", component), &format!("Updated order for item {}: {}", name, order.id), log_options);
         if original_update_string != update_string {
@@ -447,6 +458,18 @@ mod tests {
             updated_at: String::new(),
             properties: Default::default(),
         }
+    }
+
+    #[test]
+    fn order_unchanged_cases() {
+        let o = order("o1", OrderType::Buy, "item1");
+        assert!(order_unchanged(&o, 10, 1, None), "all equal and visible");
+        assert!(!order_unchanged(&o, 11, 1, None), "price differs");
+        assert!(!order_unchanged(&o, 10, 2, None), "quantity differs");
+        assert!(!order_unchanged(&o, 10, 1, Some(1)), "per-trade differs");
+        assert!(!order_unchanged(&Order { per_trade: Some(1), ..o.clone() }, 10, 1, None), "per-trade cleared");
+        assert!(order_unchanged(&Order { per_trade: Some(1), ..o.clone() }, 10, 1, Some(1)), "same per-trade");
+        assert!(!order_unchanged(&Order { visible: false, ..o }, 10, 1, None), "invisible");
     }
 
     #[test]

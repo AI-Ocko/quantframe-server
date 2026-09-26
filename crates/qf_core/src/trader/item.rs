@@ -895,7 +895,9 @@ mod tests {
         let (_dir, ctx) = ctx_with(true, |s| s.live_scraper.items.wts.max_price_drop = 5).await;
         let route = route_for(true, true);
         let stock_id = stock(&ctx, 10, 1).await;
-        seed_order(&ctx, OrderType::Sell, 30, route).await;
+        // Quantity 2 against 1 owned, so the held price still goes out as a PATCH (P24 skips unchanged orders).
+        let params = CreateOrderParams::new_with_subtype("item1", OrderType::Sell, 30, 2, true, None, WFSubType::default());
+        ctx.orders.create(params, route, &WriteMeta::default()).await.unwrap();
         let live = book(&[20, 21], &[5]);
         let mut e = entry("Sell", Some(stock_id), None);
         e.apply_market_info(&live);
@@ -962,6 +964,34 @@ mod tests {
         progress_wish_list(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true)).await.unwrap();
         let last = ctx.orders.dry_log().last().unwrap().clone();
         assert_eq!((last.action.as_str(), last.price), ("create", Some(16)));
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_live_price_is_not_patched() {
+        let (_dir, ctx) = ctx_with(true, |_| {}).await;
+        let route = route_for(true, true);
+        seed_order(&ctx, OrderType::Buy, 17, route).await;
+        let live = book(&[20, 25], &[15, 17]);
+        let mut e = entry("Buy", None, None);
+        e.apply_market_info(&live);
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route).await.unwrap();
+        let log = ctx.orders.dry_log();
+        assert!(log.iter().all(|row| row.action != "update"), "an unchanged order sends no PATCH: {:?}", log);
+        assert_eq!(ctx.orders.cache_orders().buy_orders[0].platinum, 17);
+    }
+
+    #[tokio::test]
+    async fn a_changed_price_is_patched() {
+        let (_dir, ctx) = ctx_with(true, |_| {}).await;
+        let route = route_for(true, true);
+        seed_order(&ctx, OrderType::Buy, 16, route).await;
+        let live = book(&[20, 25], &[15, 17]);
+        let mut e = entry("Buy", None, None);
+        e.apply_market_info(&live);
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route).await.unwrap();
+        let updates: Vec<_> = ctx.orders.dry_log().into_iter().filter(|row| row.action == "update").collect();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].price, Some(17));
     }
 
     fn trader() -> ItemTrader {
