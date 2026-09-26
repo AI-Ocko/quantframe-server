@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use wf_market::gate::{install_gate, GateFuture, RequestGate};
 
-use super::limiter::{self, Lane};
+use super::limiter::{self, Lane, Outcome};
 
 /// Sends every wf-market call (sign-in, /me, orders, websocket setup) through the Trader lane.
 pub struct TraderLaneGate;
@@ -14,7 +14,7 @@ impl RequestGate for TraderLaneGate {
 
     fn on_status(&self, status: u16) {
         if status == 429 {
-            limiter::global().report_429();
+            limiter::global().report(Outcome::RateLimited);
         }
     }
 }

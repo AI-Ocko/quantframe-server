@@ -14,7 +14,7 @@ use utils::{get_location, info, warning, Error, LoggerOptions};
 use super::fetch::{FetchError, MAX_RETRIES};
 use super::orders::sub_type_key;
 use super::{db_err, stmt, ts};
-use crate::market::limiter::{Lane, Limiter};
+use crate::market::limiter::{Lane, Limiter, Outcome};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClosedDay {
@@ -202,7 +202,7 @@ pub(crate) async fn fetch_with_retries(source: &dyn StatisticsSource, limiter: &
             Err(FetchError::NotFound) => return Err(FetchError::NotFound),
             Err(error) => {
                 if error == FetchError::RateLimited {
-                    limiter.report_429();
+                    limiter.report(Outcome::RateLimited);
                 }
                 if retries >= MAX_RETRIES {
                     return Err(error);

@@ -3,14 +3,22 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::Notify;
 use tokio::time::Instant;
+use utils::{info, warning, LoggerOptions};
 
 pub const RATE_PER_SECOND: u32 = 3;
-const BACKOFF_START: Duration = Duration::from_secs(5);
-const BACKOFF_MAX: Duration = Duration::from_secs(60);
-const BACKOFF_RESET_AFTER: Duration = Duration::from_secs(60);
+/// Breaker periods (spec P21); the last one repeats.
+const BREAKER_STEPS: [Duration; 3] =
+    [Duration::from_secs(15 * 60), Duration::from_secs(60 * 60), Duration::from_secs(4 * 60 * 60)];
+const TRIP_AFTER_TRANSPORT_ERRORS: u32 = 5;
+/// A probe that reports nothing within this long counts as failed.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+/// The ladder starts again at 15 min after this long without a trip.
+const LADDER_RESET_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+const LOG: &str = "Market:Breaker";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,6 +34,52 @@ impl Lane {
     }
 }
 
+/// What a warframe.market response (or the lack of one) tells the breaker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Ok,
+    Challenge,
+    RateLimited,
+    TransportError,
+}
+
+/// 429 → RateLimited; ≥ 400 carrying `cf-mitigated: challenge` or an HTML body → Challenge;
+/// any other ≥ 500 → TransportError; everything else (a JSON 4xx included) → Ok.
+pub fn outcome_of(status: u16, headers: &reqwest::header::HeaderMap) -> Outcome {
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
+    if status == 429 {
+        Outcome::RateLimited
+    } else if status >= 400
+        && (header("cf-mitigated").eq_ignore_ascii_case("challenge")
+            || header("content-type").to_ascii_lowercase().starts_with("text/html"))
+    {
+        Outcome::Challenge
+    } else if status >= 500 {
+        Outcome::TransportError
+    } else {
+        Outcome::Ok
+    }
+}
+
+/// `try_acquire` refused: the breaker is open (or its probe is out) until `until`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BreakerOpen {
+    pub until: DateTime<Utc>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BreakerSnapshot {
+    /// closed | open | probing
+    pub state: String,
+    pub reason: Option<String>,
+    pub opened_at: Option<String>,
+    pub until: Option<String>,
+    /// Ladder index of the current or most recent period (0 = 15 min).
+    pub step: u32,
+    pub trips_total: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LimiterSnapshot {
     pub granted_trader: u64,
@@ -34,15 +88,86 @@ pub struct LimiterSnapshot {
     pub waiting: usize,
     pub paused_ms: u64,
     pub rate_limited_total: u64,
+    pub breaker: BreakerSnapshot,
+}
+
+struct Open {
+    reason: String,
+    opened_at: DateTime<Utc>,
+    until: Instant,
+    step: u32,
+    /// When the probe was granted; `None` until the period ends.
+    probe: Option<Instant>,
 }
 
 struct State {
     next_slot: Option<Instant>,
-    pause_until: Option<Instant>,
-    backoff: Duration,
     waiting: [usize; 3],
     granted: [u64; 3],
     rate_limited_total: u64,
+    breaker: Option<Open>,
+    transport_errors_in_row: u32,
+    /// When the breaker last tripped and at which step, for the ladder.
+    last_trip_at: Option<(Instant, u32)>,
+    trips_total: u64,
+}
+
+/// What the breaker lets a request do right now.
+enum Pass {
+    Yes,
+    /// Granting this request makes it the period's probe.
+    Probe,
+    Blocked { until: Instant, reason: String },
+}
+
+impl State {
+    /// Opens the breaker, or reopens it one step higher when it is already open (a failed probe).
+    fn trip(&mut self, now: Instant, reason: String) {
+        let step = match (&self.breaker, self.last_trip_at) {
+            (Some(open), _) => open.step + 1,
+            (None, Some((at, step))) if now < at + LADDER_RESET_AFTER => step + 1,
+            _ => 0,
+        };
+        let period = BREAKER_STEPS[(step as usize).min(BREAKER_STEPS.len() - 1)];
+        let opened_at = self.breaker.as_ref().map_or_else(Utc::now, |open| open.opened_at);
+        warning(
+            LOG,
+            format!(
+                "Market breaker open: {reason}; all warframe.market traffic paused until {}",
+                to_utc(now + period, now).format("%H:%M UTC")
+            ),
+            &LoggerOptions::default(),
+        );
+        self.breaker = Some(Open { reason, opened_at, until: now + period, step, probe: None });
+        self.last_trip_at = Some((now, step));
+        self.transport_errors_in_row = 0;
+        self.trips_total += 1;
+    }
+
+    /// A probe that has not reported within `PROBE_TIMEOUT` counts as failed.
+    fn expire_lost_probe(&mut self, now: Instant) {
+        if let Some(Open { probe: Some(at), .. }) = self.breaker {
+            if now >= at + PROBE_TIMEOUT {
+                self.trip(now, "the probe got no response within 60 s".into());
+            }
+        }
+    }
+
+    fn pass(&mut self, now: Instant) -> Pass {
+        self.expire_lost_probe(now);
+        match &self.breaker {
+            None => Pass::Yes,
+            Some(open) => match open.probe {
+                None if now >= open.until => Pass::Probe,
+                None => Pass::Blocked { until: open.until, reason: open.reason.clone() },
+                Some(at) => Pass::Blocked { until: at + PROBE_TIMEOUT, reason: open.reason.clone() },
+            },
+        }
+    }
+}
+
+fn to_utc(at: Instant, now: Instant) -> DateTime<Utc> {
+    Utc::now() + at.saturating_duration_since(now)
 }
 
 pub struct Limiter {
@@ -80,18 +205,30 @@ impl Limiter {
             interval: Duration::from_secs(1) / rate_per_second.max(1),
             state: Mutex::new(State {
                 next_slot: None,
-                pause_until: None,
-                backoff: BACKOFF_START,
                 waiting: [0; 3],
                 granted: [0; 3],
                 rate_limited_total: 0,
+                breaker: None,
+                transport_errors_in_row: 0,
+                last_trip_at: None,
+                trips_total: 0,
             }),
             notify: Notify::new(),
         }
     }
 
-    /// Waits for a request slot. A lane is served only while no higher lane is waiting.
+    /// Waits for a request slot, through an open breaker if need be. A lane is served only
+    /// while no higher lane is waiting.
     pub async fn acquire(&self, lane: Lane) {
+        let _ = self.wait_for_slot(lane, false).await;
+    }
+
+    /// Like `acquire`, but fails at once while the breaker is open or its probe is out.
+    pub async fn try_acquire(&self, lane: Lane) -> Result<(), BreakerOpen> {
+        self.wait_for_slot(lane, true).await
+    }
+
+    async fn wait_for_slot(&self, lane: Lane, fail_fast: bool) -> Result<(), BreakerOpen> {
         self.state.lock().unwrap().waiting[lane.index()] += 1;
         let mut waiting = Waiting { limiter: self, lane, granted: false };
         loop {
@@ -100,22 +237,30 @@ impl Limiter {
             notified.as_mut().enable();
             let wake_at = {
                 let mut s = self.state.lock().unwrap();
+                let now = Instant::now();
+                let pass = s.pass(now);
+                if let (true, Pass::Blocked { until, reason }) = (fail_fast, &pass) {
+                    return Err(BreakerOpen { until: to_utc(*until, now), reason: reason.clone() });
+                }
                 if s.waiting[..lane.index()].iter().any(|&n| n > 0) {
                     None
                 } else {
-                    let now = Instant::now();
-                    let mut ready = s.next_slot.unwrap_or(now);
-                    if let Some(pause) = s.pause_until {
-                        ready = ready.max(pause);
-                    }
+                    let ready = match pass {
+                        Pass::Blocked { until, .. } => until.max(s.next_slot.unwrap_or(now)),
+                        _ => s.next_slot.unwrap_or(now),
+                    };
                     if ready <= now {
+                        if let (Pass::Probe, Some(open)) = (pass, s.breaker.as_mut()) {
+                            open.probe = Some(now);
+                            info(LOG, "Market breaker probing", &LoggerOptions::default());
+                        }
                         s.next_slot = Some(now + self.interval);
                         s.waiting[lane.index()] -= 1;
                         s.granted[lane.index()] += 1;
                         waiting.granted = true;
                         drop(s);
                         self.notify.notify_waiters();
-                        return;
+                        return Ok(());
                     }
                     Some(ready)
                 }
@@ -132,37 +277,70 @@ impl Limiter {
         }
     }
 
-    /// Called after a 429. Pauses every lane for 5 s, doubling up to 60 s while 429s keep
-    /// arriving within 60 s of the previous pause ending.
-    pub fn report_429(&self) {
-        let now = Instant::now();
+    /// Every warframe.market request reports its outcome once. A block (challenge or 429)
+    /// opens the breaker, or reopens it a step higher when it answers the probe; a normal
+    /// response closes a probing breaker; 5 transport errors in a row trip it. Reports that
+    /// arrive while the breaker is open and no probe is out are stragglers and change nothing.
+    pub fn report(&self, outcome: Outcome) {
         {
             let mut s = self.state.lock().unwrap();
-            s.backoff = match s.pause_until {
-                Some(end) if now < end + BACKOFF_RESET_AFTER && s.rate_limited_total > 0 => {
-                    (s.backoff * 2).min(BACKOFF_MAX)
+            let now = Instant::now();
+            s.expire_lost_probe(now);
+            if outcome == Outcome::RateLimited {
+                s.rate_limited_total += 1;
+            }
+            let probing = s.breaker.as_ref().is_some_and(|open| open.probe.is_some());
+            if s.breaker.is_some() && !probing {
+                return;
+            }
+            match outcome {
+                Outcome::Ok => {
+                    s.transport_errors_in_row = 0;
+                    if let Some(open) = s.breaker.take() {
+                        let minutes = (Utc::now() - open.opened_at).num_minutes();
+                        info(LOG, format!("Market breaker closed after {minutes} min"), &LoggerOptions::default());
+                    }
                 }
-                _ => BACKOFF_START,
-            };
-            s.pause_until = Some(now + s.backoff);
-            s.rate_limited_total += 1;
+                Outcome::Challenge => s.trip(now, "Cloudflare challenge".into()),
+                Outcome::RateLimited => s.trip(now, "HTTP 429 rate limited".into()),
+                Outcome::TransportError if probing => s.trip(now, "the probe failed with a transport error".into()),
+                Outcome::TransportError => {
+                    s.transport_errors_in_row += 1;
+                    if s.transport_errors_in_row >= TRIP_AFTER_TRANSPORT_ERRORS {
+                        s.trip(now, format!("{TRIP_AFTER_TRANSPORT_ERRORS} transport errors in a row"));
+                    }
+                }
+            }
         }
         self.notify.notify_waiters();
     }
 
     pub fn snapshot(&self) -> LimiterSnapshot {
-        let s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap();
         let now = Instant::now();
+        s.expire_lost_probe(now);
+        let open = s.breaker.as_ref();
+        let breaker = BreakerSnapshot {
+            state: match open {
+                None => "closed",
+                Some(Open { probe: None, .. }) => "open",
+                Some(_) => "probing",
+            }
+            .into(),
+            reason: open.map(|o| o.reason.clone()),
+            opened_at: open.map(|o| o.opened_at.to_rfc3339()),
+            until: open.map(|o| to_utc(o.until, now).to_rfc3339()),
+            step: s.last_trip_at.map_or(0, |(_, step)| step),
+            trips_total: s.trips_total,
+        };
         LimiterSnapshot {
             granted_trader: s.granted[Lane::Trader.index()],
             granted_hot: s.granted[Lane::Hot.index()],
             granted_cold: s.granted[Lane::Cold.index()],
             waiting: s.waiting.iter().sum(),
-            paused_ms: s
-                .pause_until
-                .map(|end| end.saturating_duration_since(now).as_millis() as u64)
-                .unwrap_or(0),
+            paused_ms: open.map_or(0, |o| o.until.saturating_duration_since(now).as_millis() as u64),
             rate_limited_total: s.rate_limited_total,
+            breaker,
         }
     }
 }
@@ -210,34 +388,181 @@ mod tests {
         assert_eq!(*order.lock().unwrap(), vec![Lane::Trader, Lane::Hot, Lane::Cold]);
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn a_429_pauses_every_lane_and_backoff_doubles_then_resets() {
-        let limiter = Limiter::new(3);
-        limiter.report_429();
-        let t = Instant::now();
-        limiter.acquire(Lane::Trader).await;
-        assert_eq!(t.elapsed().as_secs(), 5);
+    use reqwest::header::{HeaderMap, HeaderValue};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-        limiter.report_429();
+    const MIN: u64 = 60;
+
+    #[tokio::test(start_paused = true)]
+    async fn challenge_opens_for_15_min_and_probe_success_closes() {
+        let limiter = Limiter::new(3);
+        limiter.report(Outcome::Challenge);
+        let b = limiter.snapshot().breaker;
+        assert_eq!(b.state, "open");
+        assert!(b.reason.is_some() && b.opened_at.is_some() && b.until.is_some());
         let t = Instant::now();
         limiter.acquire(Lane::Cold).await;
-        assert_eq!(t.elapsed().as_secs(), 10);
-
-        tokio::time::advance(Duration::from_secs(61)).await;
-        limiter.report_429();
+        assert_eq!(t.elapsed().as_secs(), 15 * MIN);
+        assert_eq!(limiter.snapshot().breaker.state, "probing");
+        limiter.report(Outcome::Ok);
+        let b = limiter.snapshot().breaker;
+        assert_eq!((b.state.as_str(), b.until, b.trips_total), ("closed", None, 1));
         let t = Instant::now();
-        limiter.acquire(Lane::Hot).await;
-        assert_eq!(t.elapsed().as_secs(), 5);
-        assert_eq!(limiter.snapshot().rate_limited_total, 3);
+        limiter.acquire(Lane::Cold).await;
+        assert!(t.elapsed() <= Duration::from_millis(334));
     }
 
     #[tokio::test(start_paused = true)]
-    async fn backoff_is_capped_at_sixty_seconds() {
+    async fn failed_probes_climb_15m_1h_4h_4h() {
         let limiter = Limiter::new(3);
-        for _ in 0..8 {
-            limiter.report_429();
+        limiter.report(Outcome::Challenge);
+        for (step, minutes) in [15, 60, 240, 240].into_iter().enumerate() {
+            assert_eq!(limiter.snapshot().breaker.step, step as u32);
+            let t = Instant::now();
+            limiter.acquire(Lane::Trader).await;
+            assert_eq!(t.elapsed().as_secs(), minutes * MIN);
+            limiter.report(Outcome::Challenge);
         }
-        assert_eq!(limiter.snapshot().paused_ms, 60_000);
+        assert_eq!(limiter.snapshot().breaker.trips_total, 5);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ladder_resets_after_24h_closed() {
+        let limiter = Limiter::new(3);
+        for minutes in [15, 60] {
+            limiter.report(Outcome::Challenge);
+            let t = Instant::now();
+            limiter.acquire(Lane::Hot).await;
+            assert_eq!(t.elapsed().as_secs(), minutes * MIN);
+            limiter.report(Outcome::Ok);
+        }
+        tokio::time::advance(Duration::from_secs(24 * 60 * MIN)).await;
+        limiter.report(Outcome::Challenge);
+        let t = Instant::now();
+        limiter.acquire(Lane::Hot).await;
+        assert_eq!(t.elapsed().as_secs(), 15 * MIN);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn only_one_probe_per_period() {
+        let limiter = Arc::new(Limiter::new(3));
+        let granted = Arc::new(AtomicUsize::new(0));
+        limiter.report(Outcome::Challenge);
+        for lane in [Lane::Hot, Lane::Cold] {
+            let (limiter, granted) = (limiter.clone(), granted.clone());
+            tokio::spawn(async move {
+                limiter.acquire(lane).await;
+                granted.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+        tokio::time::sleep(Duration::from_secs(15 * MIN + 1)).await;
+        assert_eq!(granted.load(Ordering::SeqCst), 1);
+        tokio::time::sleep(Duration::from_secs(50)).await;
+        assert_eq!(granted.load(Ordering::SeqCst), 1, "second waiter got through before the probe reported");
+        limiter.report(Outcome::Ok);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(granted.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lost_probe_counts_failed_after_60s() {
+        let limiter = Limiter::new(3);
+        limiter.report(Outcome::Challenge);
+        limiter.acquire(Lane::Trader).await; // the probe, never reported
+        let t = Instant::now();
+        limiter.acquire(Lane::Trader).await;
+        assert_eq!(t.elapsed().as_secs(), 60 + 60 * MIN);
+        let b = limiter.snapshot().breaker;
+        assert_eq!((b.state.as_str(), b.step, b.trips_total), ("probing", 1, 2));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn five_transport_errors_trip_and_a_response_resets_the_count() {
+        let limiter = Limiter::new(3);
+        for _ in 0..4 {
+            limiter.report(Outcome::TransportError);
+        }
+        limiter.report(Outcome::Ok);
+        for _ in 0..4 {
+            limiter.report(Outcome::TransportError);
+        }
+        assert_eq!(limiter.snapshot().breaker.state, "closed");
+        limiter.report(Outcome::TransportError);
+        let b = limiter.snapshot().breaker;
+        assert_eq!(b.state, "open");
+        assert!(b.reason.unwrap().contains("transport"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn try_acquire_fails_fast_while_open() {
+        let limiter = Limiter::new(3);
+        limiter.report(Outcome::Challenge);
+        let t = Instant::now();
+        let open = limiter.try_acquire(Lane::Trader).await.unwrap_err();
+        assert_eq!(t.elapsed(), Duration::ZERO);
+        let left = (open.until - Utc::now()).num_seconds();
+        assert!((15 * MIN as i64 - 5..=15 * MIN as i64).contains(&left), "{left}");
+        assert!(!open.reason.is_empty());
+        assert_eq!(limiter.snapshot().waiting, 0);
+
+        tokio::time::sleep(Duration::from_secs(15 * MIN)).await;
+        limiter.try_acquire(Lane::Trader).await.unwrap(); // the probe
+        assert!(limiter.try_acquire(Lane::Trader).await.is_err(), "a second request went out while probing");
+        limiter.report(Outcome::Ok);
+        limiter.try_acquire(Lane::Trader).await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_429_trips() {
+        let limiter = Limiter::new(3);
+        limiter.report(Outcome::RateLimited);
+        let snapshot = limiter.snapshot();
+        assert_eq!(snapshot.breaker.state, "open");
+        assert_eq!(snapshot.rate_limited_total, 1);
+        assert_eq!(snapshot.paused_ms, 15 * MIN * 1000);
+        let t = Instant::now();
+        limiter.acquire(Lane::Cold).await;
+        assert_eq!(t.elapsed().as_secs(), 15 * MIN);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn open_blocks_all_lanes() {
+        let limiter = Arc::new(Limiter::new(3));
+        limiter.report(Outcome::Challenge);
+        for lane in [Lane::Cold, Lane::Hot, Lane::Trader] {
+            let limiter = limiter.clone();
+            tokio::spawn(async move { limiter.acquire(lane).await });
+        }
+        tokio::time::sleep(Duration::from_secs(15 * MIN - 1)).await;
+        let s = limiter.snapshot();
+        assert_eq!((s.granted_trader, s.granted_hot, s.granted_cold, s.waiting), (0, 0, 0, 3));
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let s = limiter.snapshot();
+        assert_eq!((s.granted_trader, s.granted_hot, s.granted_cold), (1, 0, 0));
+    }
+
+    #[test]
+    fn outcome_of_classifies_status_and_headers() {
+        let headers = |pairs: &[(&'static str, &'static str)]| {
+            let mut map = HeaderMap::new();
+            for (k, v) in pairs {
+                map.insert(*k, HeaderValue::from_static(v));
+            }
+            map
+        };
+        let json = headers(&[("content-type", "application/json")]);
+        let html = headers(&[("content-type", "text/html; charset=UTF-8")]);
+        let cf = headers(&[("cf-mitigated", "challenge")]);
+        assert_eq!(outcome_of(200, &json), Outcome::Ok);
+        assert_eq!(outcome_of(200, &html), Outcome::Ok);
+        assert_eq!(outcome_of(404, &json), Outcome::Ok);
+        assert_eq!(outcome_of(403, &html), Outcome::Challenge);
+        assert_eq!(outcome_of(403, &cf), Outcome::Challenge);
+        assert_eq!(outcome_of(503, &html), Outcome::Challenge);
+        assert_eq!(outcome_of(429, &json), Outcome::RateLimited);
+        assert_eq!(outcome_of(429, &html), Outcome::RateLimited);
+        assert_eq!(outcome_of(500, &json), Outcome::TransportError);
+        assert_eq!(outcome_of(502, &HeaderMap::new()), Outcome::TransportError);
     }
 
     #[tokio::test(start_paused = true)]

@@ -1,7 +1,7 @@
 use std::{future::Future, pin::Pin, time::Duration};
 
 use super::orders::{parse_orders_response, V2Order};
-use crate::market::limiter::{Lane, Limiter};
+use crate::market::limiter::{Lane, Limiter, Outcome};
 
 pub const WFM_API_V2: &str = "https://api.warframe.market/v2";
 pub const MAX_RETRIES: u32 = 2;
@@ -82,7 +82,7 @@ pub async fn fetch_with_retries(
             Err(FetchError::NotFound) => return Err(FetchError::NotFound),
             Err(error) => {
                 if error == FetchError::RateLimited {
-                    limiter.report_429();
+                    limiter.report(Outcome::RateLimited);
                 }
                 if retries >= MAX_RETRIES {
                     return Err(error);
