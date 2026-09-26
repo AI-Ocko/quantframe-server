@@ -1005,12 +1005,23 @@ export namespace TauriTypes {
     waiting: number;
     paused_ms: number;
     rate_limited_total: number;
+    rate_per_second: number;
+    breaker: BreakerSnapshot;
+  }
+  export interface BreakerSnapshot {
+    state: string;
+    reason: string | null;
+    opened_at: string | null;
+    until: string | null;
+    step: number;
+    trips_total: number;
   }
   export interface CollectorHealth {
     running: boolean;
     started_at?: string | null;
     hot: CollectorLaneHealth;
     cold: CollectorLaneHealth;
+    trader: CollectorLaneHealth;
     hot_items: number;
     active_items: number;
     inactive_items: number;

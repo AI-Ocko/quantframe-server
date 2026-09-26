@@ -67,7 +67,10 @@ export function CollectorPanel({ isActive }: { isActive?: boolean }) {
   const lanes = [
     { id: "hot", health: data.hot, granted: data.limiter.granted_hot },
     { id: "cold", health: data.cold, granted: data.limiter.granted_cold },
+    { id: "trader", health: data.trader, granted: data.limiter.granted_trader },
   ];
+  const breaker = data.limiter.breaker;
+  const breakerColor = breaker.state === "open" ? "red" : breaker.state === "probing" ? "orange" : "gray";
 
   return (
     <Stack mt="md">
@@ -77,6 +80,17 @@ export function CollectorPanel({ isActive }: { isActive?: boolean }) {
           {t("started_at", { at: when(data.started_at) })}
         </Text>
         {data.limiter.paused_ms > 0 && <Badge color="orange">{t("paused", { seconds: Math.ceil(data.limiter.paused_ms / 1000) })}</Badge>}
+      </Group>
+      <Group>
+        <Badge color={breakerColor}>{t("breaker.badge", { state: breaker.state })}</Badge>
+        {breaker.state !== "closed" && (
+          <Text size="sm" c={breakerColor}>
+            {t("breaker.detail", { reason: breaker.reason ?? "—", until: when(breaker.until) })}
+          </Text>
+        )}
+        <Text size="sm" c="dimmed">
+          {t("breaker.stats", { step: breaker.step, trips: breaker.trips_total, rate: data.limiter.rate_per_second })}
+        </Text>
       </Group>
       {data.last_error && (
         <Alert color="yellow" title={t("last_error")}>
@@ -114,13 +128,6 @@ export function CollectorPanel({ isActive }: { isActive?: boolean }) {
               <Table.Td>{when(lane.health.last_sweep_at)}</Table.Td>
             </Table.Tr>
           ))}
-          <Table.Tr>
-            <Table.Td>{t("lanes.trader")}</Table.Td>
-            <Table.Td>—</Table.Td>
-            <Table.Td>—</Table.Td>
-            <Table.Td>{data.limiter.granted_trader}</Table.Td>
-            <Table.Td>—</Table.Td>
-          </Table.Tr>
         </Table.Tbody>
       </Table>
       <Text size="sm" c="dimmed">

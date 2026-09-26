@@ -2061,6 +2061,11 @@
             "cold": "Cold"
           },
           "footer": "Item list refreshed {{refresh}} · maintenance ran {{maintenance}}",
+          "breaker": {
+            "badge": "Market breaker: {{state}}",
+            "detail": "{{reason}} · until {{until}}",
+            "stats": "Step {{step}} · {{trips}} trips since start · {{rate}} req/s"
+          },
           "backfill": {
             "title": "Historical data",
             "button": "Import 90-day history from warframe.market",
