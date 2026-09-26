@@ -1,5 +1,5 @@
 //! quantframe-server patch: a process-wide gate that every `call_api` request passes.
-//! See PATCHES.md, change 4.
+//! See PATCHES.md, changes 4 and 5.
 
 use std::{
     future::Future,
@@ -7,56 +7,108 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-pub type GateFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+pub type GateFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-pub trait RequestGate: Send + Sync {
-    /// Resolves when the request may be sent.
-    fn acquire(&self) -> GateFuture<'_>;
-    /// Receives the HTTP status of every response.
-    fn on_status(&self, status: u16);
+pub trait Gate: Send + Sync {
+    /// Resolves when the request may be sent; `Err(text)` = do not send, `text` becomes the error content.
+    fn acquire(&self) -> GateFuture<'_, Result<(), String>>;
+    /// Receives every response: its HTTP status and whether it looks like a Cloudflare challenge.
+    fn on_response(&self, status: u16, challenge: bool);
+    /// A request got no response (connect error, timeout, ...).
+    fn on_transport_error(&self);
 }
 
-static GATE: OnceLock<Arc<dyn RequestGate>> = OnceLock::new();
+/// `cf-mitigated: challenge` or a `text/html` content type (the API itself answers JSON).
+pub fn is_challenge(headers: &reqwest::header::HeaderMap) -> bool {
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
+    header("cf-mitigated").eq_ignore_ascii_case("challenge")
+        || header("content-type").to_ascii_lowercase().starts_with("text/html")
+}
+
+static GATE: OnceLock<Arc<dyn Gate>> = OnceLock::new();
 
 /// Installs the gate for every client in this process. Returns `false` if one was already installed.
-pub fn install_gate(gate: Arc<dyn RequestGate>) -> bool {
+pub fn install_gate(gate: Arc<dyn Gate>) -> bool {
     GATE.set(gate).is_ok()
 }
 
-pub(crate) fn installed() -> Option<&'static Arc<dyn RequestGate>> {
+pub(crate) fn installed() -> Option<&'static Arc<dyn Gate>> {
     GATE.get()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{client::Client, enums::ApiVersion};
-    use reqwest::Method;
+    use crate::{client::Client, enums::ApiVersion, errors::ApiError};
+    use reqwest::{
+        header::{HeaderMap, HeaderValue},
+        Method,
+    };
     use std::sync::Mutex;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
 
+    /// The gate is process-wide, so every test shares one recorder and runs one at a time.
     #[derive(Default)]
     struct Recorder {
         acquired: Mutex<usize>,
-        statuses: Mutex<Vec<u16>>,
+        refuse: Mutex<Option<String>>,
+        responses: Mutex<Vec<(u16, bool)>>,
+        transport_errors: Mutex<usize>,
     }
 
-    impl RequestGate for Recorder {
-        fn acquire(&self) -> GateFuture<'_> {
+    impl Gate for Recorder {
+        fn acquire(&self) -> GateFuture<'_, Result<(), String>> {
             Box::pin(async move {
                 *self.acquired.lock().unwrap() += 1;
+                match self.refuse.lock().unwrap().clone() {
+                    Some(text) => Err(text),
+                    None => Ok(()),
+                }
             })
         }
-        fn on_status(&self, status: u16) {
-            self.statuses.lock().unwrap().push(status);
+        fn on_response(&self, status: u16, challenge: bool) {
+            self.responses.lock().unwrap().push((status, challenge));
         }
+        fn on_transport_error(&self) {
+            *self.transport_errors.lock().unwrap() += 1;
+        }
+    }
+
+    static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    static RECORDER: OnceLock<Arc<Recorder>> = OnceLock::new();
+
+    fn recorder() -> Arc<Recorder> {
+        RECORDER
+            .get_or_init(|| {
+                let r = Arc::new(Recorder::default());
+                assert!(install_gate(r.clone()));
+                r
+            })
+            .clone()
+    }
+
+    fn reset(r: &Recorder) {
+        *r.acquired.lock().unwrap() = 0;
+        *r.refuse.lock().unwrap() = None;
+        r.responses.lock().unwrap().clear();
+        *r.transport_errors.lock().unwrap() = 0;
+    }
+
+    async fn probe(addr: std::net::SocketAddr) -> Result<(serde_json::Value, HeaderMap, crate::errors::RequestError), ApiError> {
+        let version = ApiVersion::Custom(format!("http://{}", addr), String::new());
+        Client::new()
+            .call_api::<serde_json::Value>(version, Method::GET, "/probe", "GET:probe", None, None)
+            .await
     }
 
     #[tokio::test]
     async fn every_api_call_passes_the_installed_gate() {
+        let _serial = SERIAL.lock().await;
+        let recorder = recorder();
+        reset(&recorder);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -69,16 +121,63 @@ mod tests {
                 .unwrap();
         });
 
-        let recorder = Arc::new(Recorder::default());
-        assert!(install_gate(recorder.clone()));
-        let client = Client::new();
-        let version = ApiVersion::Custom(format!("http://{}", addr), String::new());
-        let result = client
-            .call_api::<serde_json::Value>(version, Method::GET, "/probe", "GET:probe", None, None)
-            .await;
+        let result = probe(addr).await;
 
-        assert!(result.is_err());
+        assert!(matches!(result, Err(ApiError::TooManyRequests(_))));
         assert_eq!(*recorder.acquired.lock().unwrap(), 1);
-        assert_eq!(*recorder.statuses.lock().unwrap(), vec![429]);
+        assert_eq!(*recorder.responses.lock().unwrap(), vec![(429, false)]);
+        assert_eq!(*recorder.transport_errors.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_closed_gate_returns_request_error_without_sending() {
+        let _serial = SERIAL.lock().await;
+        let recorder = recorder();
+        reset(&recorder);
+        let text = "warframe.market unreachable: breaker open until 14:45 UTC".to_string();
+        *recorder.refuse.lock().unwrap() = Some(text.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let result = probe(addr).await;
+
+        match result {
+            Err(ApiError::RequestError(e)) => assert_eq!(e.content, text),
+            other => panic!("expected RequestError, got {:?}", other.map(|_| ())),
+        }
+        let accepted = tokio::time::timeout(std::time::Duration::from_millis(200), listener.accept()).await;
+        assert!(accepted.is_err(), "the closed gate let a request through");
+        assert!(recorder.responses.lock().unwrap().is_empty());
+        assert_eq!(*recorder.transport_errors.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn transport_error_is_reported() {
+        let _serial = SERIAL.lock().await;
+        let recorder = recorder();
+        reset(&recorder);
+        let addr = TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
+
+        let result = probe(addr).await;
+
+        assert!(matches!(result, Err(ApiError::RequestError(_))));
+        assert_eq!(*recorder.transport_errors.lock().unwrap(), 1);
+        assert!(recorder.responses.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn challenge_responses_are_flagged() {
+        let headers = |pairs: &[(&'static str, &'static str)]| {
+            let mut h = HeaderMap::new();
+            for (k, v) in pairs {
+                h.insert(*k, HeaderValue::from_static(v));
+            }
+            h
+        };
+        assert!(is_challenge(&headers(&[("content-type", "text/html; charset=UTF-8")])));
+        assert!(is_challenge(&headers(&[("cf-mitigated", "challenge"), ("content-type", "application/json")])));
+        assert!(is_challenge(&headers(&[("cf-mitigated", "Challenge")])));
+        assert!(!is_challenge(&headers(&[("content-type", "application/json")])));
+        assert!(!is_challenge(&headers(&[])));
     }
 }

@@ -306,9 +306,13 @@ impl<State: Clone + 'static> Client<State> {
             tokio::time::sleep(std::time::Duration::from_secs_f64(wait_time_sec)).await;
             self.clear_wait_time(key.clone());
         }
-        // quantframe-server patch: shared request budget (PATCHES.md, change 4).
+        // quantframe-server patch: shared request budget and breaker (PATCHES.md, changes 4 and 5).
         if let Some(gate) = crate::gate::installed() {
-            gate.acquire().await;
+            if let Err(text) = gate.acquire().await {
+                error.set_content(text);
+                self.emit_err(&error);
+                return Err(ApiError::RequestError(error));
+            }
         }
         limiter.until_ready().await;
 
@@ -338,7 +342,7 @@ impl<State: Clone + 'static> Client<State> {
                 let headers = resp.headers().clone();
                 let status = resp.status();
                 if let Some(gate) = crate::gate::installed() {
-                    gate.on_status(status.as_u16());
+                    gate.on_response(status.as_u16(), crate::gate::is_challenge(&headers));
                 }
                 error.set_status_code(status.as_u16());
 
@@ -475,6 +479,9 @@ impl<State: Clone + 'static> Client<State> {
                 }
             }
             Err(e) => {
+                if let Some(gate) = crate::gate::installed() {
+                    gate.on_transport_error();
+                }
                 let end = chrono::Utc::now();
                 let mut details = format!("Request failed: {}", e);
                 details.push_str(&format!("\n  URL: {}", url));
