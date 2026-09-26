@@ -66,7 +66,8 @@ where
         let mut refused = false;
         match check().await {
             Ok(n) => processed = Some(n),
-            Err(e) if is_market_refusal(&e) => refused = true,
+            // Checked before classifying: a challenge surfaces as ParsingError/InternalServerError (Critical).
+            Err(e) if is_market_refusal(&e) || blocked() => refused = true,
             Err(mut e) => {
                 e.log_level = classify(&e);
                 let _ = e.log(LOG_FILE);
@@ -211,6 +212,25 @@ mod tests {
         };
         let exit = run_loop(Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)), failing_orders().await, gate_error, CYCLE_PAUSE, IDLE_PAUSE, || false).await;
         assert_eq!(exit, EngineExit::MarketBlocked);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_challenged_request_stops_market_blocked_not_critical() {
+        // The client maps a 403 challenge to ParsingError (Critical); the breaker trips during the call.
+        let tripped = Arc::new(AtomicBool::new(false));
+        let check = {
+            let tripped = tripped.clone();
+            move || {
+                tripped.store(true, Ordering::SeqCst);
+                async { Err(wfm_error("ParsingError")) }
+            }
+        };
+        let orders = Arc::new(TradeOrders::new(None, None, true));
+        let running = Arc::new(AtomicBool::new(true));
+        let exit = run_loop(running.clone(), Arc::new(AtomicBool::new(false)), orders.clone(), check, CYCLE_PAUSE, IDLE_PAUSE, || tripped.load(Ordering::SeqCst)).await;
+        assert_eq!(exit, EngineExit::MarketBlocked);
+        assert_eq!(orders.consecutive_failures(), 0);
+        assert!(!running.load(Ordering::SeqCst));
     }
 
     #[tokio::test(start_paused = true)]

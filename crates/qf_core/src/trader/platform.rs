@@ -66,8 +66,8 @@ impl Platform for LivePlatform {
 
     /// Open or probing both count: a probe is one request the trader must not race (amendment P21).
     fn market_block(&self) -> Option<String> {
-        let breaker = limiter::global().snapshot().breaker;
-        (breaker.state != "closed").then(|| until_text(breaker.until.as_deref()))
+        let limiter = limiter::global();
+        limiter.is_blocked().then(|| until_text(limiter.snapshot().breaker.until.as_deref()))
     }
 
     fn spawn_engine(&self, dry_run: bool, running: Arc<AtomicBool>) -> JoinHandle<EngineExit> {
@@ -87,9 +87,7 @@ impl Platform for LivePlatform {
                     }
                 }
             };
-            engine::run_loop(running, just_started, orders, check, engine::CYCLE_PAUSE, engine::IDLE_PAUSE, || {
-                limiter::global().snapshot().breaker.state != "closed"
-            })
+            engine::run_loop(running, just_started, orders, check, engine::CYCLE_PAUSE, engine::IDLE_PAUSE, || limiter::global().is_blocked())
             .await
         })
     }

@@ -302,9 +302,9 @@ pub async fn load_orders(
     Ok(live)
 }
 
-/// True when a PATCH with these values would change nothing (amendment P24); an invisible order always needs one.
+/// True when a PATCH with these values would change nothing (amendment P24); an invisible order always needs one. A `None` per-trade is omitted from the PATCH, so it changes nothing.
 pub fn order_unchanged(o: &Order, price: u32, qty: u32, per_trade: Option<u32>) -> bool {
-    o.visible && o.platinum == price && o.quantity == qty && o.per_trade.map(u32::from) == per_trade
+    o.visible && o.platinum == price && o.quantity == qty && (per_trade.is_none() || o.per_trade.map(u32::from) == per_trade)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -467,7 +467,8 @@ mod tests {
         assert!(!order_unchanged(&o, 11, 1, None), "price differs");
         assert!(!order_unchanged(&o, 10, 2, None), "quantity differs");
         assert!(!order_unchanged(&o, 10, 1, Some(1)), "per-trade differs");
-        assert!(!order_unchanged(&Order { per_trade: Some(1), ..o.clone() }, 10, 1, None), "per-trade cleared");
+        assert!(order_unchanged(&Order { per_trade: Some(1), ..o.clone() }, 10, 1, None), "params None leave per-trade as is");
+        assert!(!order_unchanged(&Order { per_trade: Some(1), ..o.clone() }, 10, 1, Some(2)), "per-trade changed");
         assert!(order_unchanged(&Order { per_trade: Some(1), ..o.clone() }, 10, 1, Some(1)), "same per-trade");
         assert!(!order_unchanged(&Order { visible: false, ..o }, 10, 1, None), "invisible");
     }

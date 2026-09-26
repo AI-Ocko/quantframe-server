@@ -334,6 +334,13 @@ impl Limiter {
         self.notify.notify_waiters();
     }
 
+    /// True while the breaker is open or probing; the same state `snapshot().breaker.state` reports.
+    pub fn is_blocked(&self) -> bool {
+        let mut s = self.state.lock().unwrap();
+        s.expire_lost_probe(Instant::now());
+        s.breaker.is_some()
+    }
+
     pub fn snapshot(&self) -> LimiterSnapshot {
         let mut s = self.state.lock().unwrap();
         let now = Instant::now();
@@ -464,14 +471,17 @@ mod tests {
         limiter.report(Outcome::Challenge);
         let b = limiter.snapshot().breaker;
         assert_eq!(b.state, "open");
+        assert!(limiter.is_blocked());
         assert!(b.reason.is_some() && b.opened_at.is_some() && b.until.is_some());
         let t = Instant::now();
         limiter.acquire(Lane::Cold).await;
         assert_eq!(t.elapsed().as_secs(), 15 * MIN);
         assert_eq!(limiter.snapshot().breaker.state, "probing");
+        assert!(limiter.is_blocked());
         limiter.report(Outcome::Ok);
         let b = limiter.snapshot().breaker;
         assert_eq!((b.state.as_str(), b.until, b.trips_total), ("closed", None, 1));
+        assert!(!limiter.is_blocked());
         let t = Instant::now();
         limiter.acquire(Lane::Cold).await;
         assert!(t.elapsed() <= Duration::from_millis(334));
