@@ -15,3 +15,6 @@ pub use price_source_mode::*;
 
 pub mod profit_basis;
 pub use profit_basis::*;
+
+pub mod candidate_ranking;
+pub use candidate_ranking::*;

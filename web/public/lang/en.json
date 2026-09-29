@@ -1399,6 +1399,14 @@
                     "error": "Invalid max buy candidates",
                     "tooltip": "How many buy candidates the trader works per cycle, busiest first. -1 removes the limit, as in the desktop app. Each candidate costs an order-book fetch and an order rewrite per cycle."
                   },
+                  "candidate_ranking": {
+                    "label": "Candidate Ranking",
+                    "tooltip": "Which buy candidates make the Max Buy Candidates cut. Expected profit: profit times daily volume, with volume counted up to 50 a day. Volume: busiest first, the old order.",
+                    "options": {
+                      "expected_profit": "Expected profit",
+                      "volume": "Volume"
+                    }
+                  },
                   "profit_threshold": {
                     "label": "Profit Threshold",
                     "placeholder": "Profit Threshold",

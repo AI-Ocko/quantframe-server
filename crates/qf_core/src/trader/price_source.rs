@@ -15,11 +15,13 @@ use crate::collector::orders::sub_type_key;
 use crate::collector::stats::{ItemStats, StatsConfig};
 use crate::collector::trade_tax;
 use crate::collector::{db_err, stmt};
-use crate::enums::{PriceSourceMode, ProfitBasis, TradeMode};
+use crate::enums::{CandidateRanking, PriceSourceMode, ProfitBasis, TradeMode};
 use crate::trader::blend::{blend, Effective};
 use crate::utils::modules::states;
 
 pub const MAX_BUY_CANDIDATES: usize = 150;
+/// spec §25 P26: trades a day one order per item can capture; volume above it adds nothing to the rank.
+pub const RANK_VOLUME_CAP: f64 = 50.0;
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ItemPriceInfo {
@@ -243,10 +245,14 @@ pub async fn all_item_stats(conn: &DatabaseConnection) -> Result<Vec<ItemStats>,
 }
 
 /// Port of upstream `helpers::get_interesting_items` (amendment C2): the volume, profit and
-/// average-price filters apply; by volume descending, at most `wtb.max_buy_candidates`.
+/// average-price filters apply; ranked by `wtb.candidate_ranking` (spec §25 P26), at most `wtb.max_buy_candidates`.
 pub fn get_interesting_items(settings: &ItemSettings, prices: &dyn PriceSource) -> Vec<ItemPriceInfo> {
+    top_candidates(filtered_items(settings, prices), settings, settings.wtb.candidate_ranking)
+}
+
+fn filtered_items(settings: &ItemSettings, prices: &dyn PriceSource) -> Vec<ItemPriceInfo> {
     let wtb = &settings.wtb;
-    let mut items: Vec<ItemPriceInfo> = prices
+    prices
         .all()
         .into_iter()
         .filter(|i| is_disabled(wtb.volume_threshold) || i.volume > wtb.volume_threshold as f64)
@@ -260,18 +266,63 @@ pub fn get_interesting_items(settings: &ItemSettings, prices: &dyn PriceSource) 
             (Some(rank), Some(max)) => rank >= max,
             _ => true,
         })
-        .collect();
+        .collect()
+}
+
+/// The sort key, higher first (spec §25 P26). Under `Volume` it is the volume, so the order is exactly the pre-P26 one.
+pub fn rank_key(item: &ItemPriceInfo, ranking: CandidateRanking) -> f64 {
+    match ranking {
+        CandidateRanking::ExpectedProfit => item.profit * item.volume.min(RANK_VOLUME_CAP),
+        CandidateRanking::Volume => item.volume,
+    }
+}
+
+/// Sorts by `rank_key`, then volume, then uuid, and applies the `max_buy_candidates` cut.
+fn top_candidates(mut items: Vec<ItemPriceInfo>, settings: &ItemSettings, ranking: CandidateRanking) -> Vec<ItemPriceInfo> {
     items.sort_by(|a, b| {
-        b.volume
-            .partial_cmp(&a.volume)
+        rank_key(b, ranking)
+            .partial_cmp(&rank_key(a, ranking))
             .unwrap_or(Ordering::Equal)
+            .then_with(|| b.volume.partial_cmp(&a.volume).unwrap_or(Ordering::Equal))
             .then_with(|| a.uuid.cmp(&b.uuid))
     });
     // spec §25 P17: the limit is a setting; -1 lifts it, as the desktop app has none.
-    if !is_disabled(wtb.max_buy_candidates) {
-        items.truncate(wtb.max_buy_candidates.max(0) as usize);
+    let limit = settings.wtb.max_buy_candidates;
+    if !is_disabled(limit) {
+        items.truncate(limit.max(0) as usize);
     }
     items
+}
+
+/// The two rankings side by side on the same filtered items (spec §25 P26), for the trader-start log line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RankingComparison {
+    /// Candidates after the cut (both lists hold the same number).
+    pub candidates: usize,
+    /// In the expected-profit list but not the volume list.
+    pub entered: usize,
+    /// In the volume list but not the expected-profit list.
+    pub left: usize,
+    /// Summed `profit × min(volume, cap)` of the expected-profit list, rounded.
+    pub expected_profit_new: i64,
+    /// The same sum over the volume list.
+    pub expected_profit_old: i64,
+}
+
+pub fn compare_rankings(settings: &ItemSettings, prices: &dyn PriceSource) -> RankingComparison {
+    let items = filtered_items(settings, prices);
+    let new = top_candidates(items.clone(), settings, CandidateRanking::ExpectedProfit);
+    let old = top_candidates(items, settings, CandidateRanking::Volume);
+    let uuids = |list: &[ItemPriceInfo]| list.iter().map(|i| i.uuid.clone()).collect::<HashSet<_>>();
+    let (new_ids, old_ids) = (uuids(&new), uuids(&old));
+    let profit = |list: &[ItemPriceInfo]| list.iter().map(|i| rank_key(i, CandidateRanking::ExpectedProfit)).sum::<f64>().round() as i64;
+    RankingComparison {
+        candidates: new.len(),
+        entered: new_ids.difference(&old_ids).count(),
+        left: old_ids.difference(&new_ids).count(),
+        expected_profit_new: profit(&new),
+        expected_profit_old: profit(&old),
+    }
 }
 
 /// Buy-candidate item ids for the collector hot set (amendment C3).
@@ -342,6 +393,7 @@ mod tests {
             stats("d", "", 40.0, 20.0, 50.0),
         ]);
         let mut settings = ItemSettings::default();
+        settings.wtb.candidate_ranking = CandidateRanking::Volume;
         settings.wtb.volume_threshold = 15;
         settings.wtb.profit_threshold = 10;
         settings.wtb.avg_price_cap = 600;
@@ -435,5 +487,82 @@ mod tests {
 
         settings.wtb.max_buy_candidates = 0;
         assert!(get_interesting_items(&settings, &prices).is_empty(), "0 yields no candidates");
+    }
+
+    fn ids(items: Vec<ItemPriceInfo>) -> Vec<String> {
+        items.into_iter().map(|i| i.wfm_id).collect()
+    }
+
+    /// Every filter off except the limit, so only the ranking decides.
+    fn open_settings(limit: i64, ranking: CandidateRanking) -> ItemSettings {
+        let mut settings = ItemSettings::default();
+        settings.wtb.volume_threshold = -1;
+        settings.wtb.profit_threshold = -1;
+        settings.wtb.avg_price_cap = -1;
+        settings.wtb.max_buy_candidates = limit;
+        settings.wtb.candidate_ranking = ranking;
+        settings
+    }
+
+    /// spec §25 P26: 20 a day at 60 p beats 200 a day at 5 p.
+    #[test]
+    fn expected_profit_ranking_admits_a_high_spread_item() {
+        let prices = source(vec![stats("thin", "", 200.0, 5.0, 100.0), stats("spread", "", 20.0, 60.0, 100.0)]);
+        let settings = open_settings(1, CandidateRanking::default());
+        assert_eq!(ids(get_interesting_items(&settings, &prices)), vec!["spread"]);
+    }
+
+    #[test]
+    fn volume_ranking_is_unchanged() {
+        let prices = source(vec![
+            stats("thin", "", 200.0, 5.0, 100.0),
+            stats("spread", "", 20.0, 60.0, 100.0),
+            stats("b", "", 80.0, 30.0, 100.0),
+            stats("a", "", 80.0, 1.0, 100.0),
+        ]);
+        let settings = open_settings(1, CandidateRanking::Volume);
+        assert_eq!(ids(get_interesting_items(&settings, &prices)), vec!["thin"]);
+        let settings = open_settings(-1, CandidateRanking::Volume);
+        assert_eq!(ids(get_interesting_items(&settings, &prices)), vec!["thin", "a", "b", "spread"], "volume desc, then uuid; profit plays no part");
+    }
+
+    #[test]
+    fn volume_is_capped_at_50_in_the_rank_key() {
+        let item = |volume: f64| ItemPriceInfo { volume, profit: 10.0, ..Default::default() };
+        assert_eq!(RANK_VOLUME_CAP, 50.0);
+        assert_eq!(rank_key(&item(20.0), CandidateRanking::ExpectedProfit), 200.0);
+        assert_eq!(rank_key(&item(50.0), CandidateRanking::ExpectedProfit), 500.0);
+        assert_eq!(rank_key(&item(500.0), CandidateRanking::ExpectedProfit), 500.0, "one order per item captures no more than 50 a day");
+        assert_eq!(rank_key(&item(500.0), CandidateRanking::Volume), 500.0);
+    }
+
+    #[test]
+    fn ties_break_by_volume_then_uuid() {
+        // Every key is 500: 10 p at a capped 50, or 20 p at 25.
+        let prices = source(vec![
+            stats("d", "", 25.0, 20.0, 100.0),
+            stats("b", "", 100.0, 10.0, 100.0),
+            stats("c", "", 60.0, 10.0, 100.0),
+            stats("a", "", 100.0, 10.0, 100.0),
+        ]);
+        let settings = open_settings(-1, CandidateRanking::ExpectedProfit);
+        assert_eq!(ids(get_interesting_items(&settings, &prices)), vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn comparison_counts_entries_and_profit() {
+        let prices = source(vec![
+            stats("thin1", "", 200.0, 5.0, 100.0),  // 250
+            stats("thin2", "", 150.0, 5.0, 100.0),  // 250
+            stats("spread1", "", 20.0, 60.0, 100.0), // 1 200
+            stats("spread2", "", 30.0, 30.5, 100.0), // 915
+            stats("low", "", 10.0, 2.0, 100.0),     // 20
+        ]);
+        let settings = open_settings(2, CandidateRanking::Volume);
+        let c = compare_rankings(&settings, &prices);
+        assert_eq!(c, RankingComparison { candidates: 2, entered: 2, left: 2, expected_profit_new: 2115, expected_profit_old: 500 }, "the active setting does not change the comparison");
+        let c = compare_rankings(&open_settings(-1, CandidateRanking::ExpectedProfit), &prices);
+        assert_eq!((c.candidates, c.entered, c.left), (5, 0, 0), "without a limit both lists hold everything");
+        assert_eq!(c.expected_profit_new, c.expected_profit_old);
     }
 }

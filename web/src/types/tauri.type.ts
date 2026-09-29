@@ -150,6 +150,7 @@ export namespace TauriTypes {
   }
   export interface ItemWtbSettings {
     min_sma: number;
+    candidate_ranking: "expected_profit" | "volume";
     min_profit: number;
     max_price_drop: number;
     min_listings_below: number;

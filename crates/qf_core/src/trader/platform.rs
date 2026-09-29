@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 use service::sea_orm::DatabaseConnection;
 use tokio::task::JoinHandle;
-use utils::{error, Error, LoggerOptions};
+use utils::{error, info, Error, LoggerOptions};
 use wf_market::enums::OrderType;
 
 use super::controller::{BoxFuture, Platform, TraderStatus};
@@ -16,9 +16,11 @@ use super::engine::{self, EngineExit};
 use super::item::ItemTrader;
 use super::lifecycle::{LifecycleState, StopReason};
 use super::orders::TradeOrders;
+use super::price_source::{compare_rankings, StatsPriceSource};
 use super::session::{self, SessionSnapshot};
 use super::TradeContext;
 use crate::collector::ts;
+use crate::enums::CandidateRanking;
 use crate::helper_link::presence::{self, HelperSnapshot};
 use crate::market::limiter;
 use crate::types::UIEvent;
@@ -30,6 +32,33 @@ fn until_text(until: Option<&str>) -> String {
     until
         .and_then(|u| DateTime::parse_from_rfc3339(u).ok())
         .map_or_else(|| "the breaker closes".into(), |u| u.with_timezone(&Utc).format("%H:%M UTC").to_string())
+}
+
+/// spec §25 P26: once per trader start, how the two candidate rankings differ on the live prices.
+async fn log_candidate_ranking(conn: &DatabaseConnection) {
+    const C: &str = "Trader:Ranking";
+    let loaded = async {
+        let app = states::app_state()?;
+        let prices = StatsPriceSource::load(conn, &states::cache_client()?).await?;
+        let items = &app.settings.live_scraper.items;
+        Ok::<_, Error>((items.wtb.candidate_ranking, compare_rankings(items, &prices)))
+    };
+    match loaded.await {
+        Ok((ranking, c)) => info(
+            C,
+            format!(
+                "Candidate ranking {}: {} candidates; expected_profit ranking has {} entered and {} left versus volume ranking; expected profit {} vs {} per day",
+                if ranking == CandidateRanking::Volume { "volume" } else { "expected_profit" },
+                c.candidates,
+                c.entered,
+                c.left,
+                c.expected_profit_new,
+                c.expected_profit_old
+            ),
+            &LoggerOptions::default(),
+        ),
+        Err(e) => error(C, format!("Could not compare the candidate rankings: {}", e.message), &LoggerOptions::default()),
+    }
 }
 
 pub struct LivePlatform {
@@ -73,6 +102,7 @@ impl Platform for LivePlatform {
     fn spawn_engine(&self, dry_run: bool, running: Arc<AtomicBool>) -> JoinHandle<EngineExit> {
         let conn = self.conn.clone();
         tokio::spawn(async move {
+            log_candidate_ranking(&conn).await;
             let live = states::try_app_state().map(|app| app.wfm_client);
             let orders = Arc::new(TradeOrders::new(live, Some(conn.clone()), dry_run));
             let just_started = Arc::new(AtomicBool::new(true));

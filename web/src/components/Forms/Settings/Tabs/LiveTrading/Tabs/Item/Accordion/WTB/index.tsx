@@ -1,7 +1,7 @@
 import { TauriTypes } from "$types";
 import { TooltipIcon } from "@components/Shared/TooltipIcon";
 import { useTranslateForms } from "@hooks/useTranslate.hook";
-import { Box, Group, NumberInput } from "@mantine/core";
+import { Box, Group, NumberInput, Select } from "@mantine/core";
 import { UseFormReturnType } from "@mantine/form";
 
 export type WTBItemAccordionProps = {
@@ -37,6 +37,18 @@ export const WTBItemAccordion = ({ form }: WTBItemAccordionProps) => {
           rightSection={<TooltipIcon label={useTranslateFormFields("max_buy_candidates.tooltip")} />}
           radius="md"
           {...form.getInputProps(getFieldPath("max_buy_candidates"))}
+        />
+        <Select
+          label={useTranslateFormFields("candidate_ranking.label")}
+          allowDeselect={false}
+          data={[
+            { value: "expected_profit", label: useTranslateFormFields("candidate_ranking.options.expected_profit") },
+            { value: "volume", label: useTranslateFormFields("candidate_ranking.options.volume") },
+          ]}
+          rightSection={<TooltipIcon label={useTranslateFormFields("candidate_ranking.tooltip")} />}
+          radius="md"
+          value={form.values.live_scraper.items.wtb.candidate_ranking}
+          onChange={(value) => form.setFieldValue(getFieldPath("candidate_ranking"), value ?? "expected_profit")}
         />
         <NumberInput
           label={useTranslateFormFields("profit_threshold.label")}
