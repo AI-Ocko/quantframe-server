@@ -1,6 +1,5 @@
 //! Trader prices from the collector's `item_stats` (spec §5.5 `PriceSource`, amendment C2).
 
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
@@ -281,9 +280,8 @@ pub fn rank_key(item: &ItemPriceInfo, ranking: CandidateRanking) -> f64 {
 fn top_candidates(mut items: Vec<ItemPriceInfo>, settings: &ItemSettings, ranking: CandidateRanking) -> Vec<ItemPriceInfo> {
     items.sort_by(|a, b| {
         rank_key(b, ranking)
-            .partial_cmp(&rank_key(a, ranking))
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| b.volume.partial_cmp(&a.volume).unwrap_or(Ordering::Equal))
+            .total_cmp(&rank_key(a, ranking))
+            .then_with(|| b.volume.total_cmp(&a.volume))
             .then_with(|| a.uuid.cmp(&b.uuid))
     });
     // spec §25 P17: the limit is a setting; -1 lifts it, as the desktop app has none.
@@ -538,15 +536,16 @@ mod tests {
 
     #[test]
     fn ties_break_by_volume_then_uuid() {
-        // Every key is 500: 10 p at a capped 50, or 20 p at 25.
+        // Every key is 500: 10 p at a capped 50 or more, or 20 p at 25. Uuids run against volume,
+        // so only the volume tie-break puts b first and a last; c and d tie on volume too, so uuid decides.
         let prices = source(vec![
-            stats("d", "", 25.0, 20.0, 100.0),
+            stats("a", "", 25.0, 20.0, 100.0),
+            stats("d", "", 60.0, 10.0, 100.0),
             stats("b", "", 100.0, 10.0, 100.0),
             stats("c", "", 60.0, 10.0, 100.0),
-            stats("a", "", 100.0, 10.0, 100.0),
         ]);
         let settings = open_settings(-1, CandidateRanking::ExpectedProfit);
-        assert_eq!(ids(get_interesting_items(&settings, &prices)), vec!["a", "b", "c", "d"]);
+        assert_eq!(ids(get_interesting_items(&settings, &prices)), vec!["b", "c", "d", "a"]);
     }
 
     #[test]
