@@ -1,10 +1,13 @@
 use std::{
     collections::{HashMap, HashSet},
+    future::{poll_fn, Future},
+    pin::{pin, Pin},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
+    task::{Context, Poll},
 };
 
 use chrono::{DateTime, Utc};
@@ -58,6 +61,47 @@ fn sell_backlog(orders: &TradeOrders, entries: &[ItemEntry], route_of: impl Fn(&
                 && orders.find_order(&e.wfm_id, &SubTypeExt::from_entity(e.sub_type.clone()), OrderType::Sell, route).is_none()
         })
         .count()
+}
+
+/// A book fetch started ahead of its entry (spec P27): polled while the entry before it is processed,
+/// it keeps its result until its own entry takes it. Dropping it cancels the request.
+struct Prefetch<Fut: Future> {
+    index: usize,
+    fut: Option<Pin<Box<Fut>>>,
+    out: Option<Fut::Output>,
+}
+
+impl<Fut: Future> Prefetch<Fut> {
+    fn start(index: usize, fut: Fut) -> Self {
+        Self { index, fut: Some(Box::pin(fut)), out: None }
+    }
+
+    fn poll_progress(&mut self, cx: &mut Context<'_>) {
+        if let Some(Poll::Ready(out)) = self.fut.as_mut().map(|f| f.as_mut().poll(cx)) {
+            self.out = Some(out);
+            self.fut = None;
+        }
+    }
+
+    async fn finish(mut self) -> Fut::Output {
+        poll_fn(|cx| {
+            self.poll_progress(cx);
+            self.out.take().map_or(Poll::Pending, Poll::Ready)
+        })
+        .await
+    }
+}
+
+/// Runs `work` while polling the pending prefetch on the same task, so the next book is fetched meanwhile.
+async fn with_prefetch<T, Fut: Future>(work: impl Future<Output = T>, prefetch: &mut Option<Prefetch<Fut>>) -> T {
+    let mut work = pin!(work);
+    poll_fn(|cx| {
+        if let Some(p) = prefetch.as_mut() {
+            p.poll_progress(cx);
+        }
+        work.as_mut().poll(cx)
+    })
+    .await
 }
 
 pub struct ItemTrader {
@@ -170,7 +214,22 @@ impl ItemTrader {
         self.process_items(interesting_items, ctx).await
     }
 
-    async fn process_items(&self, mut interesting_items: Vec<ItemEntry>, ctx: &TradeContext) -> Result<usize, Error> {
+    async fn process_items(&self, interesting_items: Vec<ItemEntry>, ctx: &TradeContext) -> Result<usize, Error> {
+        let use_fake = ctx.settings.debugging.live_scraper.fake_orders;
+        let fetch = |url: &str, item_url: &str| {
+            let (url, order_path) =
+                (url.to_string(), PathBuf::from(utils::get_base_path()).join("fake_orders").join(format!("order_{}.json", item_url)));
+            async move { load_orders(&comp("ProcessItem:LoadOrders:"), &ctx.orders, &url, use_fake.then_some(order_path.as_path())).await }
+        };
+        self.process_items_with(interesting_items, ctx, fetch).await
+    }
+
+    /// `process_items` with the order-book fetch injected (`fetch(entry url, item url)`), so tests can observe it (spec P27).
+    async fn process_items_with<F, Fut>(&self, mut interesting_items: Vec<ItemEntry>, ctx: &TradeContext, fetch: F) -> Result<usize, Error>
+    where
+        F: Fn(&str, &str) -> Fut,
+        Fut: Future<Output = Result<OrderList<OrderWithUser>, Error>>,
+    {
         let use_fake = ctx.settings.debugging.live_scraper.fake_orders;
         let mut current_index = 1;
         let existing_buy_order_ids: HashSet<String> =
@@ -184,7 +243,9 @@ impl ItemTrader {
         let total = interesting_items.len();
         let mut interrupted = false;
 
-        for item_entry in interesting_items.iter_mut() {
+        let urls: Vec<String> = interesting_items.iter().map(|e| e.wfm_url.clone()).collect();
+        let mut prefetch: Option<Prefetch<Fut>> = None;
+        for (k, item_entry) in interesting_items.iter_mut().enumerate() {
             if self.should_stop(ctx) {
                 warning(comp("ProcessItem"), "Trader is not running or user is banned, stopping processing.", &LoggerOptions::default());
                 interrupted = true;
@@ -211,66 +272,71 @@ impl ItemTrader {
                 })),
             );
 
-            let order_path = PathBuf::from(utils::get_base_path())
-                .join("fake_orders")
-                .join(format!("order_{}.json", item_info.wfm_url));
-            let mut orders = load_orders(
-                &comp("ProcessItem:LoadOrders:"),
-                &ctx.orders,
-                &item_entry.wfm_url,
-                use_fake.then_some(order_path.as_path()),
-            )
-            .await?;
-            if !use_fake {
-                if let Some(collector) = crate::collector::runner::get() {
-                    let book: Vec<_> =
-                        orders.sell_orders.iter().chain(&orders.buy_orders).map(crate::collector::orders::from_wfm).collect();
-                    if let Err(e) = collector.ingest_book(&item_info.wfm_id, &item_info.wfm_url, &book, CYCLE_HINT_S).await {
-                        warning(
-                            comp("ProcessItem:Ingest"),
-                            format!("Could not record the order book of {}: {}", item_info.wfm_url, e.message),
-                            &LoggerOptions::default(),
-                        );
+            // Spec P27: this entry's book was fetched while the one before it was processed; the next one is
+            // fetched while this one is. An entry the cache cannot resolve is skipped by both, as by the loop.
+            let current = match prefetch.take() {
+                Some(p) if p.index == k => p,
+                _ => Prefetch::start(k, fetch(&item_entry.wfm_url, &item_info.wfm_url)),
+            };
+            prefetch = (k + 1..urls.len()).find_map(|j| {
+                let next = ctx.cache.tradable_item().get_by(&urls[j]).ok()?;
+                Some(Prefetch::start(j, fetch(&urls[j], &next.wfm_url)))
+            });
+            let entry = async {
+                let mut orders = current.finish().await?;
+                if !use_fake {
+                    if let Some(collector) = crate::collector::runner::get() {
+                        let book: Vec<_> =
+                            orders.sell_orders.iter().chain(&orders.buy_orders).map(crate::collector::orders::from_wfm).collect();
+                        if let Err(e) = collector.ingest_book(&item_info.wfm_id, &item_info.wfm_url, &book, CYCLE_HINT_S).await {
+                            warning(
+                                comp("ProcessItem:Ingest"),
+                                format!("Could not record the order book of {}: {}", item_info.wfm_url, e.message),
+                                &LoggerOptions::default(),
+                            );
+                        }
                     }
                 }
-            }
 
-            orders.filter_by_sub_type(wf_market::types::SubType::from_entity(item_entry.sub_type.clone()), false);
-            orders.filter_username(&ctx.username, true);
-            orders.filter_user_status(StatusType::InGame, false);
-            orders.sort_by_platinum();
-            item_entry.apply_market_info(&orders);
+                orders.filter_by_sub_type(wf_market::types::SubType::from_entity(item_entry.sub_type.clone()), false);
+                orders.filter_username(&ctx.username, true);
+                orders.filter_user_status(StatusType::InGame, false);
+                orders.sort_by_platinum();
+                item_entry.apply_market_info(&orders);
 
-            info(
-                &comp("ProcessItem"),
-                &format!(
-                    "Processing Item: {} | Buy Orders: {} | Sell Orders: {} | Operations: {:?} | Route: {:?} | Progress: {}/{}",
-                    item_info.name,
-                    orders.buy_orders.len(),
-                    orders.sell_orders.len(),
-                    item_entry.operations.operations,
-                    route,
-                    current_index,
-                    total
-                ),
-                &LoggerOptions::default(),
-            );
+                info(
+                    &comp("ProcessItem"),
+                    &format!(
+                        "Processing Item: {} | Buy Orders: {} | Sell Orders: {} | Operations: {:?} | Route: {:?} | Progress: {}/{}",
+                        item_info.name,
+                        orders.buy_orders.len(),
+                        orders.sell_orders.len(),
+                        item_entry.operations.operations,
+                        route,
+                        current_index,
+                        total
+                    ),
+                    &LoggerOptions::default(),
+                );
 
-            if item_entry.operations.has("Buy") && !item_entry.operations.has("WishList") {
-                progress_buying(ctx, &item_info, item_entry, &item_price, &orders, route, sell_backlog)
-                    .await
-                    .map_err(|e| e.with_location(get_location!()))?;
-            }
-            if item_entry.operations.has("WishList") {
-                progress_wish_list(ctx, &item_info, item_entry, &item_price, &orders, route, sell_backlog)
-                    .await
-                    .map_err(|e| e.with_location(get_location!()))?;
-            }
-            if item_entry.operations.has("Sell") && item_entry.stock_id.is_some() {
-                progress_selling(ctx, &item_info, item_entry, &item_price, &orders, route)
-                    .await
-                    .map_err(|e| e.with_location(get_location!()))?;
-            }
+                if item_entry.operations.has("Buy") && !item_entry.operations.has("WishList") {
+                    progress_buying(ctx, &item_info, item_entry, &item_price, &orders, route, sell_backlog)
+                        .await
+                        .map_err(|e| e.with_location(get_location!()))?;
+                }
+                if item_entry.operations.has("WishList") {
+                    progress_wish_list(ctx, &item_info, item_entry, &item_price, &orders, route, sell_backlog)
+                        .await
+                        .map_err(|e| e.with_location(get_location!()))?;
+                }
+                if item_entry.operations.has("Sell") && item_entry.stock_id.is_some() {
+                    progress_selling(ctx, &item_info, item_entry, &item_price, &orders, route)
+                        .await
+                        .map_err(|e| e.with_location(get_location!()))?;
+                }
+                Ok::<_, Error>(())
+            };
+            with_prefetch(entry, &mut prefetch).await?;
             current_index += 1;
         }
 
@@ -1082,5 +1148,134 @@ mod tests {
         }
         assert!(ctx.orders.dry_log().iter().all(|row| row.action != "delete"), "a covered order is left alone");
         assert_eq!(ctx.orders.cache_orders().buy_orders.len(), 1);
+    }
+
+    /// A fake order source recording which books were started and finished and how many were in flight (spec P27).
+    #[derive(Default)]
+    struct Probe {
+        outstanding: std::sync::atomic::AtomicUsize,
+        max_outstanding: std::sync::atomic::AtomicUsize,
+        started: Mutex<Vec<String>>,
+        finished: Mutex<Vec<String>>,
+    }
+
+    /// Ends one fetch, whether it completed or was dropped mid-flight.
+    struct InFlight(Arc<Probe>);
+
+    impl Drop for InFlight {
+        fn drop(&mut self) {
+            self.0.outstanding.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// `fetch` for `process_items_with`: sleeps `delay_ms(url)`, then returns a book or the error `fails(url)` names.
+    fn probed_fetch<'a>(
+        probe: &Arc<Probe>,
+        delay_ms: impl Fn(&str) -> u64 + 'a,
+        fails: impl Fn(&str) -> bool + 'a,
+        on_finish: impl Fn(&str) + 'a,
+    ) -> impl Fn(&str, &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<OrderList<OrderWithUser>, Error>> + 'a>> + 'a
+    {
+        let probe = probe.clone();
+        let on_finish = Arc::new(on_finish);
+        move |url: &str, _item_url: &str| {
+            let (probe, url, delay, fail, on_finish) = (probe.clone(), url.to_string(), delay_ms(url), fails(url), on_finish.clone());
+            Box::pin(async move {
+                probe.started.lock().unwrap().push(url.clone());
+                let now = probe.outstanding.fetch_add(1, Ordering::SeqCst) + 1;
+                probe.max_outstanding.fetch_max(now, Ordering::SeqCst);
+                let _in_flight = InFlight(probe.clone());
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                probe.finished.lock().unwrap().push(url.clone());
+                on_finish(&url);
+                if fail {
+                    return Err(Error::new("Test:Fetch", format!("book of {url} unavailable"), get_location!()));
+                }
+                Ok(book(&[20, 25], &[15, 17]))
+            })
+        }
+    }
+
+    /// `n` Buy entries `item0..` with a dry-run buy order each, so processing one logs one delete for it.
+    async fn pipeline_ctx(n: usize) -> (tempfile::TempDir, TradeContext, Vec<ItemEntry>) {
+        let (dir, ctx) = ctx_with(true, |_| {}).await;
+        let ids: Vec<String> = (0..n).map(|i| format!("item{i}")).collect();
+        ctx.cache.tradable_item().set_items(
+            ids.iter().map(|id| CacheTradableItem { wfm_id: id.clone(), wfm_url: format!("{id}_slug"), name: id.clone(), ..item_info() }).collect(),
+        );
+        for id in ids.iter().rev() {
+            let params = CreateOrderParams::new_with_subtype(id, OrderType::Buy, 17, 1, true, None, WFSubType::default());
+            ctx.orders.create(params, route_for(true, true), &WriteMeta::default()).await.unwrap();
+        }
+        let entries = ids
+            .iter()
+            .map(|id| ItemEntry::new(None, None, format!("{id}_slug"), id, None, 0, 1, 1, vec!["Buy".into()], "closed", Properties::default()))
+            .collect();
+        (dir, ctx, entries)
+    }
+
+    fn processed(ctx: &TradeContext) -> Vec<String> {
+        ctx.orders.dry_log().into_iter().filter(|row| row.action == "delete").map(|row| row.item_id).collect()
+    }
+
+    fn slug_index(url: &str) -> u64 {
+        url.trim_start_matches("item").trim_end_matches("_slug").parse().unwrap()
+    }
+
+    #[tokio::test]
+    async fn at_most_two_book_fetches_outstanding() {
+        let (_dir, ctx, entries) = pipeline_ctx(5).await;
+        let probe = Arc::new(Probe::default());
+        let fetch = probed_fetch(&probe, |_| 20, |_| false, |_| {});
+        assert_eq!(trader().process_items_with(entries, &ctx, fetch).await.unwrap(), 5);
+        assert_eq!(probe.max_outstanding.load(Ordering::SeqCst), 2, "the next book is in flight while the current one is processed");
+        assert_eq!(probe.finished.lock().unwrap().len(), 5, "one fetch per entry");
+    }
+
+    #[tokio::test]
+    async fn entries_are_processed_in_the_same_order() {
+        let (_dir, ctx, entries) = pipeline_ctx(5).await;
+        let probe = Arc::new(Probe::default());
+        // Later books arrive sooner: completion order must not leak into processing order.
+        let fetch = probed_fetch(&probe, |url| (5 - slug_index(url)) * 15, |_| false, |_| {});
+        trader().process_items_with(entries, &ctx, fetch).await.unwrap();
+        assert_eq!(processed(&ctx), vec!["item0", "item1", "item2", "item3", "item4"]);
+    }
+
+    #[tokio::test]
+    async fn a_prefetch_error_surfaces_at_its_own_entry() {
+        let (_dir, ctx, entries) = pipeline_ctx(3).await;
+        let probe = Arc::new(Probe::default());
+        // item1's book fails at once, while item0's is still in flight.
+        let fetch = probed_fetch(&probe, |url| if url == "item0_slug" { 40 } else { 0 }, |url| url == "item1_slug", |_| {});
+        let err = trader().process_items_with(entries, &ctx, fetch).await.unwrap_err();
+        assert!(err.message.contains("book of item1_slug unavailable"), "{}", err.message);
+        assert_eq!(processed(&ctx), vec!["item0"], "item0 is processed; the cycle stops at item1 as it does today");
+    }
+
+    #[tokio::test]
+    async fn stop_drops_the_prefetch() {
+        let (_dir, ctx, entries) = pipeline_ctx(3).await;
+        let running = Arc::new(AtomicBool::new(true));
+        let trader = ItemTrader::new(running.clone(), Arc::new(AtomicBool::new(false)));
+        let probe = Arc::new(Probe::default());
+        // Stop is requested once item0's book is in; item1's book would take 5 s.
+        let fetch = probed_fetch(
+            &probe,
+            |url| if url == "item1_slug" { 5_000 } else { 0 },
+            |_| false,
+            |url| {
+                if url == "item0_slug" {
+                    running.store(false, Ordering::SeqCst)
+                }
+            },
+        );
+        let t0 = std::time::Instant::now();
+        trader.process_items_with(entries, &ctx, fetch).await.unwrap();
+        assert!(t0.elapsed() < std::time::Duration::from_secs(2), "the pending fetch is dropped, not awaited");
+        assert_eq!(processed(&ctx), vec!["item0"]);
+        assert!(probe.started.lock().unwrap().contains(&"item1_slug".to_string()), "item1's book was prefetched");
+        assert_eq!(*probe.finished.lock().unwrap(), vec!["item0_slug"]);
+        assert_eq!(probe.outstanding.load(Ordering::SeqCst), 0, "nothing is left in flight");
     }
 }
