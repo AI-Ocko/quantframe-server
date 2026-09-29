@@ -252,6 +252,8 @@ impl ItemTrader {
             if self.should_stop(ctx) {
                 warning(comp("ProcessItem"), "Trader is not running or user is banned, stopping processing.", &LoggerOptions::default());
                 interrupted = true;
+                // Spec P27: a stop drops the in-flight fetch now, so it neither holds the limiter through the post-loop writes nor goes unreported.
+                drop(prefetch.take());
                 break;
             }
             let item_info = match ctx.cache.tradable_item().get_by(&item_entry.wfm_url) {
