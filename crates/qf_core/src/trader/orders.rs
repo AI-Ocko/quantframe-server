@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use chrono::Utc;
 use service::sea_orm::DatabaseConnection;
 use serde::Serialize;
-use utils::{error, get_location, Error, LogLevel, LoggerOptions};
+use utils::{error, get_location, Error, LogLevel, LoggerOptions, OperationSet};
 use wf_market::client::Authenticated;
 use wf_market::enums::OrderType;
 use wf_market::errors::ApiError;
@@ -165,6 +165,7 @@ impl TradeOrders {
     }
 
     /// The real buy order a blocked sale may replace (spec P25): lowest `potential_profit` (missing counts as 0), then lowest price.
+    /// Wish-list bids (their `operations` property holds `WishList`) are the user's own purchases and are never replaced.
     pub fn lowest_profit_buy_order(&self) -> Option<Order> {
         self.live
             .as_ref()?
@@ -172,6 +173,7 @@ impl TradeOrders {
             .cache_orders()
             .buy_orders
             .into_iter()
+            .filter(|o| !o.properties.get_property_value("operations", OperationSet::new()).has("WishList"))
             .min_by_key(|o| (o.properties.get_property_value("potential_profit", 0i64), o.platinum))
     }
 
@@ -404,6 +406,16 @@ pub(crate) mod tests {
         let tie = offline_live(10, vec![cached("dear", OrderType::Buy, 20, Some(0)), cached("cheap", OrderType::Buy, 15, Some(0))]).await;
         assert_eq!(tie.lowest_profit_buy_order().map(|o| o.id), Some("cheap".into()));
         assert!(offline_live(10, vec![cached("sell", OrderType::Sell, 1, None)]).await.lowest_profit_buy_order().is_none());
+    }
+
+    #[tokio::test]
+    async fn wish_list_bids_are_never_the_lowest_profit_buy() {
+        let mut wish = cached("wish", OrderType::Buy, 5, Some(0));
+        wish.properties.set_property_value("operations", OperationSet { operations: vec!["WishList".into()] });
+        let stock = cached("stock", OrderType::Buy, 5, Some(30));
+        let orders = offline_live(10, vec![wish.clone(), stock]).await;
+        assert_eq!(orders.lowest_profit_buy_order().map(|o| o.id), Some("stock".into()));
+        assert!(offline_live(10, vec![wish]).await.lowest_profit_buy_order().is_none());
     }
 
     fn params(item: &str, order_type: OrderType, platinum: u32) -> CreateOrderParams {

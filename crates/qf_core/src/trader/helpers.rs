@@ -336,14 +336,23 @@ pub async fn progress_order(
     if creating && !can_create_order {
         if let Some(victim) = sell_slot_victim(orders, route, order_type) {
             let victim_meta = WriteMeta { sub_type: key_of(&SubTypeExt::to_entity(&victim.subtype)), reason: "SellSlot".into() };
-            orders.delete(&victim.id, &victim_meta).await.map_err(|e| e.with_location(get_location!()))?;
-            info(
-                format!("{}SellSlot", component),
-                &format!("Deleted buy order {} at {}p to free a slot for the sale of {}", victim.id, victim.platinum, name),
-                log_options,
-            );
-            send_event!(UIEvent::RefreshWfmOrders, json!({"source": component}));
-            can_create_order = true;
+            // A failed delete leaves this sale blocked (today's skip) instead of ending the cycle.
+            match orders.delete(&victim.id, &victim_meta).await {
+                Ok(_) => {
+                    info(
+                        format!("{}SellSlot", component),
+                        &format!("Deleted buy order {} at {}p to free a slot for the sale of {}", victim.id, victim.platinum, name),
+                        log_options,
+                    );
+                    send_event!(UIEvent::RefreshWfmOrders, json!({"source": component}));
+                    can_create_order = true;
+                }
+                Err(e) => warning(
+                    format!("{}SellSlot", component),
+                    &format!("Could not delete buy order {} to free a slot for the sale of {}: {}", victim.id, name, e.message),
+                    log_options,
+                ),
+            }
         }
     }
 
@@ -498,7 +507,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_blocked_sell_deletes_the_lowest_profit_buy_then_creates() {
+    async fn a_blocked_sell_picks_the_lowest_profit_buy() {
         // Covered: which order a blocked live sell gives up. Not covered: the live delete and create themselves (they need the network).
         let buys = vec![
             cached("p30", OrderType::Buy, 5, Some(30)),
@@ -519,6 +528,15 @@ mod tests {
         create_at(&orders, OrderType::Sell, 0).await;
         assert_eq!(orders.consecutive_failures(), 0, "no live write was attempted");
         assert_eq!(orders.cache_orders().total_orders(), 2, "no sell order was deleted");
+
+        // Only a wish-list bid holds a slot: it is not given up, and the sale is skipped.
+        let mut wish = cached("wish", OrderType::Buy, 5, Some(0));
+        wish.properties.set_property_value("operations", OperationSet::from(vec!["WishList"]));
+        let orders = offline_live(1, vec![wish]).await;
+        assert!(sell_slot_victim(&orders, Route::Live, OrderType::Sell).is_none());
+        create_at(&orders, OrderType::Sell, 0).await;
+        assert_eq!(orders.cache_orders().total_orders(), 1, "the wish-list bid stays");
+        assert_eq!(orders.consecutive_failures(), 0, "no live write was attempted");
     }
 
     #[tokio::test]
