@@ -21,7 +21,7 @@ use wf_market::{
 
 use super::helpers::*;
 use super::item_entry::ItemEntry;
-use super::orders::{route_for, Route, TradeOrders, WriteMeta};
+use super::orders::{route_for, Route, Slots, TradeOrders, WriteMeta};
 use super::price_source::{is_disabled, key_of, ItemPriceInfo};
 use super::TradeContext;
 use crate::{cache::types::CacheTradableItem, enums::TradeMode, send_event, types::UIEvent, utils::{OrderListExt, SubTypeExt}};
@@ -237,9 +237,12 @@ impl ItemTrader {
 
         interesting_items.sort_by(|a, b| b.priority.cmp(&a.priority));
         let global_dry_run = ctx.orders.global_dry_run();
-        let sell_backlog = sell_backlog(&ctx.orders, &interesting_items, |e| {
-            route_for(global_dry_run, ctx.prices.find_by(&e.wfm_id, &e.sub_type).unwrap_or_default().warm)
-        });
+        let slots = Slots {
+            sell_backlog: sell_backlog(&ctx.orders, &interesting_items, |e| {
+                route_for(global_dry_run, ctx.prices.find_by(&e.wfm_id, &e.sub_type).unwrap_or_default().warm)
+            }),
+            wish_list: wish_list_keys(&ctx.conn).await?,
+        };
         let total = interesting_items.len();
         let mut interrupted = false;
 
@@ -320,17 +323,17 @@ impl ItemTrader {
                 );
 
                 if item_entry.operations.has("Buy") && !item_entry.operations.has("WishList") {
-                    progress_buying(ctx, &item_info, item_entry, &item_price, &orders, route, sell_backlog)
+                    progress_buying(ctx, &item_info, item_entry, &item_price, &orders, route, &slots)
                         .await
                         .map_err(|e| e.with_location(get_location!()))?;
                 }
                 if item_entry.operations.has("WishList") {
-                    progress_wish_list(ctx, &item_info, item_entry, &item_price, &orders, route, sell_backlog)
+                    progress_wish_list(ctx, &item_info, item_entry, &item_price, &orders, route, &slots)
                         .await
                         .map_err(|e| e.with_location(get_location!()))?;
                 }
                 if item_entry.operations.has("Sell") && item_entry.stock_id.is_some() {
-                    progress_selling(ctx, &item_info, item_entry, &item_price, &orders, route)
+                    progress_selling(ctx, &item_info, item_entry, &item_price, &orders, route, &slots)
                         .await
                         .map_err(|e| e.with_location(get_location!()))?;
                 }
@@ -379,7 +382,7 @@ pub async fn progress_buying(
     price: &ItemPriceInfo,
     live_orders: &OrderList<OrderWithUser>,
     route: Route,
-    sell_backlog: usize,
+    slots: &Slots,
 ) -> Result<(), Error> {
     let conn = &ctx.conn;
     let log_options = &LoggerOptions::default().set_enable(true);
@@ -516,7 +519,7 @@ pub async fn progress_buying(
         log_options,
         &mut properties,
         &trade_operations,
-        sell_backlog,
+        slots,
     )
     .await
     .map_err(|e| e.with_location(get_location!()).with_context(entry.to_json()))?;
@@ -531,6 +534,7 @@ pub async fn progress_selling(
     price: &ItemPriceInfo,
     live_orders: &OrderList<OrderWithUser>,
     route: Route,
+    slots: &Slots,
 ) -> Result<(), Error> {
     let conn = &ctx.conn;
     let log_options = &LoggerOptions::default();
@@ -675,7 +679,7 @@ pub async fn progress_selling(
         log_options,
         &mut properties,
         &trade_operations,
-        0,
+        slots,
     )
     .await
     .map_err(|e| e.with_location(get_location!()).with_context(entry.to_json()))?;
@@ -692,7 +696,7 @@ pub async fn progress_wish_list(
     price: &ItemPriceInfo,
     live_orders: &OrderList<OrderWithUser>,
     route: Route,
-    sell_backlog: usize,
+    slots: &Slots,
 ) -> Result<(), Error> {
     let conn = &ctx.conn;
     let component = comp("WishList:");
@@ -777,7 +781,7 @@ pub async fn progress_wish_list(
         &log_options,
         &mut properties,
         &trade_operations,
-        sell_backlog,
+        slots,
     )
     .await
     .map_err(|e| e.with_location(get_location!()).with_context(entry.to_json()))?;
@@ -902,7 +906,7 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("Buy", None, None);
         e.apply_market_info(&live);
-        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true), 0).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true), &Slots::default()).await.unwrap();
         let log = ctx.orders.dry_log();
         assert_eq!(log.len(), 1);
         assert_eq!((log[0].action.as_str(), log[0].side.as_str(), log[0].price, log[0].forced_by.as_str()), ("create", "buy", Some(17), "global"));
@@ -916,7 +920,7 @@ mod tests {
             let mut e = entry("Buy", None, None);
             e.apply_market_info(&live);
             let info = ItemPriceInfo { guarded, ..price(30.0, true) };
-            progress_buying(&ctx, &item_info(), &mut e, &info, &live, route_for(true, true), 0).await.unwrap();
+            progress_buying(&ctx, &item_info(), &mut e, &info, &live, route_for(true, true), &Slots::default()).await.unwrap();
             let log = ctx.orders.dry_log();
             assert_eq!(log.len(), 1);
             assert_eq!(log[0].reason.contains("FastDropGuard"), guarded);
@@ -931,7 +935,7 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("Buy", None, None);
         e.apply_market_info(&live);
-        progress_buying(&ctx, &item_info(), &mut e, &price(10.0, true), &live, route, 0).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(10.0, true), &live, route, &Slots::default()).await.unwrap();
         let log = ctx.orders.dry_log();
         assert_eq!(log.last().unwrap().action, "delete");
         assert!(log.last().unwrap().reason.contains("Overpriced"));
@@ -944,7 +948,7 @@ mod tests {
         let mut e = entry("Buy", None, None);
         e.apply_market_info(&live);
         let price = price(30.0, false);
-        progress_buying(&ctx, &item_info(), &mut e, &price, &live, route_for(false, price.warm), 0).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price, &live, route_for(false, price.warm), &Slots::default()).await.unwrap();
         assert_eq!(ctx.orders.dry_log()[0].forced_by, "not_warm");
     }
 
@@ -957,7 +961,7 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("Buy", Some(stock_id), None);
         e.apply_market_info(&live);
-        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, 0).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, &Slots::default()).await.unwrap();
         assert_eq!(ctx.orders.dry_log().last().unwrap().action, "delete");
         assert!(ctx.orders.cache_orders().buy_orders.is_empty());
     }
@@ -972,7 +976,7 @@ mod tests {
         let mut e = entry("Buy", Some(stock_id), None);
         e.apply_market_info(&live);
         let before = ctx.orders.dry_log().len();
-        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, 0).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, &Slots::default()).await.unwrap();
         let log = ctx.orders.dry_log();
         assert!(log.len() > before, "buying still proceeded");
         assert!(matches!(log.last().unwrap().action.as_str(), "create" | "update"));
@@ -989,7 +993,7 @@ mod tests {
         let live = book(&[20, 21], &[5]);
         let mut e = entry("Sell", Some(stock_id), None);
         e.apply_market_info(&live);
-        progress_selling(&ctx, &item_info(), &mut e, &price(25.0, true), &live, route).await.unwrap();
+        progress_selling(&ctx, &item_info(), &mut e, &price(25.0, true), &live, route, &Slots::default()).await.unwrap();
         let last = ctx.orders.dry_log().last().unwrap().clone();
         assert_eq!((last.action.as_str(), last.price), ("update", Some(30)));
         assert!(last.reason.contains("MaxPriceDrop"));
@@ -1004,7 +1008,7 @@ mod tests {
         let live = book(&[20, 21], &[5]);
         let mut e = entry("Sell", Some(stock_id), None);
         e.apply_market_info(&live);
-        progress_selling(&ctx, &item_info(), &mut e, &price(25.0, true), &live, route).await.unwrap();
+        progress_selling(&ctx, &item_info(), &mut e, &price(25.0, true), &live, route, &Slots::default()).await.unwrap();
         let last = ctx.orders.dry_log().last().unwrap().clone();
         assert_eq!((last.action.as_str(), last.price), ("update", Some(20)));
     }
@@ -1021,11 +1025,11 @@ mod tests {
         let before = ctx.orders.dry_log().len();
         let mut gone = entry("Sell", Some(gone_id), None);
         gone.apply_market_info(&live);
-        progress_selling(&ctx, &item_info(), &mut gone, &price(25.0, true), &live, route).await.unwrap();
+        progress_selling(&ctx, &item_info(), &mut gone, &price(25.0, true), &live, route, &Slots::default()).await.unwrap();
         assert_eq!(ctx.orders.dry_log().len(), before, "a missing row writes nothing");
         let mut kept = entry("Sell", Some(kept_id), None);
         kept.apply_market_info(&live);
-        progress_selling(&ctx, &item_info(), &mut kept, &price(25.0, true), &live, route).await.unwrap();
+        progress_selling(&ctx, &item_info(), &mut kept, &price(25.0, true), &live, route, &Slots::default()).await.unwrap();
         assert!(ctx.orders.dry_log().len() > before, "the next entry is still processed");
     }
 
@@ -1049,9 +1053,24 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("WishList", None, Some(wish.id));
         e.apply_market_info(&live);
-        progress_wish_list(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true), 0).await.unwrap();
+        progress_wish_list(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true), &Slots::default()).await.unwrap();
         let last = ctx.orders.dry_log().last().unwrap().clone();
         assert_eq!((last.action.as_str(), last.price), ("create", Some(16)));
+    }
+
+    #[tokio::test]
+    async fn wish_list_keys_come_from_the_database_with_the_wish_list_mode_off() {
+        let (_dir, ctx) = ctx_with(false, |s| s.live_scraper.general.trade_modes = vec![TradeMode::Buy, TradeMode::Sell]).await;
+        assert!(!ctx.settings.live_scraper.has_trade_mode(TradeMode::WishList));
+        for (id, sub_type) in [("item1", None), ("item2", Some(utils::SubType { rank: Some(3), ..Default::default() }))] {
+            let row = wish_list::Model::new(id.into(), format!("{id}_slug"), id.into(), "".into(), sub_type, 1, Properties::default());
+            WishListMutation::create(&ctx.conn, &row).await.unwrap();
+        }
+        let keys = wish_list_keys(&ctx.conn).await.unwrap();
+        let expected: HashSet<(String, String)> =
+            [("item1".to_string(), String::new()), ("item2".to_string(), key_of(&Some(utils::SubType { rank: Some(3), ..Default::default() })))].into();
+        assert_eq!(keys, expected);
+        assert_ne!(expected.iter().find(|k| k.0 == "item2").unwrap().1, "", "the sub-type is part of the key");
     }
 
     #[tokio::test]
@@ -1062,7 +1081,7 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("Buy", None, None);
         e.apply_market_info(&live);
-        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, 0).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, &Slots::default()).await.unwrap();
         let log = ctx.orders.dry_log();
         assert!(log.iter().all(|row| row.action != "update"), "an unchanged order sends no PATCH: {:?}", log);
         assert_eq!(ctx.orders.cache_orders().buy_orders[0].platinum, 17);
@@ -1076,7 +1095,7 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("Buy", None, None);
         e.apply_market_info(&live);
-        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, 0).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, &Slots::default()).await.unwrap();
         let updates: Vec<_> = ctx.orders.dry_log().into_iter().filter(|row| row.action == "update").collect();
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].price, Some(17));

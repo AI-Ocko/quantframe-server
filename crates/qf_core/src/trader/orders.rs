@@ -1,5 +1,6 @@
 //! Order writes for the trader: live wf-market calls or a simulated book (amendments C4, C6).
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
@@ -16,15 +17,24 @@ use wf_market::types::{
 };
 use wf_market::Client;
 
+use super::price_source::key_of;
 use super::session;
 use super::store::{self, DryRunEntry};
 use crate::collector::ts;
-use crate::utils::ErrorFromExt;
+use crate::utils::{ErrorFromExt, SubTypeExt};
 
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 /// Order slots a buy leaves free beyond this cycle's sell backlog (spec P25).
 pub const SELL_SLOT_MARGIN: usize = 5;
 const DRY_LOG_MEMORY: usize = 1000;
+
+/// One cycle's order-slot state (spec P25): live sales still owed a slot, and the wish-list keys
+/// `(wfm_id, sub-type key)` read from the database, whose bids a sale never takes.
+#[derive(Debug, Default)]
+pub struct Slots {
+    pub sell_backlog: usize,
+    pub wish_list: HashSet<(String, String)>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -165,14 +175,16 @@ impl TradeOrders {
     }
 
     /// The real buy order a blocked sale may replace (spec P25): lowest `potential_profit` (missing counts as 0), then lowest price.
-    /// Wish-list bids (their `operations` property holds `WishList`) are the user's own purchases and are never replaced.
-    pub fn lowest_profit_buy_order(&self) -> Option<Order> {
+    /// Wish-list bids are the user's own purchases and are never replaced: a bid on a `wish_list` key (from the database, as a
+    /// cache refresh drops order properties) or, as a second guard, one whose `operations` property holds `WishList`.
+    pub fn lowest_profit_buy_order(&self, wish_list: &HashSet<(String, String)>) -> Option<Order> {
         self.live
             .as_ref()?
             .order()
             .cache_orders()
             .buy_orders
             .into_iter()
+            .filter(|o| !wish_list.contains(&(o.item_id.clone(), key_of(&SubTypeExt::to_entity(&o.subtype)))))
             .filter(|o| !o.properties.get_property_value("operations", OperationSet::new()).has("WishList"))
             .min_by_key(|o| (o.properties.get_property_value("potential_profit", 0i64), o.platinum))
     }
@@ -402,10 +414,10 @@ pub(crate) mod tests {
             ],
         )
         .await;
-        assert_eq!(orders.lowest_profit_buy_order().map(|o| o.id), Some("unset".into()));
+        assert_eq!(orders.lowest_profit_buy_order(&HashSet::new()).map(|o| o.id), Some("unset".into()));
         let tie = offline_live(10, vec![cached("dear", OrderType::Buy, 20, Some(0)), cached("cheap", OrderType::Buy, 15, Some(0))]).await;
-        assert_eq!(tie.lowest_profit_buy_order().map(|o| o.id), Some("cheap".into()));
-        assert!(offline_live(10, vec![cached("sell", OrderType::Sell, 1, None)]).await.lowest_profit_buy_order().is_none());
+        assert_eq!(tie.lowest_profit_buy_order(&HashSet::new()).map(|o| o.id), Some("cheap".into()));
+        assert!(offline_live(10, vec![cached("sell", OrderType::Sell, 1, None)]).await.lowest_profit_buy_order(&HashSet::new()).is_none());
     }
 
     #[tokio::test]
@@ -414,8 +426,25 @@ pub(crate) mod tests {
         wish.properties.set_property_value("operations", OperationSet { operations: vec!["WishList".into()] });
         let stock = cached("stock", OrderType::Buy, 5, Some(30));
         let orders = offline_live(10, vec![wish.clone(), stock]).await;
-        assert_eq!(orders.lowest_profit_buy_order().map(|o| o.id), Some("stock".into()));
-        assert!(offline_live(10, vec![wish]).await.lowest_profit_buy_order().is_none());
+        assert_eq!(orders.lowest_profit_buy_order(&HashSet::new()).map(|o| o.id), Some("stock".into()));
+        assert!(offline_live(10, vec![wish]).await.lowest_profit_buy_order(&HashSet::new()).is_none());
+    }
+
+    #[tokio::test]
+    async fn an_untagged_bid_on_a_wish_list_row_is_never_the_lowest_profit_buy() {
+        // A cache refresh (`my_orders`) drops every property, so the database rows are what protects the bid.
+        let wish_list: HashSet<(String, String)> = [("item1".to_string(), String::new())].into();
+        let untagged = Order { properties: Default::default(), ..cached("wish", OrderType::Buy, 5, None) };
+        let other = Order { item_id: "item2".into(), ..cached("other", OrderType::Buy, 50, Some(30)) };
+        let ranked = Order { subtype: WFSubType { rank: Some(3), ..Default::default() }, ..cached("ranked", OrderType::Buy, 50, Some(40)) };
+        let orders = offline_live(10, vec![untagged.clone(), other.clone(), ranked]).await;
+        assert_eq!(orders.lowest_profit_buy_order(&wish_list).map(|o| o.id), Some("other".into()), "the untagged wish-list bid is skipped");
+        assert_eq!(orders.lowest_profit_buy_order(&HashSet::new()).map(|o| o.id), Some("wish".into()), "unprotected, it would go first");
+        let only_wish = offline_live(10, vec![untagged]).await;
+        assert!(only_wish.lowest_profit_buy_order(&wish_list).is_none());
+        // Another sub-type of the same item is not the wish-list entry.
+        let ranked_only = offline_live(10, vec![Order { subtype: WFSubType { rank: Some(3), ..Default::default() }, ..cached("r", OrderType::Buy, 5, None) }]).await;
+        assert_eq!(ranked_only.lowest_profit_buy_order(&wish_list).map(|o| o.id), Some("r".into()));
     }
 
     fn params(item: &str, order_type: OrderType, platinum: u32) -> CreateOrderParams {
