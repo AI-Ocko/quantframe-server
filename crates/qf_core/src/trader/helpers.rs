@@ -17,7 +17,7 @@ use wf_market::{
 };
 
 use super::item_entry::ItemEntry;
-use super::orders::{Route, TradeOrders, WriteMeta};
+use super::orders::{Route, TradeOrders, WriteMeta, SELL_SLOT_MARGIN};
 use super::price_source::{get_interesting_items, is_disabled, key_of, ItemPriceInfo};
 use super::TradeContext;
 use crate::{
@@ -319,16 +319,35 @@ pub async fn progress_order(
     log_options: &LoggerOptions,
     properties: &mut wf_market::types::Properties,
     trade_operations: &OperationSet,
+    sell_backlog: usize,
 ) -> Result<OperationSet, Error> {
-    let can_create_order = orders.can_create_order(route);
+    let mut can_create_order = match order_type {
+        OrderType::Buy => orders.can_create_buy(route, sell_backlog + SELL_SLOT_MARGIN),
+        OrderType::Sell => orders.can_create_order(route),
+    };
     let quantity = entry.get_quantity(order_type);
     let order_id = properties.get_property_value("id", String::new());
     let name = properties.get_property_value("name", String::new());
     let update_string = properties.get_property_value("update_string", String::new());
     let original_update_string = properties.get_property_value("original_update_string", String::new());
     let meta = WriteMeta { sub_type: key_of(&entry.sub_type), reason: trade_operations.operations.join(",") };
+    let creating = trade_operations.has("Create") && !trade_operations.has("Delete");
 
-    if trade_operations.has("Create") && !trade_operations.has("Delete") && can_create_order {
+    if creating && !can_create_order {
+        if let Some(victim) = sell_slot_victim(orders, route, order_type) {
+            let victim_meta = WriteMeta { sub_type: key_of(&SubTypeExt::to_entity(&victim.subtype)), reason: "SellSlot".into() };
+            orders.delete(&victim.id, &victim_meta).await.map_err(|e| e.with_location(get_location!()))?;
+            info(
+                format!("{}SellSlot", component),
+                &format!("Deleted buy order {} at {}p to free a slot for the sale of {}", victim.id, victim.platinum, name),
+                log_options,
+            );
+            send_event!(UIEvent::RefreshWfmOrders, json!({"source": component}));
+            can_create_order = true;
+        }
+    }
+
+    if creating && can_create_order {
         let params = CreateOrderParams::new_with_subtype(
             &entry.wfm_id,
             order_type,
@@ -377,6 +396,11 @@ pub async fn progress_order(
     Ok(OperationSet::default())
 }
 
+/// The buy order a live sell create blocked at the order limit deletes to take its slot (spec P25).
+pub fn sell_slot_victim(orders: &TradeOrders, route: Route, order_type: OrderType) -> Option<Order> {
+    (route == Route::Live && order_type == OrderType::Sell).then(|| orders.lowest_profit_buy_order()).flatten()
+}
+
 /// Deletes this item's existing order, if there is one (amendment C5: upstream never deleted).
 pub async fn delete_order(
     component: &str,
@@ -390,7 +414,8 @@ pub async fn delete_order(
         return Ok(OperationSet::default());
     }
     let operations = OperationSet::from(vec!["Update", "Delete", "MaxStock"]);
-    progress_order(component, entry, orders, route, order_type, 1, None, &LoggerOptions::default(), &mut properties, &operations).await
+    progress_order(component, entry, orders, route, order_type, 1, None, &LoggerOptions::default(), &mut properties, &operations, 0)
+        .await
 }
 
 pub fn log_summary(component: &str, message: impl AsRef<str>, options: &LoggerOptions) {
@@ -458,6 +483,52 @@ mod tests {
             updated_at: String::new(),
             properties: Default::default(),
         }
+    }
+
+    use crate::trader::orders::tests::{cached, offline_live};
+
+    async fn create_at(orders: &TradeOrders, order_type: OrderType, sell_backlog: usize) {
+        let entry = candidate("item1", None, if order_type == OrderType::Buy { "Buy" } else { "Sell" });
+        let mut properties = wf_market::types::Properties::default();
+        let operations = OperationSet::from(vec!["Create"]);
+        let log = LoggerOptions::default();
+        progress_order("Test:", &entry, orders, Route::Live, order_type, 10, None, &log, &mut properties, &operations, sell_backlog)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_blocked_sell_deletes_the_lowest_profit_buy_then_creates() {
+        // Covered: which order a blocked live sell gives up. Not covered: the live delete and create themselves (they need the network).
+        let buys = vec![
+            cached("p30", OrderType::Buy, 5, Some(30)),
+            cached("p10", OrderType::Buy, 5, Some(10)),
+            cached("unset", OrderType::Buy, 50, None),
+        ];
+        let orders = offline_live(3, buys).await;
+        assert!(!orders.can_create_order(Route::Live));
+        assert_eq!(sell_slot_victim(&orders, Route::Live, OrderType::Sell).map(|o| o.id), Some("unset".into()));
+        assert!(sell_slot_victim(&orders, Route::Live, OrderType::Buy).is_none(), "a blocked buy never frees a slot");
+        assert!(sell_slot_victim(&orders, Route::DryRun(crate::trader::orders::ForcedBy::Global), OrderType::Sell).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_blocked_sell_with_no_buy_orders_is_skipped() {
+        let orders = offline_live(2, vec![cached("s1", OrderType::Sell, 5, None), cached("s2", OrderType::Sell, 5, None)]).await;
+        assert!(sell_slot_victim(&orders, Route::Live, OrderType::Sell).is_none());
+        create_at(&orders, OrderType::Sell, 0).await;
+        assert_eq!(orders.consecutive_failures(), 0, "no live write was attempted");
+        assert_eq!(orders.cache_orders().total_orders(), 2, "no sell order was deleted");
+    }
+
+    #[tokio::test]
+    async fn a_buy_blocked_by_the_reserve_is_skipped() {
+        // Limit 10 with 4 orders: a sell would fit, a buy with a backlog of 1 would eat into the reserve (4 + 1 + 5 = 10).
+        let orders = offline_live(10, (0..4).map(|i| cached(&format!("b{i}"), OrderType::Buy, 5, None)).collect()).await;
+        assert!(orders.can_create_order(Route::Live));
+        create_at(&orders, OrderType::Buy, 1).await;
+        assert_eq!(orders.consecutive_failures(), 0, "no live write was attempted");
+        assert_eq!(orders.cache_orders().total_orders(), 4);
     }
 
     #[test]

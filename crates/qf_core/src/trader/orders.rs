@@ -22,6 +22,8 @@ use crate::collector::ts;
 use crate::utils::ErrorFromExt;
 
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+/// Order slots a buy leaves free beyond this cycle's sell backlog (spec P25).
+pub const SELL_SLOT_MARGIN: usize = 5;
 const DRY_LOG_MEMORY: usize = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -149,6 +151,28 @@ impl TradeOrders {
             Route::DryRun(_) => true,
             Route::Live => self.live.as_ref().is_some_and(|client| client.order().can_create_order()),
         }
+    }
+
+    /// A buy create leaves `reserve` slots under the limit for sales (spec P25); dry-run has no limit.
+    pub fn can_create_buy(&self, route: Route, reserve: usize) -> bool {
+        match route {
+            Route::DryRun(_) => true,
+            Route::Live => self.live.as_ref().is_some_and(|client| {
+                let order = client.order();
+                order.cache_orders().total_orders() + reserve < order.get_order_limit()
+            }),
+        }
+    }
+
+    /// The real buy order a blocked sale may replace (spec P25): lowest `potential_profit` (missing counts as 0), then lowest price.
+    pub fn lowest_profit_buy_order(&self) -> Option<Order> {
+        self.live
+            .as_ref()?
+            .order()
+            .cache_orders()
+            .buy_orders
+            .into_iter()
+            .min_by_key(|o| (o.properties.get_property_value("potential_profit", 0i64), o.platinum))
     }
 
     pub fn consecutive_failures(&self) -> u32 {
@@ -315,8 +339,72 @@ impl TradeOrders {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// A live `TradeOrders` over an offline client: the order cache and the limit are set, no request is ever sent.
+    pub(crate) async fn offline_live(limit: usize, cached: Vec<Order>) -> TradeOrders {
+        let client = Client::<Authenticated>::new_default("token", "device").await.unwrap();
+        client.order().set_order_limit(limit);
+        client.order().set_orders(OrderList::new(cached));
+        TradeOrders::new(Some(client), None, false)
+    }
+
+    pub(crate) fn cached(id: &str, order_type: OrderType, platinum: u32, potential_profit: Option<i64>) -> Order {
+        let mut order = simulated_order(&params("item1", order_type, platinum));
+        order.id = id.into();
+        if let Some(profit) = potential_profit {
+            order.properties.set_property_value("potential_profit", profit);
+        }
+        order
+    }
+
+    fn n_orders(n: usize) -> Vec<Order> {
+        (0..n).map(|i| cached(&format!("o{i}"), OrderType::Buy, 10, None)).collect()
+    }
+
+    #[tokio::test]
+    async fn buy_create_respects_the_sell_reserve() {
+        let reserve = |backlog: usize| backlog + SELL_SLOT_MARGIN;
+        // Limit 10, backlog 3: the reserve is 8, so a buy fits at 1 order and not at 2.
+        assert!(offline_live(10, n_orders(1)).await.can_create_buy(Route::Live, reserve(3)));
+        assert!(!offline_live(10, n_orders(2)).await.can_create_buy(Route::Live, reserve(3)));
+        assert!(!offline_live(10, n_orders(5)).await.can_create_buy(Route::Live, reserve(3)));
+        // Backlog 0: only the margin is held back.
+        assert!(offline_live(10, n_orders(4)).await.can_create_buy(Route::Live, reserve(0)));
+        assert!(!offline_live(10, n_orders(5)).await.can_create_buy(Route::Live, reserve(0)));
+        // Sells use the plain limit.
+        assert!(offline_live(10, n_orders(5)).await.can_create_order(Route::Live));
+        assert!(offline_live(10, n_orders(9)).await.can_create_order(Route::Live));
+        assert!(!offline_live(10, n_orders(10)).await.can_create_order(Route::Live));
+    }
+
+    #[tokio::test]
+    async fn dry_run_is_not_limited() {
+        let orders = offline_live(1, n_orders(5)).await;
+        for forced_by in [ForcedBy::Global, ForcedBy::NotWarm] {
+            assert!(orders.can_create_buy(Route::DryRun(forced_by), 100));
+            assert!(orders.can_create_order(Route::DryRun(forced_by)));
+        }
+    }
+
+    #[tokio::test]
+    async fn the_lowest_profit_buy_is_the_unprofiled_one_then_the_cheapest() {
+        let orders = offline_live(
+            10,
+            vec![
+                cached("p30", OrderType::Buy, 5, Some(30)),
+                cached("p10", OrderType::Buy, 5, Some(10)),
+                cached("unset", OrderType::Buy, 50, None),
+                cached("sell", OrderType::Sell, 1, Some(-100)),
+            ],
+        )
+        .await;
+        assert_eq!(orders.lowest_profit_buy_order().map(|o| o.id), Some("unset".into()));
+        let tie = offline_live(10, vec![cached("dear", OrderType::Buy, 20, Some(0)), cached("cheap", OrderType::Buy, 15, Some(0))]).await;
+        assert_eq!(tie.lowest_profit_buy_order().map(|o| o.id), Some("cheap".into()));
+        assert!(offline_live(10, vec![cached("sell", OrderType::Sell, 1, None)]).await.lowest_profit_buy_order().is_none());
+    }
 
     fn params(item: &str, order_type: OrderType, platinum: u32) -> CreateOrderParams {
         CreateOrderParams::new_with_subtype(item, order_type, platinum, 1, true, None, WFSubType::default())

@@ -18,7 +18,7 @@ use wf_market::{
 
 use super::helpers::*;
 use super::item_entry::ItemEntry;
-use super::orders::{route_for, Route, WriteMeta};
+use super::orders::{route_for, Route, TradeOrders, WriteMeta};
 use super::price_source::{is_disabled, key_of, ItemPriceInfo};
 use super::TradeContext;
 use crate::{cache::types::CacheTradableItem, enums::TradeMode, send_event, types::UIEvent, utils::{OrderListExt, SubTypeExt}};
@@ -45,6 +45,19 @@ fn orphan_name(name: &str, sub_type_key: &str) -> String {
 /// `"<name> [<sub-type>] at <platinum>p"` for the orphan sweep's log lines (spec §25 P14).
 fn orphan_label(name: &str, sub_type_key: &str, platinum: u32) -> String {
     format!("{} at {}p", orphan_name(name, sub_type_key), platinum)
+}
+
+/// Stock entries headed for a live sell order that does not exist yet (spec P25); buys keep this many slots free.
+fn sell_backlog(orders: &TradeOrders, entries: &[ItemEntry], route_of: impl Fn(&ItemEntry) -> Route) -> usize {
+    entries
+        .iter()
+        .filter(|e| e.operations.has("Sell") && e.stock_id.is_some())
+        .filter(|e| {
+            let route = route_of(e);
+            route == Route::Live
+                && orders.find_order(&e.wfm_id, &SubTypeExt::from_entity(e.sub_type.clone()), OrderType::Sell, route).is_none()
+        })
+        .count()
 }
 
 pub struct ItemTrader {
@@ -164,6 +177,10 @@ impl ItemTrader {
             ctx.orders.cache_orders().buy_orders.iter().map(|o| o.id.clone()).collect();
 
         interesting_items.sort_by(|a, b| b.priority.cmp(&a.priority));
+        let global_dry_run = ctx.orders.global_dry_run();
+        let sell_backlog = sell_backlog(&ctx.orders, &interesting_items, |e| {
+            route_for(global_dry_run, ctx.prices.find_by(&e.wfm_id, &e.sub_type).unwrap_or_default().warm)
+        });
         let total = interesting_items.len();
         let mut interrupted = false;
 
@@ -240,12 +257,12 @@ impl ItemTrader {
             );
 
             if item_entry.operations.has("Buy") && !item_entry.operations.has("WishList") {
-                progress_buying(ctx, &item_info, item_entry, &item_price, &orders, route)
+                progress_buying(ctx, &item_info, item_entry, &item_price, &orders, route, sell_backlog)
                     .await
                     .map_err(|e| e.with_location(get_location!()))?;
             }
             if item_entry.operations.has("WishList") {
-                progress_wish_list(ctx, &item_info, item_entry, &item_price, &orders, route)
+                progress_wish_list(ctx, &item_info, item_entry, &item_price, &orders, route, sell_backlog)
                     .await
                     .map_err(|e| e.with_location(get_location!()))?;
             }
@@ -296,6 +313,7 @@ pub async fn progress_buying(
     price: &ItemPriceInfo,
     live_orders: &OrderList<OrderWithUser>,
     route: Route,
+    sell_backlog: usize,
 ) -> Result<(), Error> {
     let conn = &ctx.conn;
     let log_options = &LoggerOptions::default().set_enable(true);
@@ -432,6 +450,7 @@ pub async fn progress_buying(
         log_options,
         &mut properties,
         &trade_operations,
+        sell_backlog,
     )
     .await
     .map_err(|e| e.with_location(get_location!()).with_context(entry.to_json()))?;
@@ -590,6 +609,7 @@ pub async fn progress_selling(
         log_options,
         &mut properties,
         &trade_operations,
+        0,
     )
     .await
     .map_err(|e| e.with_location(get_location!()).with_context(entry.to_json()))?;
@@ -606,6 +626,7 @@ pub async fn progress_wish_list(
     price: &ItemPriceInfo,
     live_orders: &OrderList<OrderWithUser>,
     route: Route,
+    sell_backlog: usize,
 ) -> Result<(), Error> {
     let conn = &ctx.conn;
     let component = comp("WishList:");
@@ -690,6 +711,7 @@ pub async fn progress_wish_list(
         &log_options,
         &mut properties,
         &trade_operations,
+        sell_backlog,
     )
     .await
     .map_err(|e| e.with_location(get_location!()).with_context(entry.to_json()))?;
@@ -814,7 +836,7 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("Buy", None, None);
         e.apply_market_info(&live);
-        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true)).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true), 0).await.unwrap();
         let log = ctx.orders.dry_log();
         assert_eq!(log.len(), 1);
         assert_eq!((log[0].action.as_str(), log[0].side.as_str(), log[0].price, log[0].forced_by.as_str()), ("create", "buy", Some(17), "global"));
@@ -828,7 +850,7 @@ mod tests {
             let mut e = entry("Buy", None, None);
             e.apply_market_info(&live);
             let info = ItemPriceInfo { guarded, ..price(30.0, true) };
-            progress_buying(&ctx, &item_info(), &mut e, &info, &live, route_for(true, true)).await.unwrap();
+            progress_buying(&ctx, &item_info(), &mut e, &info, &live, route_for(true, true), 0).await.unwrap();
             let log = ctx.orders.dry_log();
             assert_eq!(log.len(), 1);
             assert_eq!(log[0].reason.contains("FastDropGuard"), guarded);
@@ -843,7 +865,7 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("Buy", None, None);
         e.apply_market_info(&live);
-        progress_buying(&ctx, &item_info(), &mut e, &price(10.0, true), &live, route).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(10.0, true), &live, route, 0).await.unwrap();
         let log = ctx.orders.dry_log();
         assert_eq!(log.last().unwrap().action, "delete");
         assert!(log.last().unwrap().reason.contains("Overpriced"));
@@ -856,7 +878,7 @@ mod tests {
         let mut e = entry("Buy", None, None);
         e.apply_market_info(&live);
         let price = price(30.0, false);
-        progress_buying(&ctx, &item_info(), &mut e, &price, &live, route_for(false, price.warm)).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price, &live, route_for(false, price.warm), 0).await.unwrap();
         assert_eq!(ctx.orders.dry_log()[0].forced_by, "not_warm");
     }
 
@@ -869,7 +891,7 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("Buy", Some(stock_id), None);
         e.apply_market_info(&live);
-        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, 0).await.unwrap();
         assert_eq!(ctx.orders.dry_log().last().unwrap().action, "delete");
         assert!(ctx.orders.cache_orders().buy_orders.is_empty());
     }
@@ -884,7 +906,7 @@ mod tests {
         let mut e = entry("Buy", Some(stock_id), None);
         e.apply_market_info(&live);
         let before = ctx.orders.dry_log().len();
-        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, 0).await.unwrap();
         let log = ctx.orders.dry_log();
         assert!(log.len() > before, "buying still proceeded");
         assert!(matches!(log.last().unwrap().action.as_str(), "create" | "update"));
@@ -961,7 +983,7 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("WishList", None, Some(wish.id));
         e.apply_market_info(&live);
-        progress_wish_list(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true)).await.unwrap();
+        progress_wish_list(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true), 0).await.unwrap();
         let last = ctx.orders.dry_log().last().unwrap().clone();
         assert_eq!((last.action.as_str(), last.price), ("create", Some(16)));
     }
@@ -974,7 +996,7 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("Buy", None, None);
         e.apply_market_info(&live);
-        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, 0).await.unwrap();
         let log = ctx.orders.dry_log();
         assert!(log.iter().all(|row| row.action != "update"), "an unchanged order sends no PATCH: {:?}", log);
         assert_eq!(ctx.orders.cache_orders().buy_orders[0].platinum, 17);
@@ -988,10 +1010,29 @@ mod tests {
         let live = book(&[20, 25], &[15, 17]);
         let mut e = entry("Buy", None, None);
         e.apply_market_info(&live);
-        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route).await.unwrap();
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, 0).await.unwrap();
         let updates: Vec<_> = ctx.orders.dry_log().into_iter().filter(|row| row.action == "update").collect();
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].price, Some(17));
+    }
+
+    #[tokio::test]
+    async fn the_sell_backlog_counts_live_stock_without_a_sell_order() {
+        use crate::trader::orders::tests::{cached, offline_live};
+        let orders = offline_live(10, vec![cached("s1", OrderType::Sell, 5, None)]).await;
+        let other = |ops: &str, stock_id: Option<i64>, item: &str| {
+            ItemEntry::new(stock_id, None, format!("{item}_slug"), item, None, 0, 1, 1, vec![ops.into()], "closed", Properties::default())
+        };
+        let entries = vec![
+            other("Sell", Some(1), "item1"), // already has its sell order
+            other("Sell", Some(2), "item2"),
+            other("Sell", Some(3), "item3"),
+            other("Buy", None, "item4"),
+            other("WishList", None, "item5"),
+        ];
+        assert_eq!(sell_backlog(&orders, &entries, |_| Route::Live), 2);
+        let not_warm = |e: &ItemEntry| if e.wfm_id == "item3" { route_for(false, false) } else { Route::Live };
+        assert_eq!(sell_backlog(&orders, &entries, not_warm), 1, "a simulated sale takes no live slot");
     }
 
     fn trader() -> ItemTrader {
