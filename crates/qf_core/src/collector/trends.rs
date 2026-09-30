@@ -9,8 +9,14 @@ use utils::Error;
 use super::closed::median_f64;
 use super::{db_err, stmt, ts};
 
+/// `latest − 89 ..= latest`: the 90 days `closed_stats_daily` keeps.
 pub const TREND_WINDOW_DAYS: i64 = 90;
+const _: () = assert!(TREND_WINDOW_DAYS <= super::closed::CLOSED_RETENTION_DAYS);
+/// The index of the week holding the latest day; weeks count back from it in whole weeks.
+const LAST_WEEK: i64 = (TREND_WINDOW_DAYS - 1) / 7;
 pub const MIN_WEEKS: usize = 11;
+// The holdout fit drops two weeks and needs a residual degree of freedom.
+const _: () = assert!(MIN_WEEKS >= 5);
 pub const QUOTE_MAX_AGE_H: i64 = 24;
 
 /// One closed day with trades; only rows with `median > 0` become points.
@@ -30,8 +36,11 @@ pub struct Fit {
     pub s: f64,
     pub last_week: usize,
     pub weeks: usize,
+    /// Mean scored week index and `Σ(w − mean_w)²`, for the prediction interval.
+    pub mean_w: f64,
+    pub sxx: f64,
     pub price_now: f64,
-    /// Trades per calendar day over the `TREND_WINDOW_DAYS + 1` days of the window.
+    /// Trades per calendar day over the `TREND_WINDOW_DAYS` days of the window.
     pub volume: f64,
     /// Each of the last two weeks is at or above the `2s` band of a fit over the weeks before them.
     pub trend_intact: bool,
@@ -63,10 +72,18 @@ pub struct HoldThresholds {
     pub min_weeks: usize,
 }
 
-/// Points with trades inside `latest − TREND_WINDOW_DAYS ..= latest`, with their week index.
+fn first_day(latest: NaiveDate) -> NaiveDate {
+    latest - Duration::days(TREND_WINDOW_DAYS - 1)
+}
+
+/// Points with trades inside the window, with their week index: `LAST_WEEK` is the seven most recent days,
+/// and week 0 is the oldest, partial one.
 fn in_window(points: &[DailyPoint], latest: NaiveDate) -> impl Iterator<Item = (usize, &DailyPoint)> {
-    let first = latest - Duration::days(TREND_WINDOW_DAYS);
-    points.iter().filter(move |p| p.median > 0.0 && p.day >= first && p.day <= latest).map(move |p| (((p.day - first).num_days() / 7) as usize, p))
+    let first = first_day(latest);
+    points
+        .iter()
+        .filter(move |p| p.median > 0.0 && p.day >= first && p.day <= latest)
+        .map(move |p| ((LAST_WEEK - (latest - p.day).num_days() / 7) as usize, p))
 }
 
 /// `(week index, median of that week's daily medians)`, ascending by week.
@@ -78,17 +95,26 @@ pub fn weekly_prices(points: &[DailyPoint], latest: NaiveDate) -> Vec<(usize, f6
     weeks.into_iter().filter_map(|(w, medians)| Some((w, median_f64(&medians)?))).collect()
 }
 
-/// Ordinary least squares `y ≈ a + b·x`: `(a, b, SSE, SST)`.
-fn ols(xs: &[f64], ys: &[f64]) -> (f64, f64, f64, f64) {
+/// Ordinary least squares `y ≈ a + b·x`.
+struct Ols {
+    a: f64,
+    b: f64,
+    sse: f64,
+    sst: f64,
+    mean_x: f64,
+    sxx: f64,
+}
+
+fn ols(xs: &[f64], ys: &[f64]) -> Ols {
     let n = xs.len() as f64;
-    let (mx, my) = (xs.iter().sum::<f64>() / n, ys.iter().sum::<f64>() / n);
-    let sxx: f64 = xs.iter().map(|x| (x - mx).powi(2)).sum();
-    let sxy: f64 = xs.iter().zip(ys).map(|(x, y)| (x - mx) * (y - my)).sum();
+    let (mean_x, my) = (xs.iter().sum::<f64>() / n, ys.iter().sum::<f64>() / n);
+    let sxx: f64 = xs.iter().map(|x| (x - mean_x).powi(2)).sum();
+    let sxy: f64 = xs.iter().zip(ys).map(|(x, y)| (x - mean_x) * (y - my)).sum();
     let b = sxy / sxx;
-    let a = my - b * mx;
+    let a = my - b * mean_x;
     let sse: f64 = xs.iter().zip(ys).map(|(x, y)| (y - a - b * x).powi(2)).sum();
     let sst: f64 = ys.iter().map(|y| (y - my).powi(2)).sum();
-    (a, b, sse, sst)
+    Ols { a, b, sse, sst, mean_x, sxx }
 }
 
 /// `None` below `MIN_WEEKS` scored weeks or when any output is not finite.
@@ -100,16 +126,18 @@ pub fn fit(points: &[DailyPoint], latest: NaiveDate) -> Option<Fit> {
     }
     let xs: Vec<f64> = weekly.iter().map(|(w, _)| *w as f64).collect();
     let ys: Vec<f64> = weekly.iter().map(|(_, p)| p.ln()).collect();
-    let (a, b, sse, sst) = ols(&xs, &ys);
-    let r2 = if sst == 0.0 { 0.0 } else { 1.0 - sse / sst };
-    let s = (sse / (n as f64 - 2.0)).sqrt();
+    let full = ols(&xs, &ys);
+    let (a, b) = (full.a, full.b);
+    let r2 = if full.sst == 0.0 { 0.0 } else { 1.0 - full.sse / full.sst };
+    let s = (full.sse / (n as f64 - 2.0)).sqrt();
     // Out of sample: a break in the last two weeks would pull an in-sample fit down and widen its band enough
     // to hide itself, so they are judged against the band of the weeks before them.
     let h = n - 2;
-    let (a_h, b_h, sse_h, _) = ols(&xs[..h], &ys[..h]);
-    let s_h = (sse_h / (h as f64 - 2.0)).sqrt();
-    // The epsilon keeps a perfect series from failing its own band on rounding.
-    let trend_intact = (h..n).all(|i| ys[i] >= a_h + b_h * xs[i] - 2.0 * s_h - 1e-9);
+    let hold = ols(&xs[..h], &ys[..h]);
+    let s_h = (hold.sse / (h as f64 - 2.0)).sqrt();
+    // A plain 2·s_h band, narrower than a prediction interval: the strict side. The epsilon keeps a perfect
+    // series from failing its own band on rounding.
+    let trend_intact = (h..n).all(|i| ys[i] >= hold.a + hold.b * xs[i] - 2.0 * s_h - 1e-9);
     let trades: i64 = in_window(points, latest).map(|(_, p)| p.volume).sum();
     let f = Fit {
         a,
@@ -118,11 +146,18 @@ pub fn fit(points: &[DailyPoint], latest: NaiveDate) -> Option<Fit> {
         s,
         last_week: weekly[n - 1].0,
         weeks: n,
+        mean_w: full.mean_x,
+        sxx: full.sxx,
         price_now: ((ys[n - 2] + ys[n - 1]) / 2.0).exp(),
-        volume: trades as f64 / (TREND_WINDOW_DAYS + 1) as f64,
+        volume: trades as f64 / TREND_WINDOW_DAYS as f64,
         trend_intact,
     };
-    [f.a, f.b, f.r2, f.s, f.price_now, f.volume].iter().all(|v| v.is_finite()).then_some(f)
+    [f.a, f.b, f.r2, f.s, f.mean_w, f.sxx, f.price_now, f.volume].iter().all(|v| v.is_finite()).then_some(f)
+}
+
+/// Widens `s` into the standard error of a new week's log price at week `t` off the fitted line.
+pub fn prediction_factor(fit: &Fit, t: f64) -> f64 {
+    (1.0 + 1.0 / fit.weeks as f64 + (t - fit.mean_w).powi(2) / fit.sxx).sqrt()
 }
 
 pub fn trend_pct_month(b: f64) -> f64 {
@@ -141,7 +176,7 @@ pub fn project(fit: &Fit, quote: &Quote, horizon_weeks: i64) -> Projection {
     let t = (fit.last_week as i64 + horizon_weeks) as f64;
     let spread = (fit.price_now - quote.bid).max(0.0);
     let exit_mid = (fit.a + fit.b * t).exp() - spread;
-    let exit_low = (fit.a + fit.b * t - 2.0 * fit.s).exp() - spread;
+    let exit_low = (fit.a + fit.b * t - 2.0 * fit.s * prediction_factor(fit, t)).exp() - spread;
     let profit_low = exit_low - quote.ask;
     Projection {
         exit_low,
@@ -152,8 +187,11 @@ pub fn project(fit: &Fit, quote: &Quote, horizon_weeks: i64) -> Projection {
     }
 }
 
+/// Every threshold met, a real price to buy at (1 p is warframe.market's minimum) and a finite projection.
 pub fn qualifies(fit: &Fit, quote: &Quote, p: &Projection, t: &HoldThresholds) -> bool {
-    fit.r2 >= t.min_steadiness
+    [p.exit_low, p.exit_mid, p.profit_low, p.profit_low_pct, p.profit_mid].iter().all(|v| v.is_finite())
+        && quote.ask >= 1.0
+        && fit.r2 >= t.min_steadiness
         && fit.weeks >= t.min_weeks
         && fit.volume >= t.min_volume
         && fit.trend_intact
@@ -188,13 +226,13 @@ pub async fn latest_day(conn: &DatabaseConnection) -> Result<Option<NaiveDate>, 
     day.map(|d| NaiveDate::parse_from_str(&d, "%Y-%m-%d").map_err(|e| db_err(C, e))).transpose()
 }
 
-/// Every key's days with trades in `latest − TREND_WINDOW_DAYS ..= latest`.
+/// Every key's days with trades in the window ending on `latest`.
 pub async fn load_points(conn: &DatabaseConnection, latest: NaiveDate) -> Result<HashMap<(String, String), Vec<DailyPoint>>, Error> {
     const C: &str = "Trends:Points";
     let rows = conn
         .query_all(stmt(
             "SELECT item_id, sub_type, day, volume, median FROM closed_stats_daily WHERE day >= ? AND day <= ? AND median > 0",
-            vec![(latest - Duration::days(TREND_WINDOW_DAYS)).to_string().into(), latest.to_string().into()],
+            vec![first_day(latest).to_string().into(), latest.to_string().into()],
         ))
         .await
         .map_err(|e| db_err(C, e))?;
@@ -242,16 +280,13 @@ mod tests {
     fn latest() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 9, 28).unwrap()
     }
-    fn first() -> NaiveDate {
-        latest() - Duration::days(TREND_WINDOW_DAYS)
-    }
     fn point(day: NaiveDate, volume: i64, median: f64) -> DailyPoint {
         DailyPoint { day, volume, median }
     }
-    /// One day per week, the first day of week `w`, so each weekly price is the given price.
-    /// 70 trades a week: 13 weeks make 910 trades over the 91 calendar days, 10 a day.
+    /// One day per week, 7·(12 − w) days before the latest, so each weekly price is the given price.
+    /// 70 trades a week: 13 weeks make 910 trades over the 90 calendar days.
     fn weekly(prices: &[f64]) -> Vec<DailyPoint> {
-        prices.iter().enumerate().map(|(w, p)| point(first() + Duration::days(7 * w as i64), 70, *p)).collect()
+        prices.iter().enumerate().map(|(w, p)| point(latest() - Duration::days(7 * (12 - w as i64)), 70, *p)).collect()
     }
     fn defaults() -> HoldThresholds {
         HoldThresholds { horizon_weeks: 4, min_volume: 10.0, min_margin_pct: 10.0, min_steadiness: 0.85, min_weeks: 12 }
@@ -275,7 +310,8 @@ mod tests {
         assert!(f.trend_intact, "a perfect series sits on its own fit");
         assert_eq!((f.weeks, f.last_week), (13, 12));
         assert!(close(f.price_now, 100.0 * 1.05f64.powf(11.5), 1e-6), "geometric mean of weeks 11 and 12: {}", f.price_now);
-        assert!(close(f.volume, 10.0, 1e-9), "trades per calendar day: 910 / 91, not 910 / 13 trading days: {}", f.volume);
+        assert!(close(f.volume, 910.0 / 90.0, 1e-9), "trades per calendar day: 910 / 90, not 910 / 13 trading days: {}", f.volume);
+        assert_eq!((f.mean_w, f.sxx), (6.0, 182.0));
     }
 
     #[test]
@@ -324,22 +360,29 @@ mod tests {
         let f = fit(&sparse, latest()).unwrap();
         assert_eq!(f.weeks, 11);
         assert!(close(f.b, 1.05f64.ln(), 1e-9));
-        assert!(close(f.volume, 11.0 * 70.0 / 91.0, 1e-9), "the divisor stays the 91 window days: {}", f.volume);
+        assert!(close(f.volume, 11.0 * 70.0 / 90.0, 1e-9), "the divisor stays the 90 window days: {}", f.volume);
     }
 
     #[test]
     fn weekly_bucketing_at_the_window_edge() {
+        let back = |d: i64| latest() - Duration::days(d);
         let points = vec![
-            point(latest() - Duration::days(91), 1, 999.0), // outside the window
-            point(latest() - Duration::days(90), 1, 10.0),  // day 0: week 0
-            point(latest() - Duration::days(84), 1, 20.0),  // day 6: still week 0
-            point(latest() - Duration::days(83), 1, 5.0),   // day 7: week 1
-            point(latest() - Duration::days(82), 1, 7.0),
-            point(latest() - Duration::days(81), 1, 100.0),
-            point(latest(), 1, 42.0),                       // day 90: week 12
-            point(latest() + Duration::days(1), 1, 999.0),  // after the latest day
+            point(back(90), 1, 999.0), // retention keeps 90 days: outside the window
+            point(back(89), 1, 10.0),  // oldest day: week 0, the partial week
+            point(back(84), 1, 20.0),  // week 0
+            point(back(83), 1, 5.0),   // week 1
+            point(back(82), 1, 7.0),
+            point(back(77), 1, 100.0), // week 1
+            point(back(7), 1, 30.0),   // week 11
+            point(back(6), 1, 40.0),   // week 12: the seven most recent days
+            point(back(0), 1, 44.0),
+            point(latest() + Duration::days(1), 1, 999.0), // after the latest day
         ];
-        assert_eq!(weekly_prices(&points, latest()), vec![(0, 15.0), (1, 7.0), (12, 42.0)], "an even count averages the middle two");
+        assert_eq!(
+            weekly_prices(&points, latest()),
+            vec![(0, 15.0), (1, 7.0), (11, 30.0), (12, 42.0)],
+            "weeks count back from the latest day; an even count averages the middle two"
+        );
     }
 
     #[test]
@@ -372,19 +415,49 @@ mod tests {
         assert!(fit(&weekly(&jumped), latest()).unwrap().trend_intact, "only the downside breaks the band");
     }
 
+    #[test]
+    fn holdout_band_is_two_sigma() {
+        // Week 11 of the ±2 % riser sits 2 % under trend; the band of weeks 0..=10 has s_h ≈ 0.02202.
+        // Its log margin over a − k·s_h: ×0.98 → +0.0020 at k = 2 but −0.0200 at k = 1;
+        // ×0.97 → −0.0082 at k = 2 but +0.0138 at k = 3. Week 12's margin is ≥ +0.040 at every k.
+        let base: Vec<f64> = (0..13).map(|w| 100.0 * 1.05f64.powi(w) * (1.0 + 0.02 * (-1f64).powi(w))).collect();
+        let with_week_11 = |m: f64| {
+            let mut prices = base.clone();
+            prices[11] *= m;
+            fit(&weekly(&prices), latest()).unwrap().trend_intact
+        };
+        assert!(with_week_11(0.98), "inside 2·s_h (would break at 1·s_h)");
+        assert!(!with_week_11(0.97), "outside 2·s_h (would pass at 3·s_h)");
+    }
+
     fn sample_fit() -> Fit {
-        Fit { a: 100f64.ln(), b: 0.05, r2: 0.95, s: 0.1, last_week: 12, weeks: 13, price_now: 180.0, volume: 25.0, trend_intact: true }
+        Fit {
+            a: 100f64.ln(), b: 0.05, r2: 0.95, s: 0.1, last_week: 12, weeks: 13, mean_w: 6.0, sxx: 182.0,
+            price_now: 180.0, volume: 25.0, trend_intact: true,
+        }
+    }
+
+    #[test]
+    fn prediction_factor_for_thirteen_weeks_four_ahead() {
+        // Weeks 0..=12: n = 13, w̄ = 6, Sxx = 2·(1 + 4 + 9 + 16 + 25 + 36) = 182. t = 12 + 4 = 16, (t − w̄)² = 100.
+        // 1 + 1/13 + 100/182 = (91 + 7 + 50)/91 = 148/91, so the factor is √(148/91) ≈ 1.2752935.
+        let f = fit(&weekly(&riser()), latest()).unwrap();
+        assert!(close(prediction_factor(&f, 16.0), (148.0f64 / 91.0).sqrt(), 1e-12), "{}", prediction_factor(&f, 16.0));
+        assert!(close(prediction_factor(&f, 16.0), 1.2752935, 1e-7));
+        assert!(close(prediction_factor(&f, 6.0), (1.0f64 + 1.0 / 13.0).sqrt(), 1e-12), "narrowest at the mean week");
+        assert!(prediction_factor(&f, 24.0) > prediction_factor(&f, 16.0), "wider the further out");
     }
 
     #[test]
     fn project_uses_the_lower_band_and_the_spread() {
         // t = 12 + 4 = 16, so a + b·t = ln 100 + 0.8; spread = 180 − 170 = 10.
+        // Lower band: 2·s·√(148/91) = 0.2 × 1.2752935 = 0.2550587, so exit_low = 100·e^(0.8 − 0.2550587) − 10.
         let quote = Quote { ask: 160.0, bid: 170.0, source: "sweep" };
         let p = project(&sample_fit(), &quote, 4);
         assert!(close(p.exit_mid, 222.55409284924679 - 10.0, 1e-9), "100·e^0.8 − 10: {}", p.exit_mid);
-        assert!(close(p.exit_low, 182.2118800390509 - 10.0, 1e-9), "100·e^(0.8 − 2·0.1) − 10: {}", p.exit_low);
-        assert!(close(p.profit_low, 12.211880039050897, 1e-9));
-        assert!(close(p.profit_low_pct, 7.632425024406811, 1e-9));
+        assert!(close(p.exit_low, 172.4507135253479 - 10.0, 1e-9), "100·e^(0.8 − 2·0.1·1.2752935) − 10: {}", p.exit_low);
+        assert!(close(p.profit_low, 2.4507135253479078, 1e-9));
+        assert!(close(p.profit_low_pct, 1.5316959533424424, 1e-9));
         assert!(close(p.profit_mid, 52.554092849246786, 1e-9));
 
         let above = project(&sample_fit(), &Quote { ask: 160.0, bid: 190.0, source: "sweep" }, 4);
@@ -415,6 +488,22 @@ mod tests {
         assert!(!qualifies(&Fit { trend_intact: false, ..f }, &q, &p, &t), "trend intact");
         assert!(!qualifies(&f, &Quote { source: "closed", ..q }, &p, &t), "quote source");
         assert!(!qualifies(&f, &q, &Projection { profit_low_pct: 9.99, ..p }, &t), "margin");
+        assert!(qualifies(&f, &Quote { ask: 1.0, ..q }, &p, &t), "1 p is warframe.market's minimum price");
+        assert!(!qualifies(&f, &Quote { ask: 0.99, ..q }, &p, &t), "ask below 1 p");
+    }
+
+    #[test]
+    fn qualifies_is_false_for_a_non_finite_projection() {
+        let q = Quote { ask: 100.0, bid: 95.0, source: "sweep" };
+        // An absurd horizon overflows exp to infinity, which would clear any margin.
+        let huge = project(&sample_fit(), &q, 100_000);
+        assert!(huge.profit_low_pct.is_infinite(), "{huge:?}");
+        let fields = |p: &Projection| [p.exit_low, p.exit_mid, p.profit_low, p.profit_low_pct, p.profit_mid];
+        assert!(fields(&huge).iter().all(|v| !v.is_nan()), "a finite fit never projects NaN: {huge:?}");
+        assert!(!qualifies(&sample_fit(), &q, &huge, &defaults()));
+        let ok = Projection { exit_low: 120.0, exit_mid: 130.0, profit_low: 20.0, profit_low_pct: 20.0, profit_mid: 30.0 };
+        assert!(qualifies(&sample_fit(), &q, &ok, &defaults()));
+        assert!(!qualifies(&sample_fit(), &q, &Projection { exit_mid: f64::NAN, ..ok }, &defaults()), "any field counts");
     }
 
     #[test]
@@ -448,8 +537,8 @@ mod tests {
         let (_dir, conn) = setup().await;
         assert_eq!(latest_day(&conn).await.unwrap(), None, "no closed rows yet");
         let l = latest();
-        closed_row(&conn, "item1", "", l - Duration::days(91), 5, Some(10.0)).await; // before the window
-        closed_row(&conn, "item1", "", l - Duration::days(90), 6, Some(11.0)).await;
+        closed_row(&conn, "item1", "", l - Duration::days(90), 5, Some(10.0)).await; // before the 90-day window
+        closed_row(&conn, "item1", "", l - Duration::days(89), 6, Some(11.0)).await;
         closed_row(&conn, "item1", "", l - Duration::days(3), 7, Some(0.0)).await; // no trades
         closed_row(&conn, "item1", "", l - Duration::days(2), 0, None).await;
         closed_row(&conn, "item1", "", l, 8, Some(12.5)).await;
@@ -461,7 +550,7 @@ mod tests {
         assert_eq!(points.len(), 2);
         let item1 = points.get_mut(&("item1".to_string(), String::new())).unwrap();
         item1.sort_by_key(|p| p.day);
-        assert_eq!(*item1, vec![point(l - Duration::days(90), 6, 11.0), point(l, 8, 12.5)]);
+        assert_eq!(*item1, vec![point(l - Duration::days(89), 6, 11.0), point(l, 8, 12.5)]);
         assert_eq!(points[&("item2".to_string(), "rank=5".to_string())], vec![point(l - Duration::days(10), 3, 40.0)]);
     }
 
