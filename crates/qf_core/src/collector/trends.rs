@@ -31,7 +31,9 @@ pub struct Fit {
     pub last_week: usize,
     pub weeks: usize,
     pub price_now: f64,
+    /// Trades per calendar day over the `TREND_WINDOW_DAYS + 1` days of the window.
     pub volume: f64,
+    /// Each of the last two weeks is at or above the `2s` band of a fit over the weeks before them.
     pub trend_intact: bool,
 }
 
@@ -76,6 +78,19 @@ pub fn weekly_prices(points: &[DailyPoint], latest: NaiveDate) -> Vec<(usize, f6
     weeks.into_iter().filter_map(|(w, medians)| Some((w, median_f64(&medians)?))).collect()
 }
 
+/// Ordinary least squares `y ≈ a + b·x`: `(a, b, SSE, SST)`.
+fn ols(xs: &[f64], ys: &[f64]) -> (f64, f64, f64, f64) {
+    let n = xs.len() as f64;
+    let (mx, my) = (xs.iter().sum::<f64>() / n, ys.iter().sum::<f64>() / n);
+    let sxx: f64 = xs.iter().map(|x| (x - mx).powi(2)).sum();
+    let sxy: f64 = xs.iter().zip(ys).map(|(x, y)| (x - mx) * (y - my)).sum();
+    let b = sxy / sxx;
+    let a = my - b * mx;
+    let sse: f64 = xs.iter().zip(ys).map(|(x, y)| (y - a - b * x).powi(2)).sum();
+    let sst: f64 = ys.iter().map(|y| (y - my).powi(2)).sum();
+    (a, b, sse, sst)
+}
+
 /// `None` below `MIN_WEEKS` scored weeks or when any output is not finite.
 pub fn fit(points: &[DailyPoint], latest: NaiveDate) -> Option<Fit> {
     let weekly = weekly_prices(points, latest);
@@ -85,19 +100,17 @@ pub fn fit(points: &[DailyPoint], latest: NaiveDate) -> Option<Fit> {
     }
     let xs: Vec<f64> = weekly.iter().map(|(w, _)| *w as f64).collect();
     let ys: Vec<f64> = weekly.iter().map(|(_, p)| p.ln()).collect();
-    let nf = n as f64;
-    let (mx, my) = (xs.iter().sum::<f64>() / nf, ys.iter().sum::<f64>() / nf);
-    let sxx: f64 = xs.iter().map(|x| (x - mx).powi(2)).sum();
-    let sxy: f64 = xs.iter().zip(&ys).map(|(x, y)| (x - mx) * (y - my)).sum();
-    let b = sxy / sxx;
-    let a = my - b * mx;
-    let sse: f64 = xs.iter().zip(&ys).map(|(x, y)| (y - a - b * x).powi(2)).sum();
-    let sst: f64 = ys.iter().map(|y| (y - my).powi(2)).sum();
+    let (a, b, sse, sst) = ols(&xs, &ys);
     let r2 = if sst == 0.0 { 0.0 } else { 1.0 - sse / sst };
-    let s = (sse / (nf - 2.0)).sqrt();
+    let s = (sse / (n as f64 - 2.0)).sqrt();
+    // Out of sample: a break in the last two weeks would pull an in-sample fit down and widen its band enough
+    // to hide itself, so they are judged against the band of the weeks before them.
+    let h = n - 2;
+    let (a_h, b_h, sse_h, _) = ols(&xs[..h], &ys[..h]);
+    let s_h = (sse_h / (h as f64 - 2.0)).sqrt();
     // The epsilon keeps a perfect series from failing its own band on rounding.
-    let trend_intact = (n - 2..n).all(|i| ys[i] >= a + b * xs[i] - 2.0 * s - 1e-9);
-    let volumes: Vec<i64> = in_window(points, latest).map(|(_, p)| p.volume).collect();
+    let trend_intact = (h..n).all(|i| ys[i] >= a_h + b_h * xs[i] - 2.0 * s_h - 1e-9);
+    let trades: i64 = in_window(points, latest).map(|(_, p)| p.volume).sum();
     let f = Fit {
         a,
         b,
@@ -106,7 +119,7 @@ pub fn fit(points: &[DailyPoint], latest: NaiveDate) -> Option<Fit> {
         last_week: weekly[n - 1].0,
         weeks: n,
         price_now: ((ys[n - 2] + ys[n - 1]) / 2.0).exp(),
-        volume: volumes.iter().sum::<i64>() as f64 / volumes.len() as f64,
+        volume: trades as f64 / (TREND_WINDOW_DAYS + 1) as f64,
         trend_intact,
     };
     [f.a, f.b, f.r2, f.s, f.price_now, f.volume].iter().all(|v| v.is_finite()).then_some(f)
@@ -154,10 +167,10 @@ pub fn category_of(tags: &[String]) -> &'static str {
         "arcane"
     } else if has("set") && has("prime") {
         "prime set"
-    } else if has("prime") {
-        "prime part"
     } else if has("mod") {
         "mod"
+    } else if has("prime") {
+        "prime part"
     } else if has("relic") {
         "relic"
     } else {
@@ -236,8 +249,12 @@ mod tests {
         DailyPoint { day, volume, median }
     }
     /// One day per week, the first day of week `w`, so each weekly price is the given price.
+    /// 70 trades a week: 13 weeks make 910 trades over the 91 calendar days, 10 a day.
     fn weekly(prices: &[f64]) -> Vec<DailyPoint> {
-        prices.iter().enumerate().map(|(w, p)| point(first() + Duration::days(7 * w as i64), 20, *p)).collect()
+        prices.iter().enumerate().map(|(w, p)| point(first() + Duration::days(7 * w as i64), 70, *p)).collect()
+    }
+    fn defaults() -> HoldThresholds {
+        HoldThresholds { horizon_weeks: 4, min_volume: 10.0, min_margin_pct: 10.0, min_steadiness: 0.85, min_weeks: 12 }
     }
     fn riser() -> Vec<f64> {
         (0..13).map(|w| 100.0 * 1.05f64.powi(w)).collect()
@@ -258,7 +275,7 @@ mod tests {
         assert!(f.trend_intact, "a perfect series sits on its own fit");
         assert_eq!((f.weeks, f.last_week), (13, 12));
         assert!(close(f.price_now, 100.0 * 1.05f64.powf(11.5), 1e-6), "geometric mean of weeks 11 and 12: {}", f.price_now);
-        assert!(close(f.volume, 20.0, 1e-9));
+        assert!(close(f.volume, 10.0, 1e-9), "trades per calendar day: 910 / 91, not 910 / 13 trading days: {}", f.volume);
     }
 
     #[test]
@@ -307,6 +324,7 @@ mod tests {
         let f = fit(&sparse, latest()).unwrap();
         assert_eq!(f.weeks, 11);
         assert!(close(f.b, 1.05f64.ln(), 1e-9));
+        assert!(close(f.volume, 11.0 * 70.0 / 91.0, 1e-9), "the divisor stays the 91 window days: {}", f.volume);
     }
 
     #[test]
@@ -326,13 +344,27 @@ mod tests {
 
     #[test]
     fn trend_intact_false_when_the_last_two_weeks_break_the_band() {
-        // A riser with ±2 % alternating noise (s ≈ 0.02) sits inside its band.
-        let base: Vec<f64> = (0..13).map(|w| 100.0 * 1.05f64.powi(w) * (1.0 + 0.02 * (-1f64).powi(w))).collect();
+        let noisy = |w: i32, k: f64| 100.0 * 1.05f64.powi(w) * (1.0 + k * (-1f64).powi(w));
+        // A steady riser (±1 % noise) whose last two weeks sit 15 % below trend. In sample, the break pulls the
+        // fit down and widens s enough to hide itself; the band of weeks 0..=10 alone does not.
+        let mut broken: Vec<f64> = (0..13).map(|w| noisy(w, 0.01)).collect();
+        broken[11] *= 0.85;
+        broken[12] *= 0.85;
+        let f = fit(&weekly(&broken), latest()).unwrap();
+        assert!(!f.trend_intact, "both of the last two weeks broke the band of the weeks before them");
+        let q = Quote { ask: f.price_now, bid: f.price_now, source: "sweep" };
+        let p = project(&f, &q, 4);
+        assert!(f.r2 >= 0.85 && f.weeks >= 12 && f.volume >= 10.0 && p.profit_low_pct >= 10.0, "every other threshold passes: r2 {} pct {}", f.r2, p.profit_low_pct);
+        assert!(!qualifies(&f, &q, &p, &defaults()));
+        assert!(qualifies(&Fit { trend_intact: true, ..f }, &q, &p, &defaults()), "the trend check alone blocks it");
+
+        // A riser with ±2 % alternating noise whose last two weeks stay in the band.
+        let base: Vec<f64> = (0..13).map(|w| noisy(w, 0.02)).collect();
         assert!(fit(&weekly(&base), latest()).unwrap().trend_intact);
-        for broken in [11, 12] {
+        for week in [11, 12] {
             let mut dropped = base.clone();
-            dropped[broken] *= 0.7;
-            assert!(!fit(&weekly(&dropped), latest()).unwrap().trend_intact, "week {broken} fell 30 %");
+            dropped[week] *= 0.7;
+            assert!(!fit(&weekly(&dropped), latest()).unwrap().trend_intact, "week {week} fell 30 %");
         }
         let mut jumped = base.clone();
         jumped[11] *= 1.3;
@@ -372,7 +404,7 @@ mod tests {
 
     #[test]
     fn each_threshold_flips_qualifies() {
-        let t = HoldThresholds { horizon_weeks: 4, min_volume: 10.0, min_margin_pct: 10.0, min_steadiness: 0.85, min_weeks: 12 };
+        let t = defaults();
         let f = Fit { r2: 0.85, weeks: 12, volume: 10.0, ..sample_fit() };
         let q = Quote { ask: 100.0, bid: 95.0, source: "sweep" };
         let p = Projection { exit_low: 110.0, exit_mid: 130.0, profit_low: 10.0, profit_low_pct: 10.0, profit_mid: 30.0 };
@@ -391,7 +423,8 @@ mod tests {
         assert_eq!(of(&["arcane_enhancement", "legendary"]), "arcane");
         assert_eq!(of(&["prime", "set", "warframe"]), "prime set");
         assert_eq!(of(&["prime", "blueprint", "warframe"]), "prime part");
-        assert_eq!(of(&["mod", "rare", "prime"]), "prime part", "prime is checked before mod");
+        assert_eq!(of(&["mod", "prime"]), "mod", "mod is checked before prime: molecular_fission, gilded_truth");
+        assert_eq!(of(&["mod", "legendary"]), "mod", "primed mods carry mod, not prime");
         assert_eq!(of(&["mod", "rare"]), "mod");
         assert_eq!(of(&["relic", "lith"]), "relic");
         assert_eq!(of(&["set", "weapon"]), "other");
