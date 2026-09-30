@@ -189,9 +189,13 @@ pub fn project(fit: &Fit, quote: &Quote, horizon_weeks: i64) -> Projection {
     }
 }
 
+fn is_finite(p: &Projection) -> bool {
+    [p.exit_low, p.exit_mid, p.profit_low, p.profit_low_pct, p.profit_mid].iter().all(|v| v.is_finite())
+}
+
 /// Every threshold met, a real price to buy at (1 p is warframe.market's minimum) and a finite projection.
 pub fn qualifies(fit: &Fit, quote: &Quote, p: &Projection, t: &HoldThresholds) -> bool {
-    [p.exit_low, p.exit_mid, p.profit_low, p.profit_low_pct, p.profit_mid].iter().all(|v| v.is_finite())
+    is_finite(p)
         && quote.ask >= 1.0
         && fit.r2 >= t.min_steadiness
         && fit.weeks >= t.min_weeks
@@ -218,14 +222,18 @@ pub fn category_of(tags: &[String]) -> &'static str {
     }
 }
 
-pub async fn latest_day(conn: &DatabaseConnection) -> Result<Option<NaiveDate>, Error> {
+/// The latest closed day and how many rows it has so far: the closed pass fills a day item by item over hours.
+pub async fn latest_day_rows(conn: &DatabaseConnection) -> Result<Option<(NaiveDate, i64)>, Error> {
     const C: &str = "Trends:LatestDay";
-    let row = conn.query_one(stmt("SELECT MAX(day) AS day FROM closed_stats_daily", vec![])).await.map_err(|e| db_err(C, e))?;
-    let day: Option<String> = match row {
-        Some(r) => r.try_get("", "day").map_err(|e| db_err(C, e))?,
-        None => None,
-    };
-    day.map(|d| NaiveDate::parse_from_str(&d, "%Y-%m-%d").map_err(|e| db_err(C, e))).transpose()
+    // Both halves use the covering index idx_closed_stats_day. With no rows at all, day is NULL.
+    let row = conn
+        .query_one(stmt("SELECT day, COUNT(*) AS n FROM closed_stats_daily WHERE day = (SELECT MAX(day) FROM closed_stats_daily)", vec![]))
+        .await
+        .map_err(|e| db_err(C, e))?;
+    let Some(r) = row else { return Ok(None) };
+    let day: Option<String> = r.try_get("", "day").map_err(|e| db_err(C, e))?;
+    let n: i64 = r.try_get("", "n").map_err(|e| db_err(C, e))?;
+    day.map(|d| Ok((NaiveDate::parse_from_str(&d, "%Y-%m-%d").map_err(|e| db_err(C, e))?, n))).transpose()
 }
 
 /// Every key's days with trades in the window ending on `latest`.
@@ -307,14 +315,46 @@ pub struct Holds {
 
 type Fits = HashMap<(String, String), Fit>;
 
-/// The fits change only when a new closed day lands; quotes and thresholds apply per call.
-static FITS: Mutex<Option<(NaiveDate, Arc<Fits>)>> = Mutex::new(None);
+/// The fits of `(latest closed day, its rows so far)`: they change only when a row lands on the latest day or a
+/// newer day starts. Quotes and thresholds apply per call.
+static FITS: Mutex<Option<((NaiveDate, i64), Arc<Fits>)>> = Mutex::new(None);
 #[cfg(test)]
 static LOADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A panic while the lock was held leaves whole fits or none, so the value is taken back out.
-fn fits_lock() -> MutexGuard<'static, Option<(NaiveDate, Arc<Fits>)>> {
+fn fits_lock() -> MutexGuard<'static, Option<((NaiveDate, i64), Arc<Fits>)>> {
     FITS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// One served row; None for an item the cache no longer knows (`names` is None) or a projection that is not
+/// finite: NaN and infinities never leave the scorer.
+fn hold_row(key: &(String, String), f: &Fit, quote: Quote, t: &HoldThresholds, names: Option<(String, String, Vec<String>)>) -> Option<HoldRow> {
+    let (name, slug, tags) = names?;
+    let p = project(f, &quote, t.horizon_weeks);
+    if !is_finite(&p) {
+        return None;
+    }
+    Some(HoldRow {
+        item_id: key.0.clone(),
+        sub_type: key.1.clone(),
+        name,
+        slug,
+        category: category_of(&tags),
+        ask_now: quote.ask,
+        bid_now: quote.bid,
+        quote_source: quote.source,
+        exit_low: p.exit_low,
+        exit_mid: p.exit_mid,
+        profit_low: p.profit_low,
+        profit_low_pct: p.profit_low_pct,
+        profit_mid: p.profit_mid,
+        trend_pct_month: trend_pct_month(f.b),
+        steadiness: f.r2,
+        volume: f.volume,
+        weeks: f.weeks,
+        trend_intact: f.trend_intact,
+        qualified: qualifies(f, &quote, &p, t),
+    })
 }
 
 /// Every fitted key the item cache knows, projected and judged with `t`: qualified rows first, then the
@@ -335,11 +375,11 @@ pub async fn holds(
         min_steadiness: t.min_steadiness.max(0.0).min(1.0),
         min_weeks: t.min_weeks,
     };
-    let Some(latest) = latest_day(conn).await? else {
+    let Some((latest, day_rows)) = latest_day_rows(conn).await? else {
         return Ok(Holds { latest_day: String::new(), scored: 0, qualified: 0, rows: vec![] });
     };
     // Each guard lives for its statement only, never across an await.
-    let cached = fits_lock().as_ref().filter(|(day, _)| *day == latest).map(|(_, fits)| fits.clone());
+    let cached = fits_lock().as_ref().filter(|(key, _)| *key == (latest, day_rows)).map(|(_, fits)| fits.clone());
     let fits = match cached {
         Some(fits) => fits,
         None => {
@@ -347,40 +387,16 @@ pub async fn holds(
             LOADS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let points = load_points(conn, latest).await?;
             let fits: Arc<Fits> = Arc::new(points.into_iter().filter_map(|(key, points)| Some((key, fit(&points, latest)?))).collect());
-            // Two calls racing on a new day both fit it; the last writer wins.
-            *fits_lock() = Some((latest, fits.clone()));
+            // Two calls racing on a change both fit it; the last writer wins. A row landing between the count and
+            // the load is in these fits under the older count, so the next call only refits once more.
+            *fits_lock() = Some(((latest, day_rows), fits.clone()));
             fits
         }
     };
     let quotes = load_sweep_quotes(conn, now).await?;
     let mut rows: Vec<HoldRow> = fits
         .iter()
-        .filter_map(|(key, f)| {
-            let (name, slug, tags) = name_of(&key.0)?;
-            let quote = quote_or_closed(quotes.get(key).copied(), f.price_now);
-            let p = project(f, &quote, t.horizon_weeks);
-            Some(HoldRow {
-                item_id: key.0.clone(),
-                sub_type: key.1.clone(),
-                name,
-                slug,
-                category: category_of(&tags),
-                ask_now: quote.ask,
-                bid_now: quote.bid,
-                quote_source: quote.source,
-                exit_low: p.exit_low,
-                exit_mid: p.exit_mid,
-                profit_low: p.profit_low,
-                profit_low_pct: p.profit_low_pct,
-                profit_mid: p.profit_mid,
-                trend_pct_month: trend_pct_month(f.b),
-                steadiness: f.r2,
-                volume: f.volume,
-                weeks: f.weeks,
-                trend_intact: f.trend_intact,
-                qualified: qualifies(f, &quote, &p, &t),
-            })
-        })
+        .filter_map(|(key, f)| hold_row(key, f, quote_or_closed(quotes.get(key).copied(), f.price_now), &t, name_of(&key.0)))
         .collect();
     rows.sort_by(|x, y| {
         y.qualified
@@ -656,7 +672,7 @@ mod tests {
     #[tokio::test]
     async fn load_points_reads_the_window_only() {
         let (_dir, conn) = setup().await;
-        assert_eq!(latest_day(&conn).await.unwrap(), None, "no closed rows yet");
+        assert_eq!(latest_day_rows(&conn).await.unwrap(), None, "no closed rows yet");
         let l = latest();
         closed_row(&conn, "item1", "", l - Duration::days(90), 5, Some(10.0)).await; // before the 90-day window
         closed_row(&conn, "item1", "", l - Duration::days(89), 6, Some(11.0)).await;
@@ -665,7 +681,8 @@ mod tests {
         closed_row(&conn, "item1", "", l, 8, Some(12.5)).await;
         closed_row(&conn, "item1", "", l + Duration::days(1), 9, Some(13.0)).await; // after the given latest day
         closed_row(&conn, "item2", "rank=5", l - Duration::days(10), 3, Some(40.0)).await;
-        assert_eq!(latest_day(&conn).await.unwrap(), Some(l + Duration::days(1)));
+        closed_row(&conn, "item2", "", l + Duration::days(1), 0, None).await; // a day without trades is a row too
+        assert_eq!(latest_day_rows(&conn).await.unwrap(), Some((l + Duration::days(1), 2)));
 
         let mut points = load_points(&conn, l).await.unwrap();
         assert_eq!(points.len(), 2);
@@ -741,7 +758,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cache_recomputes_only_when_the_latest_day_changes() {
+    async fn cache_recomputes_only_when_the_latest_day_or_its_rows_change() {
         let _guard = cache_guard();
         let (_dir, conn) = setup().await;
         let empty = serve(&conn, defaults()).await;
@@ -753,18 +770,36 @@ mod tests {
         assert_eq!((first.latest_day.as_str(), first.scored, loads()), ("2026-09-28", 1, 1));
         assert_eq!(first.rows[0].quote_source, "closed");
 
-        // A key on days up to the same latest day stays unseen, but quotes are read on every call.
-        series(&conn, "late", "", 1.02).await;
+        // Same day, same rows: the cached fits, but quotes are read on every call.
         quote(&conn, "riser", 175, 170).await;
         let second = serve(&conn, defaults()).await;
-        assert_eq!((second.scored, loads()), (1, 1), "same latest day: the cached fits");
+        assert_eq!((second.scored, loads()), (1, 1), "same latest day and rows: the cached fits");
         assert_eq!(second.rows[0].quote_source, "sweep");
 
-        closed_row(&conn, "riser", "", latest() + Duration::days(1), 70, Some(230.0)).await;
+        // The closed pass fills the latest day item by item: a new row on it is a new fit.
+        series(&conn, "late", "", 1.02).await;
         let third = serve(&conn, defaults()).await;
-        assert_eq!((third.latest_day.as_str(), third.scored, loads()), ("2026-09-29", 2, 2), "a newer day recomputes");
+        assert_eq!((third.latest_day.as_str(), third.scored, loads()), ("2026-09-28", 2, 2), "a new row on the same day recomputes");
+
+        closed_row(&conn, "riser", "", latest() + Duration::days(1), 70, Some(230.0)).await;
+        let fourth = serve(&conn, defaults()).await;
+        assert_eq!((fourth.latest_day.as_str(), fourth.scored, loads()), ("2026-09-29", 2, 3), "a newer day recomputes");
         serve(&conn, defaults()).await;
-        assert_eq!(loads(), 2);
+        assert_eq!(loads(), 3);
+    }
+
+    #[test]
+    fn non_finite_projections_are_not_served() {
+        let key = ("item".to_string(), String::new());
+        let names = || Some(("Item".to_string(), "item".to_string(), vec!["mod".to_string()]));
+        // No spread (bid ≥ price_now): exit_low = 100·e^(0.8 − 0.2550587) ≈ 172.45 against 150, +15 %.
+        let q = Quote { ask: 150.0, bid: 180.0, source: "sweep" };
+        let row = hold_row(&key, &sample_fit(), q, &defaults(), names()).unwrap();
+        assert_eq!((row.item_id.as_str(), row.name.as_str(), row.category, row.qualified), ("item", "Item", "mod", true));
+        let huge = HoldThresholds { horizon_weeks: 100_000, ..defaults() };
+        assert_eq!(hold_row(&key, &sample_fit(), q, &huge, names()), None, "exp overflows to infinity");
+        assert_eq!(hold_row(&key, &Fit { s: f64::NAN, ..sample_fit() }, q, &defaults(), names()), None, "a NaN exit_low alone");
+        assert_eq!(hold_row(&key, &sample_fit(), q, &defaults(), None), None, "an item the cache no longer knows");
     }
 
     #[tokio::test]
