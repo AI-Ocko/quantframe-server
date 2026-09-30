@@ -9,6 +9,7 @@ use crate::collector::closed::{self, RefreshStatus};
 use crate::collector::market::{self, Movers, OverviewRow, Warmup};
 use crate::collector::stats::StatsConfig;
 use crate::collector::trade_tax;
+use crate::collector::trends::{self, HoldThresholds, Holds};
 use crate::enums::{PriceSourceMode, ProfitBasis};
 use crate::trader::compare::{self, CandidateCounts, ItemLookup, PriceSourceRow};
 use crate::trader::price_source::{all_item_stats, effective_stats, source_settings};
@@ -42,6 +43,13 @@ pub async fn market_overview() -> Result<Vec<OverviewRow>, Error> {
 
 pub async fn market_movers(min_volume: f64) -> Result<Movers, Error> {
     market::movers(database()?, min_volume, name_of()?).await
+}
+
+/// Long-term positions over the closed history, judged with the tab's thresholds (spec §25 P28).
+pub async fn market_holds(horizon_weeks: i64, min_volume: f64, min_margin_pct: f64, min_steadiness: f64) -> Result<Holds, Error> {
+    let tradable = states::cache_client()?.tradable_item();
+    let thresholds = HoldThresholds { horizon_weeks, min_volume, min_margin_pct, min_steadiness, min_weeks: 12 };
+    trends::holds(database()?, Utc::now(), &thresholds, |id| tradable.get_by(id).ok().map(|item| (item.name, item.wfm_url, item.tags))).await
 }
 
 /// Only keys the collector knows: `tracked`, the history histogram and the projection stay on its own universe (spec §25 P12).

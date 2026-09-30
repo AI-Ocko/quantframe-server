@@ -63,6 +63,7 @@ rpc_table! {
     market_item_history => collector::market_item_history { wfm_url: String, sub_type: Option<String>, days: i64 },
     market_overview => market::market_overview {},
     market_movers => market::market_movers { min_volume: f64 },
+    market_holds => market::market_holds { horizon_weeks: i64, min_volume: f64, min_margin_pct: f64, min_steadiness: f64 },
     market_warmup => market::market_warmup {},
     market_backfill_start => market::market_backfill_start {},
     market_backfill_status => market::market_backfill_status {},
@@ -175,10 +176,11 @@ mod tests {
 
     #[tokio::test]
     async fn market_commands_are_routable_and_validate_args() {
-        for name in ["market_overview", "market_movers", "market_warmup", "market_price_sources"] {
+        for name in ["market_overview", "market_movers", "market_warmup", "market_price_sources", "market_holds"] {
             assert!(COMMANDS.contains(&name), "{name}");
         }
         assert!(dispatch("market_movers", json!({"minVolume": "three"})).await.unwrap().is_err(), "min_volume must be a number");
+        assert!(dispatch("market_holds", json!({"horizonWeeks": 4})).await.unwrap().is_err(), "every threshold is required");
     }
 
     #[tokio::test]

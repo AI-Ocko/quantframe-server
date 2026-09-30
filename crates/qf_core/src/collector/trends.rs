@@ -1,8 +1,10 @@
 //! Long-term price trends and a conservative hold projection (spec §25 P28).
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
+use serde::Serialize;
 use service::sea_orm::{ConnectionTrait, DatabaseConnection};
 use utils::Error;
 
@@ -269,6 +271,125 @@ pub async fn load_sweep_quotes(conn: &DatabaseConnection, now: DateTime<Utc>) ->
         Ok((key, (r.try_get("", "min_sell").map_err(|e| db_err(C, e))?, r.try_get("", "max_buy").map_err(|e| db_err(C, e))?)))
     })
     .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HoldRow {
+    pub item_id: String,
+    pub sub_type: String,
+    pub name: String,
+    pub slug: String,
+    pub category: &'static str,
+    pub ask_now: f64,
+    pub bid_now: f64,
+    pub quote_source: &'static str,
+    pub exit_low: f64,
+    pub exit_mid: f64,
+    pub profit_low: f64,
+    pub profit_low_pct: f64,
+    pub profit_mid: f64,
+    pub trend_pct_month: f64,
+    pub steadiness: f64,
+    pub volume: f64,
+    pub weeks: usize,
+    pub trend_intact: bool,
+    pub qualified: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Holds {
+    pub latest_day: String,
+    /// Fitted keys the item cache knows: one row each.
+    pub scored: usize,
+    pub qualified: usize,
+    pub rows: Vec<HoldRow>,
+}
+
+type Fits = HashMap<(String, String), Fit>;
+
+/// The fits change only when a new closed day lands; quotes and thresholds apply per call.
+static FITS: Mutex<Option<(NaiveDate, Arc<Fits>)>> = Mutex::new(None);
+#[cfg(test)]
+static LOADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A panic while the lock was held leaves whole fits or none, so the value is taken back out.
+fn fits_lock() -> MutexGuard<'static, Option<(NaiveDate, Arc<Fits>)>> {
+    FITS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Every fitted key the item cache knows, projected and judged with `t`: qualified rows first, then the
+/// best pessimistic margin.
+pub async fn holds(
+    conn: &DatabaseConnection,
+    now: DateTime<Utc>,
+    t: &HoldThresholds,
+    name_of: impl Fn(&str) -> Option<(String, String, Vec<String>)>,
+) -> Result<Holds, Error> {
+    let finite = |v: f64| if v.is_finite() { v } else { 0.0 };
+    let t = HoldThresholds {
+        // The spec's 1–12 weeks; `last_week + H` is plain arithmetic, and a huge H would overflow exp.
+        horizon_weeks: t.horizon_weeks.clamp(1, 12),
+        min_volume: finite(t.min_volume),
+        min_margin_pct: finite(t.min_margin_pct),
+        // `max` drops a NaN.
+        min_steadiness: t.min_steadiness.max(0.0).min(1.0),
+        min_weeks: t.min_weeks,
+    };
+    let Some(latest) = latest_day(conn).await? else {
+        return Ok(Holds { latest_day: String::new(), scored: 0, qualified: 0, rows: vec![] });
+    };
+    // Each guard lives for its statement only, never across an await.
+    let cached = fits_lock().as_ref().filter(|(day, _)| *day == latest).map(|(_, fits)| fits.clone());
+    let fits = match cached {
+        Some(fits) => fits,
+        None => {
+            #[cfg(test)]
+            LOADS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let points = load_points(conn, latest).await?;
+            let fits: Arc<Fits> = Arc::new(points.into_iter().filter_map(|(key, points)| Some((key, fit(&points, latest)?))).collect());
+            // Two calls racing on a new day both fit it; the last writer wins.
+            *fits_lock() = Some((latest, fits.clone()));
+            fits
+        }
+    };
+    let quotes = load_sweep_quotes(conn, now).await?;
+    let mut rows: Vec<HoldRow> = fits
+        .iter()
+        .filter_map(|(key, f)| {
+            let (name, slug, tags) = name_of(&key.0)?;
+            let quote = quote_or_closed(quotes.get(key).copied(), f.price_now);
+            let p = project(f, &quote, t.horizon_weeks);
+            Some(HoldRow {
+                item_id: key.0.clone(),
+                sub_type: key.1.clone(),
+                name,
+                slug,
+                category: category_of(&tags),
+                ask_now: quote.ask,
+                bid_now: quote.bid,
+                quote_source: quote.source,
+                exit_low: p.exit_low,
+                exit_mid: p.exit_mid,
+                profit_low: p.profit_low,
+                profit_low_pct: p.profit_low_pct,
+                profit_mid: p.profit_mid,
+                trend_pct_month: trend_pct_month(f.b),
+                steadiness: f.r2,
+                volume: f.volume,
+                weeks: f.weeks,
+                trend_intact: f.trend_intact,
+                qualified: qualifies(f, &quote, &p, &t),
+            })
+        })
+        .collect();
+    rows.sort_by(|x, y| {
+        y.qualified
+            .cmp(&x.qualified)
+            .then(y.profit_low_pct.total_cmp(&x.profit_low_pct))
+            .then_with(|| (&x.item_id, &x.sub_type).cmp(&(&y.item_id, &y.sub_type)))
+    });
+    let qualified = rows.iter().filter(|r| r.qualified).count();
+    Ok(Holds { latest_day: latest.format("%Y-%m-%d").to_string(), scored: rows.len(), qualified, rows })
 }
 
 #[cfg(test)]
@@ -582,5 +703,147 @@ mod tests {
             quotes,
             HashMap::from([(("item1".to_string(), String::new()), (Some(12), None)), (("item2".to_string(), String::new()), (Some(7), Some(6)))])
         );
+    }
+
+    fn clear_cache() {
+        *fits_lock() = None;
+        LOADS.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+    /// How many times `holds` loaded the closed points since the last `clear_cache`.
+    fn loads() -> usize {
+        LOADS.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    /// The fit cache is process-wide, so the tests that serve holds run one at a time, each from an empty cache.
+    fn cache_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        clear_cache();
+        guard
+    }
+    fn now() -> DateTime<Utc> {
+        parse_ts("2026-09-29T12:00:00Z").unwrap()
+    }
+    /// Every item but `gone` is known, as a mod.
+    fn known(id: &str) -> Option<(String, String, Vec<String>)> {
+        (id != "gone").then(|| (format!("Item {id}"), format!("{id}_slug"), vec!["mod".to_string()]))
+    }
+    /// 13 weekly closed days ending on the latest day, 70 trades each, growing by `growth` a week from 100 p.
+    async fn series(conn: &DatabaseConnection, item: &str, sub_type: &str, growth: f64) {
+        for p in weekly(&(0..13).map(|w| 100.0 * growth.powi(w)).collect::<Vec<_>>()) {
+            closed_row(conn, item, sub_type, p.day, p.volume, Some(p.median)).await;
+        }
+    }
+    async fn quote(conn: &DatabaseConnection, item: &str, ask: i64, bid: i64) {
+        sweep_row(conn, item, "", now() - Duration::hours(1), Some(ask), Some(bid)).await;
+    }
+    async fn serve(conn: &DatabaseConnection, t: HoldThresholds) -> Holds {
+        holds(conn, now(), &t, known).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn cache_recomputes_only_when_the_latest_day_changes() {
+        let _guard = cache_guard();
+        let (_dir, conn) = setup().await;
+        let empty = serve(&conn, defaults()).await;
+        assert_eq!(empty, Holds { latest_day: String::new(), scored: 0, qualified: 0, rows: vec![] });
+        assert_eq!(loads(), 0, "no closed day, nothing to load");
+
+        series(&conn, "riser", "", 1.05).await;
+        let first = serve(&conn, defaults()).await;
+        assert_eq!((first.latest_day.as_str(), first.scored, loads()), ("2026-09-28", 1, 1));
+        assert_eq!(first.rows[0].quote_source, "closed");
+
+        // A key on days up to the same latest day stays unseen, but quotes are read on every call.
+        series(&conn, "late", "", 1.02).await;
+        quote(&conn, "riser", 175, 170).await;
+        let second = serve(&conn, defaults()).await;
+        assert_eq!((second.scored, loads()), (1, 1), "same latest day: the cached fits");
+        assert_eq!(second.rows[0].quote_source, "sweep");
+
+        closed_row(&conn, "riser", "", latest() + Duration::days(1), 70, Some(230.0)).await;
+        let third = serve(&conn, defaults()).await;
+        assert_eq!((third.latest_day.as_str(), third.scored, loads()), ("2026-09-29", 2, 2), "a newer day recomputes");
+        serve(&conn, defaults()).await;
+        assert_eq!(loads(), 2);
+    }
+
+    #[tokio::test]
+    async fn thresholds_apply_at_serve_time() {
+        let _guard = cache_guard();
+        let (_dir, conn) = setup().await;
+        // riser: exit ≈ 100·1.05^16 − (175.26 − 170) ≈ 213.0 against an ask of 175, +21.7 %.
+        // slow: exit ≈ 100·1.02^16 − (125.57 − 125) ≈ 136.7 against 126, +8.5 %.
+        series(&conn, "riser", "", 1.05).await;
+        quote(&conn, "riser", 175, 170).await;
+        series(&conn, "slow", "", 1.02).await;
+        quote(&conn, "slow", 126, 125).await;
+        let qualified = |h: &Holds| h.rows.iter().filter(|r| r.qualified).map(|r| r.item_id.clone()).collect::<Vec<_>>();
+
+        let at = |min_margin_pct| HoldThresholds { min_margin_pct, ..defaults() };
+        let default = serve(&conn, at(10.0)).await;
+        assert_eq!((default.scored, default.qualified, qualified(&default)), (2, 1, vec!["riser".to_string()]));
+        let riser = &default.rows[0];
+        assert!((riser.profit_low_pct - 21.7).abs() < 0.1, "{}", riser.profit_low_pct);
+        assert_eq!((riser.name.as_str(), riser.slug.as_str(), riser.category), ("Item riser", "riser_slug", "mod"));
+        assert_eq!((riser.ask_now, riser.bid_now, riser.quote_source, riser.weeks, riser.trend_intact), (175.0, 170.0, "sweep", 13, true));
+        assert!((riser.trend_pct_month - trend_pct_month(1.05f64.ln())).abs() < 1e-9 && riser.steadiness > 0.999);
+        assert!((riser.volume - 910.0 / 90.0).abs() < 1e-9);
+
+        assert_eq!(serve(&conn, at(25.0)).await.qualified, 0, "a stricter margin");
+        assert_eq!(serve(&conn, at(5.0)).await.qualified, 2, "a looser margin");
+        assert_eq!(serve(&conn, HoldThresholds { min_volume: 11.0, ..defaults() }).await.qualified, 0, "910 / 90 trades a day");
+        assert_eq!(loads(), 1, "every call served from one fit");
+    }
+
+    #[tokio::test]
+    async fn serve_time_inputs_are_clamped() {
+        let _guard = cache_guard();
+        let (_dir, conn) = setup().await;
+        series(&conn, "riser", "", 1.05).await;
+        quote(&conn, "riser", 175, 170).await;
+        let at = |horizon_weeks| HoldThresholds { horizon_weeks, ..defaults() };
+        let twelve = serve(&conn, at(12)).await;
+        assert!(twelve.rows[0].exit_mid > serve(&conn, at(11)).await.rows[0].exit_mid);
+        assert_eq!(serve(&conn, at(100_000)).await, twelve, "horizons past 12 weeks are 12 weeks");
+        let one = serve(&conn, at(1)).await;
+        assert_eq!(serve(&conn, at(0)).await, one, "horizons under a week are one week");
+        assert_eq!(serve(&conn, at(-3)).await, one);
+
+        let nonsense = HoldThresholds { min_volume: f64::INFINITY, min_margin_pct: f64::NAN, min_steadiness: f64::NAN, ..defaults() };
+        assert_eq!(serve(&conn, nonsense).await.qualified, 1, "non-finite thresholds are 0");
+        assert_eq!(serve(&conn, HoldThresholds { min_steadiness: -1.0, ..defaults() }).await.qualified, 1);
+    }
+
+    #[tokio::test]
+    async fn unknown_items_are_skipped() {
+        let _guard = cache_guard();
+        let (_dir, conn) = setup().await;
+        for item in ["riser", "gone"] {
+            series(&conn, item, "", 1.05).await;
+            quote(&conn, item, 175, 170).await;
+        }
+        let h = serve(&conn, defaults()).await;
+        assert_eq!((h.scored, h.qualified), (1, 1));
+        assert_eq!(h.rows.iter().map(|r| r.item_id.as_str()).collect::<Vec<_>>(), vec!["riser"]);
+    }
+
+    #[tokio::test]
+    async fn rows_sort_qualified_first() {
+        let _guard = cache_guard();
+        let (_dir, conn) = setup().await;
+        series(&conn, "riser", "", 1.05).await; // qualified, +21.7 %
+        quote(&conn, "riser", 175, 170).await;
+        series(&conn, "fast", "", 1.08).await; // closed quote, +41 %: never qualified
+        series(&conn, "slow", "", 1.02).await; // +8.5 %
+        quote(&conn, "slow", 126, 125).await;
+        for (item, sub_type) in [("tie_b", ""), ("tie_a", "rank=5"), ("tie_a", "")] {
+            series(&conn, item, sub_type, 1.03).await; // closed quote, +14.2 % each
+        }
+        let h = serve(&conn, defaults()).await;
+        assert_eq!(
+            h.rows.iter().map(|r| (r.item_id.as_str(), r.sub_type.as_str(), r.qualified)).collect::<Vec<_>>(),
+            vec![("riser", "", true), ("fast", "", false), ("tie_a", "", false), ("tie_a", "rank=5", false), ("tie_b", "", false), ("slow", "", false)]
+        );
+        assert_eq!((h.scored, h.qualified), (6, 1));
     }
 }
