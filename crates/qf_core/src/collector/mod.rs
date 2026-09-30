@@ -13,6 +13,7 @@ pub mod runner;
 pub mod stats;
 pub mod store;
 pub mod trade_tax;
+pub mod trends;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use service::sea_orm::{DbBackend, Statement, Value};

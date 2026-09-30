@@ -47,7 +47,7 @@ pub struct ClosedStats {
     pub warm: bool,
 }
 
-fn median_f64(values: &[f64]) -> Option<f64> {
+pub(crate) fn median_f64(values: &[f64]) -> Option<f64> {
     if values.is_empty() {
         return None;
     }
