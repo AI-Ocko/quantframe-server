@@ -19,6 +19,11 @@ const LAST_WEEK: i64 = (TREND_WINDOW_DAYS - 1) / 7;
 pub const MIN_WEEKS: usize = 11;
 // The holdout fit drops two weeks and needs a residual degree of freedom.
 const _: () = assert!(MIN_WEEKS >= 5);
+/// The recent slope is fitted over this many of the last scored weeks.
+const RECENT_WEEKS: usize = 6;
+const _: () = assert!(MIN_WEEKS >= RECENT_WEEKS);
+/// Durbin–Watson below this means the residuals move in runs (a curve, not a line): the band would be too narrow.
+pub const MIN_DW: f64 = 1.0;
 pub const QUOTE_MAX_AGE_H: i64 = 24;
 
 /// One closed day with trades; only rows with `median > 0` become points.
@@ -46,6 +51,10 @@ pub struct Fit {
     pub volume: f64,
     /// Each of the last two weeks is at or above the `2s` band of a fit over the weeks before them.
     pub trend_intact: bool,
+    /// Durbin–Watson statistic of the full fit's residuals in week order; 2 for a series on its line.
+    pub dw: f64,
+    /// Least-squares slope of `ln(weekly price)` over the last `RECENT_WEEKS` scored weeks.
+    pub b_recent: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -140,6 +149,14 @@ pub fn fit(points: &[DailyPoint], latest: NaiveDate) -> Option<Fit> {
     // A plain 2·s_h band, narrower than a prediction interval: the strict side. The epsilon keeps a perfect
     // series from failing its own band on rounding.
     let trend_intact = (h..n).all(|i| ys[i] >= hold.a + hold.b * xs[i] - 2.0 * s_h - 1e-9);
+    // Residuals within 1e-9 of the line (the epsilon above) are rounding: a series on its line has nothing that
+    // could run, and 2 is the independent-errors value. A perfect riser's Σe² is ~3e-30 with a meaningless dw.
+    let dw = if full.sse <= n as f64 * 1e-18 {
+        2.0
+    } else {
+        let e: Vec<f64> = xs.iter().zip(&ys).map(|(x, y)| y - a - b * x).collect();
+        e.windows(2).map(|d| (d[1] - d[0]).powi(2)).sum::<f64>() / full.sse
+    };
     let trades: i64 = in_window(points, latest).map(|(_, p)| p.volume).sum();
     let f = Fit {
         a,
@@ -153,8 +170,10 @@ pub fn fit(points: &[DailyPoint], latest: NaiveDate) -> Option<Fit> {
         price_now: ((ys[n - 2] + ys[n - 1]) / 2.0).exp(),
         volume: trades as f64 / TREND_WINDOW_DAYS as f64,
         trend_intact,
+        dw,
+        b_recent: ols(&xs[n - RECENT_WEEKS..], &ys[n - RECENT_WEEKS..]).b,
     };
-    [f.a, f.b, f.r2, f.s, f.mean_w, f.sxx, f.price_now, f.volume].iter().all(|v| v.is_finite()).then_some(f)
+    [f.a, f.b, f.r2, f.s, f.mean_w, f.sxx, f.price_now, f.volume, f.dw, f.b_recent].iter().all(|v| v.is_finite()).then_some(f)
 }
 
 /// Widens `s` into the standard error of a new week's log price at week `t` off the fitted line.
@@ -166,19 +185,23 @@ pub fn trend_pct_month(b: f64) -> f64 {
     ((b * 30.0 / 7.0).exp() - 1.0) * 100.0
 }
 
-/// The latest sweep's `(min_sell, max_buy)`; without both sides, both are `price_now`.
+/// The latest sweep's `(min_sell, max_buy)`, the ask no lower than `price_now` (a bait listing under the recent
+/// trades is no buy price); without both sides, both are `price_now`.
 pub fn quote_or_closed(sweep: Option<(Option<i64>, Option<i64>)>, price_now: f64) -> Quote {
     match sweep {
-        Some((Some(ask), Some(bid))) => Quote { ask: ask as f64, bid: bid as f64, source: "sweep" },
+        Some((Some(ask), Some(bid))) => Quote { ask: (ask as f64).max(price_now), bid: bid as f64, source: "sweep" },
         _ => Quote { ask: price_now, bid: price_now, source: "closed" },
     }
 }
 
+/// From the fitted value at the last week, the slower of the full and recent slopes runs the horizon, so a rise that
+/// has already levelled off is not projected on; the band stays the full fit's prediction interval at `t`.
 pub fn project(fit: &Fit, quote: &Quote, horizon_weeks: i64) -> Projection {
     let t = (fit.last_week as i64 + horizon_weeks) as f64;
     let spread = (fit.price_now - quote.bid).max(0.0);
-    let exit_mid = (fit.a + fit.b * t).exp() - spread;
-    let exit_low = (fit.a + fit.b * t - 2.0 * fit.s * prediction_factor(fit, t)).exp() - spread;
+    let ln_mid = fit.a + fit.b * fit.last_week as f64 + fit.b.min(fit.b_recent) * horizon_weeks as f64;
+    let exit_mid = ln_mid.exp() - spread;
+    let exit_low = (ln_mid - 2.0 * fit.s * prediction_factor(fit, t)).exp() - spread;
     let profit_low = exit_low - quote.ask;
     Projection {
         exit_low,
@@ -193,9 +216,13 @@ fn is_finite(p: &Projection) -> bool {
     [p.exit_low, p.exit_mid, p.profit_low, p.profit_low_pct, p.profit_mid].iter().all(|v| v.is_finite())
 }
 
-/// Every threshold met, a real price to buy at (1 p is warframe.market's minimum) and a finite projection.
+/// Every threshold met, a real price to buy at (1 p is warframe.market's minimum), a finite projection, residuals
+/// that do not run (`MIN_DW`) and a scored latest week (a key whose last closed day is missing is not judged on
+/// stale weeks).
 pub fn qualifies(fit: &Fit, quote: &Quote, p: &Projection, t: &HoldThresholds) -> bool {
     is_finite(p)
+        && fit.last_week == LAST_WEEK as usize
+        && fit.dw >= MIN_DW
         && quote.ask >= 1.0
         && fit.r2 >= t.min_steadiness
         && fit.weeks >= t.min_weeks
@@ -241,7 +268,7 @@ pub async fn load_points(conn: &DatabaseConnection, latest: NaiveDate) -> Result
     const C: &str = "Trends:Points";
     let rows = conn
         .query_all(stmt(
-            "SELECT item_id, sub_type, day, volume, median FROM closed_stats_daily WHERE day >= ? AND day <= ? AND median > 0",
+            "SELECT item_id, sub_type, day, volume, median FROM closed_stats_daily NOT INDEXED WHERE day >= ? AND day <= ? AND median > 0",
             vec![first_day(latest).to_string().into(), latest.to_string().into()],
         ))
         .await
@@ -370,7 +397,7 @@ pub async fn holds(
         // The spec's 1–12 weeks; `last_week + H` is plain arithmetic, and a huge H would overflow exp.
         horizon_weeks: t.horizon_weeks.clamp(1, 12),
         min_volume: finite(t.min_volume),
-        min_margin_pct: finite(t.min_margin_pct),
+        min_margin_pct: finite(t.min_margin_pct).max(0.0),
         // `max` drops a NaN.
         min_steadiness: t.min_steadiness.max(0.0).min(1.0),
         min_weeks: t.min_weeks,
@@ -449,6 +476,8 @@ mod tests {
         assert!(close(f.price_now, 100.0 * 1.05f64.powf(11.5), 1e-6), "geometric mean of weeks 11 and 12: {}", f.price_now);
         assert!(close(f.volume, 910.0 / 90.0, 1e-9), "trades per calendar day: 910 / 90, not 910 / 13 trading days: {}", f.volume);
         assert_eq!((f.mean_w, f.sxx), (6.0, 182.0));
+        assert_eq!(f.dw, 2.0, "rounding-level residuals (Σe² ≈ 3e-30) are no autocorrelation");
+        assert!(close(f.b_recent, f.b, 1e-9), "b_recent = {}", f.b_recent);
     }
 
     #[test]
@@ -533,10 +562,13 @@ mod tests {
         let f = fit(&weekly(&broken), latest()).unwrap();
         assert!(!f.trend_intact, "both of the last two weeks broke the band of the weeks before them");
         let q = Quote { ask: f.price_now, bid: f.price_now, source: "sweep" };
-        let p = project(&f, &q, 4);
-        assert!(f.r2 >= 0.85 && f.weeks >= 12 && f.volume >= 10.0 && p.profit_low_pct >= 10.0, "every other threshold passes: r2 {} pct {}", f.r2, p.profit_low_pct);
-        assert!(!qualifies(&f, &q, &p, &defaults()));
-        assert!(qualifies(&Fit { trend_intact: true, ..f }, &q, &p, &defaults()), "the trend check alone blocks it");
+        assert!(project(&f, &q, 4).profit_low_pct < 10.0, "the slower recent slope catches the break too: +2.7 %");
+        // On the full slope (+13.7 %) every other threshold passes.
+        let full_slope = Fit { b_recent: f.b, ..f };
+        let p = project(&full_slope, &q, 4);
+        assert!(f.r2 >= 0.85 && f.weeks >= 12 && f.volume >= 10.0 && f.dw >= MIN_DW && p.profit_low_pct >= 10.0, "r2 {} dw {} pct {}", f.r2, f.dw, p.profit_low_pct);
+        assert!(!qualifies(&full_slope, &q, &p, &defaults()));
+        assert!(qualifies(&Fit { trend_intact: true, ..full_slope }, &q, &p, &defaults()), "the trend check alone blocks it");
 
         // A riser with ±2 % alternating noise whose last two weeks stay in the band.
         let base: Vec<f64> = (0..13).map(|w| noisy(w, 0.02)).collect();
@@ -567,10 +599,80 @@ mod tests {
         assert!(!with_week_11(0.97), "outside 2·s_h (would pass at 3·s_h)");
     }
 
+    /// Flat at 100 for five weeks, a climb, then flat at 200 for five: the rise is over by week 8.
+    fn s_curve() -> Vec<f64> {
+        let mut prices = vec![100.0; 5];
+        prices.extend([119.0, 141.0, 168.0]);
+        prices.extend([200.0; 5]);
+        prices
+    }
+
+    #[test]
+    fn a_finished_rise_does_not_qualify() {
+        let f = fit(&weekly(&s_curve()), latest()).unwrap();
+        let q = quote_or_closed(Some((Some(200), Some(196))), f.price_now);
+        let p = project(&f, &q, 4);
+        assert!(f.r2 >= 0.85 && f.trend_intact && f.volume >= 10.0 && f.weeks == 13, "every fit threshold passes: r2 {}", f.r2);
+        assert!(!qualifies(&f, &q, &p, &defaults()), "profit_low_pct {}", p.profit_low_pct);
+
+        // Without either guard it qualified: the full slope b = 0.0781 projects +12.4 %.
+        let full_slope = Fit { b_recent: f.b, ..f };
+        let p_full = project(&full_slope, &q, 4);
+        assert!(close(p_full.profit_low_pct, 12.397870269311, 1e-6), "{}", p_full.profit_low_pct);
+        assert!(qualifies(&Fit { dw: MIN_DW, ..full_slope }, &q, &p_full, &defaults()), "nothing else blocks it");
+        // The Durbin–Watson gate alone: the residuals run below, above, then below the line.
+        assert!(close(f.dw, 0.5614299446564984, 1e-9), "dw = {}", f.dw);
+        assert!(!qualifies(&full_slope, &q, &p_full, &defaults()), "dw < 1 alone blocks it");
+        // The slower slope alone: the last six weeks rise at b_recent = 0.0249 (their 200 plateau and the climb's end).
+        assert!(close(f.b_recent, 0.02490762673496822, 1e-9), "b_recent = {}", f.b_recent);
+        assert!(close(p.profit_low_pct, -9.5143055437009, 1e-6), "{}", p.profit_low_pct);
+        assert!(!qualifies(&Fit { dw: MIN_DW, ..f }, &q, &p, &defaults()), "the slower slope alone blocks it");
+    }
+
+    #[test]
+    fn a_steady_riser_with_alternating_noise_still_qualifies() {
+        let prices: Vec<f64> = (0..13).map(|w| 100.0 * 1.05f64.powi(w) * (1.0 + 0.02 * (-1f64).powi(w))).collect();
+        let f = fit(&weekly(&prices), latest()).unwrap();
+        let q = quote_or_closed(Some((Some(176), Some(172))), f.price_now);
+        let p = project(&f, &q, 4);
+        assert!(qualifies(&f, &q, &p, &defaults()), "profit_low_pct {}", p.profit_low_pct);
+        // Alternating residuals: dw = 26/7. The last six weeks start low and end high, so b_recent is a little over b.
+        assert!(close(f.dw, 26.0 / 7.0, 1e-9), "dw = {}", f.dw);
+        assert!(f.b_recent >= f.b && f.b_recent - f.b < 0.005, "b {} b_recent {}", f.b, f.b_recent);
+        assert!(close(p.profit_low_pct, 15.680814551560617, 1e-6), "{}", p.profit_low_pct);
+    }
+
+    #[test]
+    fn a_key_missing_its_latest_week_never_qualifies() {
+        // The riser's weeks 0..=11 with nothing in week 12, at 100 trades a point so volume (12 · 100 / 90) still passes.
+        let points: Vec<DailyPoint> = weekly(&riser()[..12]).into_iter().map(|p| point(p.day, 100, p.median)).collect();
+        let f = fit(&points, latest()).unwrap();
+        assert_eq!((f.weeks, f.last_week), (12, 11));
+        let q = quote_or_closed(Some((Some(f.price_now.ceil() as i64), Some(f.price_now as i64))), f.price_now);
+        let p = project(&f, &q, 4);
+        assert!(p.profit_low_pct >= 10.0 && f.volume >= 10.0, "every other threshold passes: {}", p.profit_low_pct);
+        assert!(!qualifies(&f, &q, &p, &defaults()), "judged on weeks that stop a week early");
+        assert!(qualifies(&Fit { last_week: 12, ..f }, &q, &p, &defaults()), "the latest-week check alone blocks it");
+    }
+
+    #[test]
+    fn a_bait_ask_below_the_recent_price_is_not_the_buy_price() {
+        // Live: one in-game seller offered 13 Lavos Prime Sets at 1 p while closed trades ran 15–22 p.
+        let flat: Vec<f64> = [100.0, 104.0, 97.0, 103.0, 98.0, 102.0, 99.0, 104.0, 96.0, 101.0, 103.0, 97.0, 100.0].iter().map(|p| p * 0.18).collect();
+        let f = fit(&weekly(&flat), latest()).unwrap();
+        let q = quote_or_closed(Some((Some(1), Some(22))), f.price_now);
+        assert_eq!(q, Quote { ask: f.price_now, bid: 22.0, source: "sweep" }, "the buy price is at least the recent price");
+        assert!(project(&f, &Quote { ask: 1.0, ..q }, 4).profit_low_pct > 1000.0, "the bait ask would read as +1540 %");
+        let p = project(&f, &q, 4);
+        assert!(close(p.profit_low_pct, -7.51067, 1e-4), "{}", p.profit_low_pct);
+        assert!(!qualifies(&f, &q, &p, &defaults()));
+        assert_eq!(quote_or_closed(Some((Some(20), Some(17))), f.price_now).ask, 20.0, "an ask above the recent price stands");
+    }
+
     fn sample_fit() -> Fit {
         Fit {
             a: 100f64.ln(), b: 0.05, r2: 0.95, s: 0.1, last_week: 12, weeks: 13, mean_w: 6.0, sxx: 182.0,
-            price_now: 180.0, volume: 25.0, trend_intact: true,
+            price_now: 180.0, volume: 25.0, trend_intact: true, dw: 2.0, b_recent: 0.05,
         }
     }
 
@@ -587,7 +689,7 @@ mod tests {
 
     #[test]
     fn project_uses_the_lower_band_and_the_spread() {
-        // t = 12 + 4 = 16, so a + b·t = ln 100 + 0.8; spread = 180 − 170 = 10.
+        // b_recent = b = 0.05: ln_mid = a + b·12 + 0.05·4 = ln 100 + 0.8; spread = 180 − 170 = 10. se_pred is at t = 16.
         // Lower band: 2·s·√(148/91) = 0.2 × 1.2752935 = 0.2550587, so exit_low = 100·e^(0.8 − 0.2550587) − 10.
         let quote = Quote { ask: 160.0, bid: 170.0, source: "sweep" };
         let p = project(&sample_fit(), &quote, 4);
@@ -601,6 +703,17 @@ mod tests {
         assert!(close(above.exit_mid, 222.55409284924679, 1e-9), "a bid above price_now is no negative spread");
         let free = project(&sample_fit(), &Quote { ask: 0.0, bid: 170.0, source: "sweep" }, 4);
         assert_eq!(free.profit_low_pct, 0.0);
+
+        // A slower recent slope carries the horizon from the fitted value at the last week: b_recent = 0.02 gives
+        // ln_mid = ln 100 + 0.05·12 + 0.02·4 = ln 100 + 0.68, the same band 0.2550587.
+        let slow = project(&Fit { b_recent: 0.02, ..sample_fit() }, &quote, 4);
+        assert!(close(slow.exit_mid, 197.38777322304477 - 10.0, 1e-9), "100·e^0.68 − 10: {}", slow.exit_mid);
+        assert!(close(slow.exit_low, 152.95006215208704 - 10.0, 1e-9), "100·e^(0.68 − 0.2550587) − 10: {}", slow.exit_low);
+        assert!(close(slow.profit_low, -17.049937847912958, 1e-9));
+        assert!(close(slow.profit_low_pct, -10.656211154945598, 1e-9));
+        assert!(close(slow.profit_mid, 27.387773223044775, 1e-9));
+        // A faster recent slope never raises the projection: min(b, b_recent) = b.
+        assert_eq!(project(&Fit { b_recent: 0.09, ..sample_fit() }, &quote, 4), p);
     }
 
     #[test]
@@ -623,6 +736,8 @@ mod tests {
         assert!(!qualifies(&Fit { weeks: 11, ..f }, &q, &p, &t), "weeks");
         assert!(!qualifies(&Fit { volume: 9.9, ..f }, &q, &p, &t), "volume");
         assert!(!qualifies(&Fit { trend_intact: false, ..f }, &q, &p, &t), "trend intact");
+        assert!(qualifies(&Fit { dw: MIN_DW, ..f }, &q, &p, &t) && !qualifies(&Fit { dw: 0.999, ..f }, &q, &p, &t), "durbin–watson");
+        assert!(!qualifies(&Fit { last_week: 11, ..f }, &q, &p, &t), "the latest week is not scored");
         assert!(!qualifies(&f, &Quote { source: "closed", ..q }, &p, &t), "quote source");
         assert!(!qualifies(&f, &q, &Projection { profit_low_pct: 9.99, ..p }, &t), "margin");
         assert!(qualifies(&f, &Quote { ask: 1.0, ..q }, &p, &t), "1 p is warframe.market's minimum price");
@@ -806,7 +921,8 @@ mod tests {
     async fn thresholds_apply_at_serve_time() {
         let _guard = cache_guard();
         let (_dir, conn) = setup().await;
-        // riser: exit ≈ 100·1.05^16 − (175.26 − 170) ≈ 213.0 against an ask of 175, +21.7 %.
+        // riser: its 175 ask is under price_now = 100·1.05^11.5 ≈ 175.26, so it buys at 175.26;
+        // exit ≈ 100·1.05^16 − (175.26 − 170) ≈ 213.0, +21.55 %.
         // slow: exit ≈ 100·1.02^16 − (125.57 − 125) ≈ 136.7 against 126, +8.5 %.
         series(&conn, "riser", "", 1.05).await;
         quote(&conn, "riser", 175, 170).await;
@@ -818,9 +934,10 @@ mod tests {
         let default = serve(&conn, at(10.0)).await;
         assert_eq!((default.scored, default.qualified, qualified(&default)), (2, 1, vec!["riser".to_string()]));
         let riser = &default.rows[0];
-        assert!((riser.profit_low_pct - 21.7).abs() < 0.1, "{}", riser.profit_low_pct);
+        assert!((riser.profit_low_pct - 21.552).abs() < 0.001, "{}", riser.profit_low_pct);
         assert_eq!((riser.name.as_str(), riser.slug.as_str(), riser.category), ("Item riser", "riser_slug", "mod"));
-        assert_eq!((riser.ask_now, riser.bid_now, riser.quote_source, riser.weeks, riser.trend_intact), (175.0, 170.0, "sweep", 13, true));
+        assert!((riser.ask_now - 100.0 * 1.05f64.powf(11.5)).abs() < 1e-9, "the ask floored at price_now: {}", riser.ask_now);
+        assert_eq!((riser.bid_now, riser.quote_source, riser.weeks, riser.trend_intact), (170.0, "sweep", 13, true));
         assert!((riser.trend_pct_month - trend_pct_month(1.05f64.ln())).abs() < 1e-9 && riser.steadiness > 0.999);
         assert!((riser.volume - 910.0 / 90.0).abs() < 1e-9);
 
@@ -847,6 +964,11 @@ mod tests {
         let nonsense = HoldThresholds { min_volume: f64::INFINITY, min_margin_pct: f64::NAN, min_steadiness: f64::NAN, ..defaults() };
         assert_eq!(serve(&conn, nonsense).await.qualified, 1, "non-finite thresholds are 0");
         assert_eq!(serve(&conn, HoldThresholds { min_steadiness: -1.0, ..defaults() }).await.qualified, 1);
+
+        // Asked 300 against an exit of ≈ 213: −29 %. A negative margin is a 0 margin, never a loss that qualifies.
+        series(&conn, "dear", "", 1.05).await;
+        quote(&conn, "dear", 300, 170).await;
+        assert_eq!(serve(&conn, HoldThresholds { min_margin_pct: -50.0, ..defaults() }).await.qualified, 1);
     }
 
     #[tokio::test]
@@ -866,7 +988,7 @@ mod tests {
     async fn rows_sort_qualified_first() {
         let _guard = cache_guard();
         let (_dir, conn) = setup().await;
-        series(&conn, "riser", "", 1.05).await; // qualified, +21.7 %
+        series(&conn, "riser", "", 1.05).await; // qualified, +21.55 %
         quote(&conn, "riser", 175, 170).await;
         series(&conn, "fast", "", 1.08).await; // closed quote, +41 %: never qualified
         series(&conn, "slow", "", 1.02).await; // +8.5 %
