@@ -2179,6 +2179,7 @@
             "trend_intact": "Trend intact",
             "quote": "Quote"
           },
+          "no_data": "No closed-trade statistics yet — the daily pass runs after 08:30 UTC.",
           "empty": "No position qualifies."
         },
         "warmup": {

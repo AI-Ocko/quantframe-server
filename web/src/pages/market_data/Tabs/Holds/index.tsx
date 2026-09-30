@@ -31,8 +31,7 @@ export function HoldsPanel({ isActive, onOpenItem }: { isActive?: boolean; onOpe
   };
   const [showAll, setShowAll] = useState(false);
   const [page, setPage] = useState(1);
-  // null keeps the served order (qualified first, then profit_low_pct desc) until a column is sorted.
-  const [sort, setSort] = useState<DataTableSortStatus<Row> | null>(null);
+  const [sort, setSort] = useState<DataTableSortStatus<Row>>(DEFAULT_SORT);
   const { data, isFetching } = useQuery({
     queryKey: ["market_holds", args.horizonWeeks, args.minVolume, args.minMarginPct, args.minSteadiness],
     queryFn: () => api.market.holds(args),
@@ -41,7 +40,7 @@ export function HoldsPanel({ isActive, onOpenItem }: { isActive?: boolean; onOpe
   });
   const rows = useMemo(() => {
     const filtered = (data?.rows ?? []).filter((r) => showAll || r.qualified);
-    return sort ? sortRows(filtered, sort) : filtered;
+    return sortRows(filtered, sort);
   }, [data, showAll, sort]);
   const set = (key: keyof typeof inputs) => (value: number | string) => {
     setInputs((s) => ({ ...s, [key]: value }));
@@ -74,9 +73,9 @@ export function HoldsPanel({ isActive, onOpenItem }: { isActive?: boolean; onOpe
           }}
         />
       </Group>
-      {data && (
+      {data?.latest_day && (
         <Text size="sm" mt="md">
-          {t("header", { qualified: data.qualified, scored: data.scored, latest_day: data.latest_day || "—" })}
+          {t("header", { qualified: data.qualified, scored: data.scored, latest_day: data.latest_day })}
         </Text>
       )}
       <DataTable
@@ -91,12 +90,12 @@ export function HoldsPanel({ isActive, onOpenItem }: { isActive?: boolean; onOpe
         recordsPerPage={PAGE}
         page={page}
         onPageChange={setPage}
-        sortStatus={sort ?? DEFAULT_SORT}
+        sortStatus={sort}
         onSortStatusChange={(s) => {
           setSort(s);
           setPage(1);
         }}
-        noRecordsText={t("empty")}
+        noRecordsText={t(data && !data.latest_day ? "no_data" : "empty")}
         onRowClick={({ record }) => {
           writeSelection({ slug: record.slug, sub_type: record.sub_type });
           onOpenItem();
