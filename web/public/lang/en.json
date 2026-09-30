@@ -2165,7 +2165,7 @@
           "show_all": "Show all scored",
           "qualified": "qualified",
           "header": "{{qualified}} qualified of {{scored}} scored · closed day {{latest_day}} · quotes ≤ 24 h",
-          "note": "Qualified means even the pessimistic exit — the trend's lower prediction band at the horizon, minus today's bid spread — clears the buy price by the margin. It is not a guarantee: a game update or a market shift can break a trend.",
+          "note": "Qualified means the pessimistic exit — the slower of the long-term and recent trend, at the lower edge of its prediction band, minus today's bid spread — still clears the buy price by the margin. The band assumes the trend continues and weekly prices scatter independently around it; prices that move in runs breach it far more often, and a game update can break any trend. Treat the low exit as a screen, not a floor.",
           "columns": {
             "item": "Item",
             "category": "Category",

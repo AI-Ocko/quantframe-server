@@ -12,22 +12,23 @@ import { writeSelection } from "../../selection";
 const PAGE = 50;
 type Row = TauriTypes.MarketHoldRow;
 const DEFAULT_SORT: DataTableSortStatus<Row> = { columnAccessor: "profit_low_pct", direction: "desc" };
+const DEFAULTS = { horizonWeeks: 4, minVolume: 10, minMarginPct: 10, minSteadiness: 0.85 };
+// A blank or non-numeric field is its default, never 0 (a 0 margin would qualify break-even positions).
+const numOr = (value: number | string, fallback: number) => {
+  const n = String(value).trim() === "" ? NaN : Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
 
 export function HoldsPanel({ isActive, onOpenItem }: { isActive?: boolean; onOpenItem: () => void }) {
   const t = (key: string, context?: { [key: string]: any }) => useTranslatePages(`market_data.tabs.holds.${key}`, context);
   // Raw input values: NumberInput hands back strings like "0." mid-typing, so they convert only at query time.
-  const [inputs, setInputs] = useState<Record<"horizonWeeks" | "minVolume" | "minMarginPct" | "minSteadiness", number | string>>({
-    horizonWeeks: 4,
-    minVolume: 10,
-    minMarginPct: 10,
-    minSteadiness: 0.85,
-  });
+  const [inputs, setInputs] = useState<Record<keyof typeof DEFAULTS, number | string>>(DEFAULTS);
   const [debounced] = useDebouncedValue(inputs, 300);
   const args = {
-    horizonWeeks: Number(debounced.horizonWeeks) || 0,
-    minVolume: Number(debounced.minVolume) || 0,
-    minMarginPct: Number(debounced.minMarginPct) || 0,
-    minSteadiness: Number(debounced.minSteadiness) || 0,
+    horizonWeeks: Math.round(numOr(debounced.horizonWeeks, DEFAULTS.horizonWeeks)),
+    minVolume: numOr(debounced.minVolume, DEFAULTS.minVolume),
+    minMarginPct: numOr(debounced.minMarginPct, DEFAULTS.minMarginPct),
+    minSteadiness: numOr(debounced.minSteadiness, DEFAULTS.minSteadiness),
   };
   const [showAll, setShowAll] = useState(false);
   const [page, setPage] = useState(1);
