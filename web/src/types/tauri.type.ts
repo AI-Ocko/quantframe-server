@@ -1263,6 +1263,33 @@ export namespace TauriTypes {
     day: MarketMoverList;
     week: MarketMoverList;
   }
+  export interface MarketHoldRow {
+    item_id: string;
+    sub_type: string;
+    name: string;
+    slug: string;
+    category: string;
+    ask_now: number;
+    bid_now: number;
+    quote_source: "sweep" | "closed";
+    exit_low: number;
+    exit_mid: number;
+    profit_low: number;
+    profit_low_pct: number;
+    profit_mid: number;
+    trend_pct_month: number;
+    steadiness: number;
+    volume: number;
+    weeks: number;
+    trend_intact: boolean;
+    qualified: boolean;
+  }
+  export interface MarketHolds {
+    latest_day: string;
+    scored: number;
+    qualified: number;
+    rows: MarketHoldRow[];
+  }
   export interface MarketProjection {
     date: string;
     warm_count: number;

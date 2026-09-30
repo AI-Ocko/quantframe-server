@@ -2156,6 +2156,31 @@
           },
           "empty": "Nothing moved."
         },
+        "holds": {
+          "title": "Holds",
+          "horizon": "Horizon (weeks)",
+          "min_volume": "Min trades / day",
+          "min_margin": "Min margin %",
+          "min_steadiness": "Min steadiness",
+          "show_all": "Show all scored",
+          "qualified": "qualified",
+          "header": "{{qualified}} qualified of {{scored}} scored · closed day {{latest_day}} · quotes ≤ 24 h",
+          "note": "Qualified means even the pessimistic exit — the trend's lower prediction band at the horizon, minus today's bid spread — clears the buy price by the margin. It is not a guarantee: a game update or a market shift can break a trend.",
+          "columns": {
+            "item": "Item",
+            "category": "Category",
+            "buy_at": "Buy at (p)",
+            "exit": "Exit low → mid (p)",
+            "profit_low": "Profit low",
+            "trend": "Trend / month",
+            "steadiness": "Steadiness",
+            "volume": "Trades / day",
+            "weeks": "Weeks",
+            "trend_intact": "Trend intact",
+            "quote": "Quote"
+          },
+          "empty": "No position qualifies."
+        },
         "warmup": {
           "title": "Warm-up",
           "tracked": "Tracked items",

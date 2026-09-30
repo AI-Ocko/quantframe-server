@@ -10,6 +10,9 @@ export class MarketModule {
   movers(minVolume: number) {
     return this.client.sendInvoke<TauriTypes.MarketMovers>("market_movers", { minVolume });
   }
+  holds(args: { horizonWeeks: number; minVolume: number; minMarginPct: number; minSteadiness: number }) {
+    return this.client.sendInvoke<TauriTypes.MarketHolds>("market_holds", args);
+  }
   warmup() {
     return this.client.sendInvoke<TauriTypes.MarketWarmup>("market_warmup");
   }
