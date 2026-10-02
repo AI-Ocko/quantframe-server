@@ -1,7 +1,7 @@
 //! Always-on maintenance that must not depend on the collector (spec §19 H5): the alert sweep every
 //! tick, `helper_events` retention hourly, and the daily backup (H6).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
@@ -34,14 +34,14 @@ pub struct TickReport {
 }
 
 /// One housekeeping pass. The three jobs are independent: one failing must not starve the others,
-/// so the first error is returned only after all of them were attempted. `backup_dir = None` skips
+/// so the first error is returned only after all of them were attempted. `backup = None` skips
 /// the backup job (tests).
 pub async fn tick(
     conn: &DatabaseConnection,
     env: &dyn TradeEnv,
     now: DateTime<Utc>,
     gates: &mut Gates,
-    backup_dir: Option<&Path>,
+    backup: Option<&backup::Job>,
 ) -> Result<TickReport, Error> {
     let mut report = TickReport::default();
     let mut first_error: Option<Error> = None;
@@ -62,10 +62,10 @@ pub async fn tick(
             }
         }
     }
-    if let Some(dir) = backup_dir {
+    if let Some(job) = backup {
         let today = now.date_naive();
         if gates.backup_failed_on != Some(today) {
-            match backup::run(conn, dir, today).await {
+            match backup::run(job, today).await {
                 Ok(written) => report.backup = written,
                 Err(e) => {
                     gates.backup_failed_on = Some(today);
@@ -98,11 +98,11 @@ pub fn alert_backup_failed(reason: &str, now: DateTime<Utc>) {
     }
 }
 
-async fn run_loop(conn: DatabaseConnection, backup_dir: PathBuf) {
+async fn run_loop(conn: DatabaseConnection, job: backup::Job) {
     let env = crate::helper_link::trades::live::LiveEnv;
     let mut gates = Gates::default();
     loop {
-        match tick(&conn, &env, Utc::now(), &mut gates, Some(&backup_dir)).await {
+        match tick(&conn, &env, Utc::now(), &mut gates, Some(&job)).await {
             Ok(report) => {
                 if report.alerts > 0 || report.deleted_events.is_some() || report.backup.is_some() {
                     info(
@@ -124,10 +124,10 @@ async fn run_loop(conn: DatabaseConnection, backup_dir: PathBuf) {
 }
 
 /// Starts the supervised loop. Unconditional: it does not depend on `QF_COLLECTOR` (H5).
-pub fn start(conn: DatabaseConnection, backup_dir: PathBuf) {
-    let dir = backup_dir.clone();
-    crate::collector::runner::supervise("Housekeeping", RESTART_DELAY, move || run_loop(conn.clone(), dir.clone()));
-    info("Housekeeping", format!("Started: tick {} s, backups in {}", TICK.as_secs(), backup_dir.display()), &LoggerOptions::default());
+pub fn start(conn: DatabaseConnection, job: backup::Job) {
+    let dir = job.dir.clone();
+    crate::collector::runner::supervise("Housekeeping", RESTART_DELAY, move || run_loop(conn.clone(), job.clone()));
+    info("Housekeeping", format!("Started: tick {} s, backups in {}", TICK.as_secs(), dir.display()), &LoggerOptions::default());
 }
 
 #[cfg(test)]
@@ -195,18 +195,19 @@ mod tests {
         // A file where the backup directory should be: create_dir_all fails, so the backup cannot run.
         let not_a_dir = dir.path().join("notadir");
         std::fs::write(&not_a_dir, b"x").unwrap();
+        let job = backup::Job { source: dir.path().join(crate::db::DB_FILE), dir: not_a_dir.clone() };
         let day = at("2026-09-16T12:00:00Z").date_naive();
 
         let mut gates = Gates::default();
         for minute in ["00", "01", "02"] {
             let now = at(&format!("2026-09-16T12:{minute}:00Z"));
-            let report = tick(&conn, &env, now, &mut gates, Some(&not_a_dir)).await.unwrap();
+            let report = tick(&conn, &env, now, &mut gates, Some(&job)).await.unwrap();
             assert_eq!(report.backup, None, "a failed backup writes nothing");
             assert_eq!(gates.backup_failed_on, Some(day), "the gate stays set, so ticks 2 and 3 never call run() again");
         }
 
         let next_day = at("2026-09-17T00:01:00Z");
-        let report = tick(&conn, &env, next_day, &mut gates, Some(&not_a_dir)).await.unwrap();
+        let report = tick(&conn, &env, next_day, &mut gates, Some(&job)).await.unwrap();
         assert_eq!(report.backup, None);
         assert_eq!(gates.backup_failed_on, Some(next_day.date_naive()), "the next UTC day tries again");
     }

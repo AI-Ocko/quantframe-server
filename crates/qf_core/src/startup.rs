@@ -95,7 +95,10 @@ pub async fn start(cfg: CoreConfig) -> Result<CoreHandles, Error> {
     })
     .await?;
 
-    crate::housekeeping::start(conn.clone(), paths::get().backups_dir());
+    crate::housekeeping::start(
+        conn.clone(),
+        crate::housekeeping::backup::Job { source: paths::get().data_dir.join(db::DB_FILE), dir: paths::get().backups_dir() },
+    );
 
     crate::trader::start(conn.clone()).await?;
 

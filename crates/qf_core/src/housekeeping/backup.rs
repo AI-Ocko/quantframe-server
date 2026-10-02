@@ -1,10 +1,10 @@
-//! Daily database backup (spec §19 H6): `VACUUM INTO` a dated file, verify it on a read-only
-//! connection, keep 7 dailies and 4 Sunday weeklies.
+//! Daily database backup (spec §19 H6, §25 P29): `VACUUM INTO` a dated file on the backup's own
+//! read-only connection, verify it on a read-only connection, keep 7 dailies and 4 Sunday weeklies.
 
 use std::path::{Path, PathBuf};
 
 use chrono::{Datelike, NaiveDate, Weekday};
-use service::sea_orm::{ConnectionTrait, Database, DatabaseConnection};
+use service::sea_orm::{ConnectionTrait, Database};
 use utils::{get_location, info, warning, Error, LoggerOptions};
 
 use crate::collector::stmt;
@@ -45,12 +45,23 @@ pub fn to_delete(dates: &[NaiveDate]) -> Vec<NaiveDate> {
         .collect()
 }
 
+/// Where the daily backup reads from and writes to (spec §25 P29).
+#[derive(Debug, Clone)]
+pub struct Job {
+    /// The live database file.
+    pub source: PathBuf,
+    /// The backup directory.
+    pub dir: PathBuf,
+}
+
 /// `VACUUM INTO` a fresh `.tmp` file beside the final name, so an unverified copy never wears it.
 /// SQLite refuses to overwrite, so a stale temp left by a crashed run is deleted first.
-pub async fn write(conn: &DatabaseConnection, dir: &Path, date: NaiveDate) -> Result<PathBuf, Error> {
-    std::fs::create_dir_all(dir)
-        .map_err(|e| Error::new("Housekeeping:Backup", format!("cannot create {}: {e}", dir.display()), get_location!()))?;
-    let path = dir.join(format!("{}{TMP}", file_name(date)));
+/// The copy is made on its own read-only connection (spec §25 P29): the app's single pooled
+/// connection stays free for the whole copy, and a missing source fails instead of being created.
+pub async fn write(job: &Job, date: NaiveDate) -> Result<PathBuf, Error> {
+    std::fs::create_dir_all(&job.dir)
+        .map_err(|e| Error::new("Housekeeping:Backup", format!("cannot create {}: {e}", job.dir.display()), get_location!()))?;
+    let path = job.dir.join(format!("{}{TMP}", file_name(date)));
     if path.exists() {
         std::fs::remove_file(&path)
             .map_err(|e| Error::new("Housekeeping:Backup", format!("cannot remove stale {}: {e}", path.display()), get_location!()))?;
@@ -59,9 +70,13 @@ pub async fn write(conn: &DatabaseConnection, dir: &Path, date: NaiveDate) -> Re
     if target.contains('\'') {
         return Err(Error::new("Housekeeping:Backup", format!("backup path must not contain a quote: {target}"), get_location!()));
     }
-    conn.execute_unprepared(&format!("VACUUM INTO '{target}'"))
+    let source = Database::connect(format!("sqlite://{}?mode=ro", job.source.display()))
         .await
-        .map_err(|e| Error::new("Housekeeping:Backup", format!("VACUUM INTO {} failed: {e}", path.display()), get_location!()))?;
+        .map_err(|e| Error::new("Housekeeping:Backup", format!("cannot open {}: {e}", job.source.display()), get_location!()))?;
+    let copied = source.execute_unprepared(&format!("VACUUM INTO '{target}'")).await;
+    // Closed before the result is looked at: the read snapshot must not outlive the copy.
+    let _ = source.close().await;
+    copied.map_err(|e| Error::new("Housekeeping:Backup", format!("VACUUM INTO {} failed: {e}", path.display()), get_location!()))?;
     Ok(path)
 }
 
@@ -118,14 +133,14 @@ async fn promote(temp: &Path, final_path: &Path) -> Result<(), Error> {
 }
 
 /// The daily job: skip if today's file exists; else write a temp copy, verify and rename it, prune.
-pub async fn run(conn: &DatabaseConnection, dir: &Path, today: NaiveDate) -> Result<Option<PathBuf>, Error> {
-    let final_path = dir.join(file_name(today));
+pub async fn run(job: &Job, today: NaiveDate) -> Result<Option<PathBuf>, Error> {
+    let final_path = job.dir.join(file_name(today));
     if final_path.exists() {
         return Ok(None);
     }
-    let temp = write(conn, dir, today).await?;
+    let temp = write(job, today).await?;
     promote(&temp, &final_path).await?;
-    let removed = prune(dir)?;
+    let removed = prune(&job.dir)?;
     info(
         "Housekeeping:Backup",
         format!("Wrote {} and pruned {} old backup(s)", final_path.display(), removed.len()),
@@ -141,6 +156,10 @@ mod tests {
 
     fn d(text: &str) -> NaiveDate {
         NaiveDate::parse_from_str(text, "%Y-%m-%d").unwrap()
+    }
+
+    fn job(dir: &tempfile::TempDir) -> Job {
+        Job { source: dir.path().join(crate::db::DB_FILE), dir: dir.path().join("backups") }
     }
 
     #[test]
@@ -173,23 +192,23 @@ mod tests {
 
     #[tokio::test]
     async fn vacuum_into_writes_a_consistent_copy_once_per_day_and_prunes() {
-        let (dir, conn) = db().await;
+        let (dir, _conn) = db().await;
         let backups = dir.path().join("backups");
         let today = d("2026-09-16");
-        let written = run(&conn, &backups, today).await.unwrap().expect("first run writes");
+        let written = run(&job(&dir), today).await.unwrap().expect("first run writes");
         assert_eq!(written, backups.join("quantframe-2026-09-16.sqlite"));
         assert!(written.is_file());
         assert!(!backups.join("quantframe-2026-09-16.sqlite-wal").exists());
         assert!(!backups.join("quantframe-2026-09-16.sqlite-shm").exists());
         verify(&written).await.unwrap();
-        assert_eq!(run(&conn, &backups, today).await.unwrap(), None, "today's file exists: nothing to do");
+        assert_eq!(run(&job(&dir), today).await.unwrap(), None, "today's file exists: nothing to do");
 
         // Old files are pruned by the rule, whatever their content.
         for i in 1..40 {
             std::fs::write(backups.join(file_name(today - chrono::Duration::days(i))), b"x").unwrap();
         }
         std::fs::write(backups.join("unrelated.txt"), b"x").unwrap();
-        run(&conn, &backups, today + chrono::Duration::days(1)).await.unwrap().expect("next day writes again");
+        run(&job(&dir), today + chrono::Duration::days(1)).await.unwrap().expect("next day writes again");
         let names: Vec<String> =
             std::fs::read_dir(&backups).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
         let dated = names.iter().filter(|n| parse_date(n).is_some()).count();
@@ -198,8 +217,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_bad_copy_is_removed_and_not_renamed() {
+    async fn the_backup_does_not_wait_for_the_apps_connection() {
+        use service::sea_orm::TransactionTrait;
         let (dir, conn) = db().await;
+        conn.execute_unprepared("CREATE TABLE backup_probe (v INTEGER)").await.unwrap();
+        conn.execute_unprepared("INSERT INTO backup_probe VALUES (42)").await.unwrap();
+        // The app's only pooled connection is held for the whole backup, with a write still uncommitted.
+        let txn = conn.begin().await.unwrap();
+        txn.execute_unprepared("INSERT INTO backup_probe VALUES (43)").await.unwrap();
+        let written = tokio::time::timeout(std::time::Duration::from_secs(10), run(&job(&dir), d("2026-09-16")))
+            .await
+            .expect("the backup must not wait for the app's connection")
+            .unwrap()
+            .expect("the first run writes");
+        txn.rollback().await.unwrap();
+
+        let copy = Database::connect(format!("sqlite://{}?mode=ro", written.display())).await.unwrap();
+        let row = copy.query_one(stmt("SELECT COUNT(*) AS n, MAX(v) AS v FROM backup_probe", vec![])).await.unwrap().unwrap();
+        assert_eq!(row.try_get::<i64>("", "n").unwrap(), 1, "the uncommitted row is not in the copy");
+        assert_eq!(row.try_get::<i64>("", "v").unwrap(), 42, "the committed row, still in the WAL, is");
+    }
+
+    #[tokio::test]
+    async fn a_missing_source_fails_and_creates_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = Job { source: dir.path().join("nope.sqlite"), dir: dir.path().join("backups") };
+        let today = d("2026-09-16");
+        assert!(run(&job, today).await.is_err());
+        assert!(!job.source.exists(), "the source is never created");
+        assert!(!job.dir.join(file_name(today)).exists(), "no dated backup");
+        assert!(!job.dir.join(format!("{}{TMP}", file_name(today))).exists(), "no temp file is left");
+    }
+
+    #[tokio::test]
+    async fn a_bad_copy_is_removed_and_not_renamed() {
+        let (dir, _conn) = db().await;
         let backups = dir.path().join("backups");
         let today = d("2026-09-16");
         std::fs::create_dir_all(&backups).unwrap();
@@ -214,13 +266,13 @@ mod tests {
 
         // A write that cannot happen (a directory sits on the temp path) leaves no final file either.
         std::fs::create_dir(&temp).unwrap();
-        assert!(run(&conn, &backups, today).await.is_err());
+        assert!(run(&job(&dir), today).await.is_err());
         assert!(!final_path.exists(), "a failed run writes no dated backup");
 
         // A stale temp from a crashed run is replaced, and a good copy is promoted.
         std::fs::remove_dir(&temp).unwrap();
         std::fs::write(&temp, b"stale garbage").unwrap();
-        assert_eq!(run(&conn, &backups, today).await.unwrap(), Some(final_path.clone()));
+        assert_eq!(run(&job(&dir), today).await.unwrap(), Some(final_path.clone()));
         assert!(final_path.is_file());
         assert!(!temp.exists(), "no .tmp is left behind");
     }
