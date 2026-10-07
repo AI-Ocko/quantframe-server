@@ -412,6 +412,10 @@ pub async fn progress_buying(
 
     if entry.buy_market_info.volume == 0 || entry.sell_market_info.volume == 0 {
         log(&format!("Item {} has no market volume. Skipping WTB order creation.", item_info.name));
+        // Spec P30: an empty market must not leave our bid standing unchecked.
+        delete_order(&component, entry, OrderType::Buy, &ctx.orders, route, "NoMarket")
+            .await
+            .map_err(|e| e.with_location(get_location!()).with_context(entry.to_json()))?;
         return Ok(());
     }
 
@@ -422,7 +426,7 @@ pub async fn progress_buying(
                     "Item {} already has {} units in stock (max: {}). Deleting its WTB order.",
                     item_info.name, stock_item.owned, max_stock_quantity
                 ));
-                delete_order(&component, entry, OrderType::Buy, &ctx.orders, route)
+                delete_order(&component, entry, OrderType::Buy, &ctx.orders, route, "MaxStock")
                     .await
                     .map_err(|e| e.with_location(get_location!()).with_context(entry.to_json()))?;
                 return Ok(());
@@ -965,7 +969,35 @@ mod tests {
         e.apply_market_info(&live);
         progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, &Slots::default()).await.unwrap();
         assert_eq!(ctx.orders.dry_log().last().unwrap().action, "delete");
+        assert!(ctx.orders.dry_log().last().unwrap().reason.contains("MaxStock"));
         assert!(ctx.orders.cache_orders().buy_orders.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_empty_market_deletes_the_existing_buy_order() {
+        // Empty buy side, then empty sell side (spec P30).
+        for live in [book(&[20, 25], &[]), book(&[], &[15, 17])] {
+            let (_dir, ctx) = ctx_with(true, |_| {}).await;
+            let route = route_for(true, true);
+            seed_order(&ctx, OrderType::Buy, 17, route).await;
+            let mut e = entry("Buy", None, None);
+            e.apply_market_info(&live);
+            progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route, &Slots::default()).await.unwrap();
+            let last = ctx.orders.dry_log().last().unwrap().clone();
+            assert_eq!((last.action.as_str(), last.side.as_str()), ("delete", "buy"));
+            assert!(last.reason.contains("NoMarket"), "reason was {}", last.reason);
+            assert!(ctx.orders.cache_orders().buy_orders.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_market_without_a_buy_order_writes_nothing() {
+        let (_dir, ctx) = ctx_with(true, |_| {}).await;
+        let live = book(&[20, 25], &[]);
+        let mut e = entry("Buy", None, None);
+        e.apply_market_info(&live);
+        progress_buying(&ctx, &item_info(), &mut e, &price(30.0, true), &live, route_for(true, true), &Slots::default()).await.unwrap();
+        assert!(ctx.orders.dry_log().is_empty());
     }
 
     #[tokio::test]

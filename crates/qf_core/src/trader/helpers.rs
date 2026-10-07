@@ -417,18 +417,20 @@ pub fn sell_slot_victim(orders: &TradeOrders, route: Route, order_type: OrderTyp
 }
 
 /// Deletes this item's existing order, if there is one (amendment C5: upstream never deleted).
+/// The caller names the reason operation, e.g. `MaxStock` or `NoMarket` (spec P30).
 pub async fn delete_order(
     component: &str,
     entry: &ItemEntry,
     order_type: OrderType,
     orders: &TradeOrders,
     route: Route,
+    reason: &str,
 ) -> Result<OperationSet, Error> {
     let (order_id, _, mut properties, _) = get_order_info(entry, order_type, orders, route);
     if order_id.is_empty() {
         return Ok(OperationSet::default());
     }
-    let operations = OperationSet::from(vec!["Update", "Delete", "MaxStock"]);
+    let operations = OperationSet::from(vec!["Update", "Delete", reason]);
     progress_order(component, entry, orders, route, order_type, 1, None, &LoggerOptions::default(), &mut properties, &operations, &Slots::default())
         .await
 }
